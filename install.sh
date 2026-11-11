@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Installs omp-dori: the dori-mode skill, the `dori` CLI, the omp-dori omp extension and its pinned omp-ulw.
-# Usage: curl -fsSL https://raw.githubusercontent.com/betive37/omp-dori/main/install.sh | bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/foxion37/OMP-DORI/main/install.sh | bash
 # Re-run to update. Needs: git, bun 1.3+, omp 18.14.2+.
 # Optional env: DORI_SRC (clone dir), OMP_ULW_SRC (your own omp-ulw checkout; left as is),
 #               SKILLS_DIR (where omp loads skills), OMP_EXTENSIONS_DIR (omp global extensions).
@@ -12,7 +12,7 @@ absolute() { case "$1" in /*) printf '%s\n' "$1" ;; *) printf '%s/%s\n' "$PWD" "
 # at_least <minimum> <version>: version sorts at or after minimum.
 at_least() { [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -n 1)" = "$1" ]; }
 
-repo="https://github.com/betive37/omp-dori.git"
+repo="https://github.com/foxion37/OMP-DORI.git"
 ulw_repo="https://github.com/dbc-hbin/omp-ulw.git"
 src="$(absolute "${DORI_SRC:-$HOME/.dori/src}")"
 ulw="$(absolute "${OMP_ULW_SRC:-$HOME/.dori/omp-ulw}")"

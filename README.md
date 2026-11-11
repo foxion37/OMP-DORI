@@ -49,7 +49,7 @@ omp pauses a goal when a session is resumed in a new process. A lane reopened wi
 Needs git, bun 1.3+, omp 18.14.2+ and herdr.
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/betive37/omp-dori/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/foxion37/OMP-DORI/main/install.sh | bash
 ```
 
 This clones omp-dori to `~/.dori/src` and omp-ulw (at the commit pinned in `omp-ulw.lock`) to `~/.dori/omp-ulw`, links the skill into `~/.agents/skills/dori-mode` and the extension into `~/.omp/agent/extensions/omp-dori`, puts `dori` on your PATH, and writes `~/.dori/config.json`. Run it again to update. Set `OMP_ULW_SRC` to use your own omp-ulw checkout.

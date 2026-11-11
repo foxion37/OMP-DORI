@@ -49,7 +49,7 @@ omp는 세션을 새 프로세스로 재개하면 goal을 일시정지 상태로
 git, bun 1.3 이상, omp 18.14.2 이상, herdr가 필요합니다.
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/betive37/omp-dori/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/foxion37/OMP-DORI/main/install.sh | bash
 ```
 
 설치 스크립트가 하는 일:
