@@ -21,6 +21,10 @@ export type PaneState = {
   readonly goal: { readonly status: GoalStatus; readonly objective?: string };
   /** A tool approval prompt is open in this session: never type into the pane. */
   readonly approvalPending: boolean;
+  /** The session's current model as `provider/id`, refreshed on session start and every turn end. */
+  readonly model?: string;
+  /** Context window use at the last turn end; absent until omp can estimate it. */
+  readonly context?: { readonly percent: number; readonly tokens: number; readonly window: number };
 };
 
 export const paneStateDir = (stateDir: string): string => join(stateDir, "sessions");

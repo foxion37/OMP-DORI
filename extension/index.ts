@@ -29,6 +29,8 @@ export interface DoriContext {
   agent: { kind: "main" | "sub"; id: string; parentId?: string };
   sessionManager: { getSessionId(): string; getSessionFile(): string | undefined; getBranch(): SessionEntry[] };
   ui: { notify(message: string, type?: "info" | "warning" | "error"): void };
+  model?: { provider?: string; id: string };
+  getContextUsage?(): { tokens: number; contextWindow: number; percent: number } | undefined;
 }
 interface Goal {
   objective: string;
@@ -154,6 +156,7 @@ export default async function ompDori(pi: DoriApi): Promise<void> {
   let goal: PaneState["goal"] = { status: "none" };
   let goalToolAdded = false;
   let paneWritten: string | undefined;
+  let usageWritten = "";
   const approvals = new Set<string>();
   const monitors = new Monitors(
     (content) => pi.sendMessage({ customType: "dori-monitor", content, display: true }, { triggerTurn: true, deliverAs: "aside" }),
@@ -168,12 +171,25 @@ export default async function ompDori(pi: DoriApi): Promise<void> {
     paneWritten = undefined;
   };
 
+  // What the lane monitor needs: the model and how full its context is. Percent is kept to one decimal.
+  const usageOf = (ctx: DoriContext): Pick<PaneState, "model" | "context"> => {
+    const model = ctx.model ? (ctx.model.provider ? `${ctx.model.provider}/${ctx.model.id}` : ctx.model.id) : undefined;
+    const usage = ctx.getContextUsage?.();
+    const valid = usage && Number.isFinite(usage.percent) && usage.contextWindow > 0;
+    return {
+      ...(model ? { model } : {}),
+      ...(valid ? { context: { percent: Math.round(usage.percent * 10) / 10, tokens: usage.tokens, window: usage.contextWindow } } : {}),
+    };
+  };
+
   const savePane = (ctx: DoriContext): void => {
     const paneId = process.env.HERDR_PANE_ID;
     if (!paneId || stateDir === undefined || !session) return;
     // The pane now runs a session without a role: a leftover file would point `dori` at the previous session.
     if (!role) return removePane();
     const sessionFile = ctx.sessionManager.getSessionFile();
+    const usage = usageOf(ctx);
+    usageWritten = JSON.stringify(usage);
     writePaneState(stateDir, {
       paneId,
       role,
@@ -185,6 +201,7 @@ export default async function ompDori(pi: DoriApi): Promise<void> {
       updatedAt: new Date().toISOString(),
       goal,
       approvalPending: approvals.size > 0,
+      ...usage,
     });
     paneWritten = paneId;
   };
@@ -218,6 +235,10 @@ export default async function ompDori(pi: DoriApi): Promise<void> {
     pi.on("tool_approval_resolved", (event, ctx) => {
       if (!approvals.delete(event.toolCallId) || !role) return;
       savePane(ctx);
+    });
+    pi.on("turn_end", (_event, ctx) => {
+      if (!role || ctx.agent.kind !== "main") return;
+      if (JSON.stringify(usageOf(ctx)) !== usageWritten) savePane(ctx);
     });
     pi.on("session_shutdown", () => {
       monitors.stopAll();

@@ -3,6 +3,7 @@ import { parseArgs } from "node:util";
 
 import { loadConfig } from "./config.ts";
 import { deadPaneTick, newDeadPaneState } from "./dead-panes.ts";
+import { contextTick } from "./context.ts";
 import { claimDone, closeLane, type FlowDeps, objectDone, watchTick } from "./done-flow.ts";
 import { freshnessTick } from "./freshness.ts";
 import { acquireSlot, pidAlive, releaseSlot } from "./heavy-slot.ts";
@@ -10,6 +11,7 @@ import { guardTick, sampleHost } from "./host-guard.ts";
 import { adoptLane, launchLane, LaunchError } from "./launch.ts";
 import { pauseLane, resumeLane } from "./pause.ts";
 import { Registry, statusOf } from "./registry.ts";
+import { relayLane } from "./relay.ts";
 import { realClock, run } from "./run.ts";
 import { syncRegistry } from "./sync.ts";
 import { canLaunch } from "./routing.ts";
@@ -25,8 +27,11 @@ import { transcribe, TranscriptionError } from "./messenger/voice.ts";
 
 const USAGE = `dori <command> [options]
 
-  launch <key> --title T --brief FILE --done "merged o/r#N; closed o/r#M" [--thread REF] [--model M] [--cwd DIR]
-  adopt  <key> --pane ID --title T --brief FILE --done "..." [--thread REF]
+  launch <key> --title T --brief FILE --done "merged o/r#N; closed o/r#M" [--thread REF] [--model M] [--cwd DIR] [--group NAME]
+                                       --group: split next to an open lane of that group, else open a workspace for it
+  adopt  <key> --pane ID --title T --brief FILE --done "..." [--thread REF] [--group NAME]
+  context [--loop MIN] [--relay]       CONTEXT_HIGH / CONTEXT_UNKNOWN per lane; --relay hands full lanes to a fresh pane
+  relay  <key>                         handoff file, successor pane next to the lane, old pane closed
   sync   [--write]                     registry vs live panes; read-only unless --write
   claim-done [<key>] --evidence TEXT  key defaults to the lane registered for $HERDR_PANE_ID
   object-done <key> --reason TEXT [--reason TEXT ...]
@@ -63,6 +68,7 @@ const flags = parseArgs({
     title: { type: "string" }, brief: { type: "string" }, done: { type: "string" }, thread: { type: "string" },
     model: { type: "string" }, cwd: { type: "string" }, pane: { type: "string" }, evidence: { type: "string" },
     reason: { type: "string", multiple: true }, note: { type: "string" }, write: { type: "boolean" }, loop: { type: "string" },
+    group: { type: "string" }, relay: { type: "boolean" },
     to: { type: "string" }, text: { type: "string" }, edit: { type: "string" },
   },
 });
@@ -92,13 +98,13 @@ const every = async (minutes: number, tick: () => Promise<void>): Promise<void> 
 try {
   switch (command) {
     case "launch": {
-      const r = await launchLane(deps, { key: key ?? "", title: need("title"), brief: need("brief"), done: need("done"), thread: opt("thread"), model: opt("model"), cwd: opt("cwd") });
-      console.log(`LAUNCHED ${r.lane.key} pane=${r.lane.pane} tab=${r.lane.tab ?? "?"}`);
+      const r = await launchLane(deps, { key: key ?? "", title: need("title"), brief: need("brief"), done: need("done"), thread: opt("thread"), model: opt("model"), cwd: opt("cwd"), group: opt("group") });
+      console.log(`LAUNCHED ${r.lane.key} pane=${r.lane.pane} tab=${r.lane.tab ?? "?"} placement=${r.lane.placement ?? "?"} workspace=${r.lane.workspace ?? "?"}${r.lane.group ? ` group=${r.lane.group}` : ""}`);
       console.log(r.startup);
       process.exit(r.startup.startsWith("STARTUP_OK") ? 0 : 3);
     }
     case "adopt": {
-      const l = await adoptLane(deps, { key: key ?? "", title: need("title"), brief: need("brief"), done: need("done"), thread: opt("thread"), pane: need("pane") });
+      const l = await adoptLane(deps, { key: key ?? "", title: need("title"), brief: need("brief"), done: need("done"), thread: opt("thread"), pane: need("pane"), group: opt("group") });
       console.log(`ADOPTED ${l.key} pane=${l.pane} thread=${l.thread}`);
       break;
     }
@@ -109,6 +115,16 @@ try {
       console.log(r.drift.length ? `DRIFT (${r.drift.length}):\n${r.drift.map((d) => `- ${d}`).join("\n")}` : "DRIFT none");
       console.log(flags.values.write ? "WROTE session ids" : "READ_ONLY");
       break;
+    }
+    case "context":
+      await every(loopMin, async () => {
+        for (const line of await contextTick(deps, { relay: Boolean(flags.values.relay) })) console.log(line);
+      });
+      break;
+    case "relay": {
+      const r = await relayLane(deps, await lane(key ?? die("relay needs a lane key")));
+      for (const line of r.lines) console.log(line);
+      process.exit(r.outcome === "relayed" ? 0 : r.outcome === "skipped" ? 2 : 3);
     }
     case "claim-done":
       console.log(await claimDone(deps, await lane(key), need("evidence")));

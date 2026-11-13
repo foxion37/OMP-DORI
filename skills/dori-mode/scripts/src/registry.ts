@@ -41,6 +41,24 @@ export type Lane = {
   /** The status a paused lane had before it was paused; `resume` restores it. */
   readonly pausedFrom?: LaneStatus;
   readonly receipt?: unknown;
+  /** Work stream this lane belongs to (`--group`): same group splits next to its lanes, a new group gets its own workspace. */
+  readonly group?: string;
+  /** How the pane was placed: its own tab, a split of a group lane's pane, or the root pane of a new workspace. */
+  readonly placement?: "tab" | "split" | "workspace";
+  readonly workspace?: string;
+  /** dori created `workspace` for this lane (or the lane it descends from); only such a workspace is ever closed by dori. */
+  readonly workspaceCreated?: boolean;
+  /** Completed relays, and the panes they replaced (oldest first). */
+  readonly relays?: number;
+  readonly previousPanes?: readonly string[];
+  readonly lastRelayAt?: string;
+  /** The context monitor printed CONTEXT_HIGH for the current crossing; cleared when usage falls back under the threshold. */
+  readonly contextAlerted?: boolean;
+  /** An automatic relay failed for the current crossing: it is not retried until the crossing resets. */
+  readonly relayFailed?: boolean;
+  /** Last RELAY_SKIPPED reason printed by the monitor, so an unchanged reason is not repeated every tick. */
+  readonly relaySkipNote?: string;
+  readonly contextUnknownAlerted?: boolean;
 };
 
 export const statusOf = (lane: Lane): LaneStatus => (lane.closedAt ? "closed" : (lane.status ?? "working"));

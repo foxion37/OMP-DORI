@@ -1,6 +1,7 @@
 import { fill } from "./config.ts";
 import type { FlowDeps } from "./done-flow.ts";
-import { readScreen, statusLookup } from "./panes.ts";
+import { listPanes, readScreen, statusLookup } from "./panes.ts";
+import { GROUP_NAME, placeLane } from "./placement.ts";
 import { LANE_KEY, type Lane } from "./registry.ts";
 import { iso } from "./run.ts";
 import { doneSyntaxErrors } from "./signals.ts";
@@ -13,6 +14,8 @@ export type LaunchInput = {
   readonly thread?: string;
   readonly model?: string;
   readonly cwd?: string;
+  /** Work stream: an open lane in the same group is split next to; a new group opens its own workspace. */
+  readonly group?: string;
 };
 
 export class LaunchError extends Error {}
@@ -26,12 +29,14 @@ export const validateLaunch = async (deps: FlowDeps, input: LaunchInput): Promis
   if (await deps.registry.read(input.key)) throw new LaunchError(`lane ${input.key} is already registered`);
   const errors = doneSyntaxErrors(input.done);
   if (errors.length) throw new LaunchError(`Done line is not checkable: ${errors.join("; ")}`);
+  if (input.group !== undefined && !GROUP_NAME.test(input.group)) throw new LaunchError(`group must match ${GROUP_NAME}`);
 };
 
 export const footer = (lane: Lane, leadPane: string): string => [
   "",
   "## Lane footer (written by dori launch)",
   `- Key: ${lane.key}. Work thread: ${lane.thread}.`,
+  ...(lane.group ? [`- Group: ${lane.group}. Your pane may be closed and replaced by a successor pane when your context fills (dori relay): when the lead asks for a handoff, stop new work, write it, and print HANDOFF-WRITTEN.`] : []),
   `- Done = ${lane.done}. The lane closes only when every signal reads back live.`,
   `- Report to the lead at each milestone: [REPORT] ${lane.key} | <milestone|blocker|question|done> | <what, with links>, sent to pane ${leadPane || "(lead pane)"} as an argv array, never a shell string.`,
   `- When done: dori claim-done ${lane.key} --evidence "<merge SHA, closed issue, version>". See references/done-protocol.md.`,
@@ -40,7 +45,8 @@ export const footer = (lane: Lane, leadPane: string): string => [
 
 export const adoptLane = async (deps: FlowDeps, input: LaunchInput & { readonly pane: string }): Promise<Lane> => {
   await validateLaunch(deps, input);
-  const lane: Lane = { key: input.key, title: input.title, thread: input.thread ?? "none", pane: input.pane, brief: input.brief, done: input.done, cwd: input.cwd ?? deps.config.defaultCwd, openedAt: iso(deps.clock) };
+  const workspace = input.group ? (await listPanes(deps.run).catch(() => [])).find((p) => p.pane_id === input.pane)?.workspace_id : undefined;
+  const lane: Lane = { key: input.key, title: input.title, thread: input.thread ?? "none", pane: input.pane, brief: input.brief, done: input.done, cwd: input.cwd ?? deps.config.defaultCwd, openedAt: iso(deps.clock), ...(input.group ? { group: input.group } : {}), ...(workspace ? { workspace } : {}) };
   await deps.registry.write(lane);
   return lane;
 };
@@ -51,25 +57,27 @@ export const launchLane = async (deps: FlowDeps, input: LaunchInput): Promise<{ 
   const cwd = input.cwd ?? deps.config.defaultCwd;
   const briefFile = Bun.file(input.brief);
   if (!(await briefFile.exists())) throw new LaunchError(`brief not found: ${input.brief}`);
-  const draft: Lane = { key: input.key, title: input.title, thread: input.thread ?? "none", brief: input.brief, done: input.done, cwd, model, openedAt: iso(deps.clock) };
+  const draft: Lane = { key: input.key, title: input.title, thread: input.thread ?? "none", brief: input.brief, done: input.done, cwd, model, openedAt: iso(deps.clock), ...(input.group ? { group: input.group } : {}) };
   await Bun.write(input.brief, `${(await briefFile.text()).replace(/\s*$/, "")}\n${footer(draft, deps.config.leadPane)}`);
-  const created = await deps.run(["herdr", "tab", "create", ...(deps.config.laneWorkspace ? ["--workspace", deps.config.laneWorkspace] : []), "--cwd", cwd, "--label", input.key, "--no-focus"]);
-  if (created.code !== 0) throw new LaunchError(`herdr tab create failed: ${created.err || created.out}`);
-  const made = (JSON.parse(created.out) as { result: { root_pane: { pane_id: string; tab_id?: string }; tab_id?: string } }).result;
-  const pane = made.root_pane.pane_id;
-  const tab = made.tab_id ?? made.root_pane.tab_id;
+  const placed = await placeLane(deps, { key: input.key, group: input.group, cwd });
+  const pane = placed.pane;
   const prompt = `${deps.config.launchKeywords}. Read and execute the lane brief at ${input.brief} in full. You are the ${input.key} lane; report as the brief's footer says.`;
   await deps.run(["herdr", "pane", "run", pane, fill(deps.config.agentCommand, { model, prompt }).map(quoteForPane).join(" ")]);
-  const lane: Lane = { ...draft, pane, ...(tab ? { tab } : {}) };
+  const lane: Lane = { ...draft, ...placed, ...(input.group ? { group: input.group } : {}) };
   await deps.registry.write(lane);
+  return { lane, startup: await checkStartup(deps, input.key, pane) };
+};
+
+/** Waits for a freshly started agent, then reports STARTUP_ERROR / STARTUP_OK / STARTUP_UNCONFIRMED for its pane. */
+export const checkStartup = async (deps: FlowDeps, key: string, pane: string): Promise<string> => {
   await deps.clock.sleep(20_000);
   const screen = await readScreen(deps.run, pane, 40);
   const bad = STARTUP_FAILURE.exec(screen);
-  if (bad) return { lane, startup: `STARTUP_ERROR ${input.key} ${pane}: ${bad[0]}` };
+  if (bad) return `STARTUP_ERROR ${key} ${pane}: ${bad[0]}`;
   const { status, error } = await statusLookup(deps.run, pane);
-  if (status === "idle" || status === "working") return { lane, startup: `STARTUP_OK ${input.key} ${pane}` };
+  if (status === "idle" || status === "working") return `STARTUP_OK ${key} ${pane}`;
   const why = error ? `status lookup failed: ${error}` : `no ready agent status (${status ?? "none"})`;
-  return { lane, startup: `STARTUP_UNCONFIRMED ${input.key} ${pane}: ${why}; last lines: ${lastLines(screen)}` };
+  return `STARTUP_UNCONFIRMED ${key} ${pane}: ${why}; last lines: ${lastLines(screen)}`;
 };
 
 const lastLines = (screen: string): string =>

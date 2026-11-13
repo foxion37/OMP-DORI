@@ -20,6 +20,9 @@ export type FakePi = {
   userMessages: string[];
   notes: string[];
   session: FakeSession;
+  /** What ctx.model / ctx.getContextUsage() report; tests change these between turns. */
+  model?: { provider?: string; id: string };
+  usage?: { tokens: number; contextWindow: number; percent: number };
   ctx(): DoriContext;
   /** Runs handlers in registration order, like omp's runner; returns their results. */
   emit(event: string, payload?: unknown): Promise<unknown[]>;
@@ -44,6 +47,8 @@ export const fakePi = (options: FakeOptions): FakePi => {
       cwd: tmpdir(),
       mode: "print",
       agent,
+      ...(fake.model ? { model: fake.model } : {}),
+      getContextUsage: () => fake.usage,
       sessionManager: { getSessionId: () => fake.session.id, getSessionFile: () => fake.session.file, getBranch: () => fake.session.entries },
       ui: { notify: (message: string) => void fake.notes.push(message) },
     }),

@@ -292,6 +292,26 @@ describe("pane state", () => {
   });
 });
 
+describe("context reporting", () => {
+  test("a lane's pane state carries its model and context use, rewritten on turn end only when they change", async () => {
+    const lane = await load({ session: session("ctx"), flags: { "dori-role": "lane" } });
+    lane.model = { provider: "kiro-dori", id: "claude-haiku-5.5" };
+    await lane.emit("session_start");
+    expect(readPaneState(stateDir, PANE)?.model).toBe("kiro-dori/claude-haiku-5.5");
+    expect(readPaneState(stateDir, PANE)?.context).toBeUndefined();
+
+    lane.usage = { tokens: 41_234, contextWindow: 100_000, percent: 41.234 };
+    await lane.emit("turn_end");
+    const written = readPaneState(stateDir, PANE);
+    expect(written?.context).toEqual({ percent: 41.2, tokens: 41_234, window: 100_000 });
+
+    // an unchanged turn leaves the file alone: a marker stamped onto it survives
+    if (written) writePaneState(stateDir, { ...written, updatedAt: "marker" });
+    await lane.emit("turn_end");
+    expect(readPaneState(stateDir, PANE)?.updatedAt).toBe("marker");
+  });
+});
+
 describe.skipIf(!existsSync(REAL_ULW))("with the real omp-ulw", () => {
   test("normal sessions get no ULW and /ulw sends nothing; lanes get the ULW policy", async () => {
     useConfig(REAL_ULW);

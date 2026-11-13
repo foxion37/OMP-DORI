@@ -35,6 +35,14 @@ export type DoriConfig = {
   readonly closeAfterMin: number;
   readonly heavySlots: number;
   readonly heavyMaxLoad: number;
+  /** Models matching this (case-insensitive regex source) hand off at `contextHandoffPct`, the rest at `contextHandoffPctOther`. */
+  readonly contextClaudePattern: string;
+  readonly contextHandoffPct: number;
+  readonly contextHandoffPctOther: number;
+  /** Minutes a lane may show no context data before CONTEXT_UNKNOWN. */
+  readonly contextUnknownAfterMin: number;
+  /** Minutes `dori relay` waits for the lane to write its handoff. */
+  readonly relayTimeoutMin: number;
   readonly deadPanePatterns: readonly string[];
   readonly guard: GuardThresholds;
   readonly hooks: Hooks;
@@ -57,6 +65,11 @@ export const defaultConfig = (home = homedir()): DoriConfig => ({
   closeAfterMin: 5,
   heavySlots: 1,
   heavyMaxLoad: 80,
+  contextClaudePattern: "claude|opus|sonnet|haiku",
+  contextHandoffPct: 40,
+  contextHandoffPctOther: 60,
+  contextUnknownAfterMin: 10,
+  relayTimeoutMin: 10,
   deadPanePatterns: ["has stopped", "no suitable jobs"],
   guard: { loadAlert: 150, loadOk: 80, memFreeMinPct: 20, diskFreeMinGb: 50, panesMax: 20 },
   hooks: {},

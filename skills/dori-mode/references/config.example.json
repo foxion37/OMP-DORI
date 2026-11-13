@@ -22,6 +22,11 @@
   "nudgeAfterMin": 15,
   "postAfterMin": 20,
   "closeAfterMin": 5,
+  "contextClaudePattern": "claude|opus|sonnet|haiku",
+  "contextHandoffPct": 40,
+  "contextHandoffPctOther": 60,
+  "contextUnknownAfterMin": 10,
+  "relayTimeoutMin": 10,
   "heavySlots": 1,
   "heavyMaxLoad": 80,
   "deadPanePatterns": [

@@ -30,6 +30,8 @@ Needs: bun 1.3+, herdr, git, and the GitHub CLI (`gh`) for `merged`/`closed` sig
 | `ompUlwPath` | `~/.dori/omp-ulw/index.ts` | the omp-dori extension: omo model prompts for Dori and lane sessions |
 | `nudgeAfterMin`, `postAfterMin` | 15, 20 | `freshness` |
 | `closeAfterMin` | 5 | `watch` |
+| `contextClaudePattern`, `contextHandoffPct`, `contextHandoffPctOther` | `claude\|opus\|sonnet\|haiku`, 40, 60 | `context`: models matching the pattern hand off at the first percentage, others at the second |
+| `contextUnknownAfterMin`, `relayTimeoutMin` | 10, 10 | `context` (`CONTEXT_UNKNOWN`), `relay` (handoff wait) |
 | `heavySlots`, `heavyMaxLoad` | 1, 80 | `heavy` |
 | `deadPanePatterns` | `has stopped`, `no suitable jobs` | `dead-panes` |
 | `guard` | load 150/80, 20% memory, 50 GB disk, 20 panes | `guard` |
@@ -58,11 +60,13 @@ Every module takes its HTTP, clock and timers as arguments. That is how the test
 
 ## Commands
 
-### `dori launch <key> --title T --brief FILE --done "..." [--thread REF] [--model M] [--cwd DIR]`
-Opens a lane: appends the footer to the brief, opens a tab, starts the agent, and after 20 seconds checks it: `STARTUP_ERROR` on a known failure in the pane (missing module, no API key, unknown model, an omp extension that failed to load or an unknown flag such as `--dori-role` when the omp-dori extension is not installed, rate limit, quota), `STARTUP_OK` only when herdr reports the agent idle or working, and `STARTUP_UNCONFIRMED` (with the last lines) otherwise. Exit 3 on anything but `STARTUP_OK`.
+### `dori launch <key> --title T --brief FILE --done "..." [--thread REF] [--model M] [--cwd DIR] [--group NAME]`
+Opens a lane: appends the footer to the brief, places the pane, starts the agent, and after 20 seconds checks it: `STARTUP_ERROR` on a known failure in the pane (missing module, no API key, unknown model, an omp extension that failed to load or an unknown flag such as `--dori-role` when the omp-dori extension is not installed, rate limit, quota), `STARTUP_OK` only when herdr reports the agent idle or working, and `STARTUP_UNCONFIRMED` (with the last lines) otherwise. Exit 3 on anything but `STARTUP_OK`.
 
-### `dori adopt <key> --pane ID --title T --brief FILE --done "..." [--thread REF]`
-Registers a lane that is already running.
+Placement: without `--group` the lane gets its own tab in `laneWorkspace`. With `--group NAME`, an open lane of that group makes the new lane a split of that group's newest lane pane (right, then down, alternating) in the same workspace; with none open, dori creates a workspace labeled `NAME`. The lane record keeps `group`, `placement` (`tab`, `split`, `workspace`), `workspace`, and `workspaceCreated` when dori made the workspace. Different project or account: a different group, so its own workspace. Side work on the same project: the same group.
+
+### `dori adopt <key> --pane ID --title T --brief FILE --done "..." [--thread REF] [--group NAME]`
+Registers a lane that is already running. `--group` records the group and the pane's workspace; the workspace counts as not created by dori, so it is never closed.
 
 ### `dori sync [--write]`
 Prints `key | thread | pane | session | status` for every open lane and every unregistered agent pane, followed by drift. Read-only unless `--write`, which stores session ids.
@@ -71,7 +75,13 @@ Prints `key | thread | pane | session | status` for every open lane and every un
 The two halves of the done flow. Both message the lane's pane and check that Enter registered. Nothing is typed into a pane whose session has a tool approval prompt open (its pane state file says so); that send counts as failed.
 
 ### `dori close <key> [--note TEXT]`
-Closes a lane now. Refuses (exit 2) unless every `Done =` signal reads back live. On success it marks the thread done through `hooks.threadDone`, closes the tab, and removes the lane's worktrees with a plain `git worktree remove`, which refuses a dirty worktree.
+Closes a lane now. Refuses (exit 2) unless every `Done =` signal reads back live. On success it marks the thread done through `hooks.threadDone`, then closes what dori opened for the lane: its tab, or just its pane when it was placed as a split. When the lane was the last open one in a workspace dori created, the workspace is closed too. A workspace dori did not create, the lead pane and `ignorePanes` are never closed. It then removes the lane's worktrees with a plain `git worktree remove`, which refuses a dirty worktree.
+
+### `dori context [--loop MIN] [--relay]`
+Reads each open lane's model and context use from its pane state file (written by the omp-dori extension at session start and each turn end; only a file the pane's own agent wrote counts). A model matching `contextClaudePattern` is high at `contextHandoffPct` (40), any other at `contextHandoffPctOther` (60). Prints `CONTEXT_HIGH <key> <pane> <model> <pct>%` once per crossing; the lane record remembers it until usage falls back under the threshold. The lead pane is reported as `CONTEXT_HIGH lead ...` and never relayed. A lane with no context data `contextUnknownAfterMin` (10) minutes after it opened prints `CONTEXT_UNKNOWN <key> <pane>` once. With `--relay`, a crossing starts `dori relay` for that lane; a failed relay is not retried until the crossing resets, a skipped one is retried next tick.
+
+### `dori relay <key>`
+Hands a lane to a fresh pane. It sends the lane a `[LEAD]` message to stop new work and write a handoff to `<stateDir>/handoffs/<key>-<n>.md` (goal, done and not done, evidence, files/branches/SHAs, next steps, no secrets), then waits up to `relayTimeoutMin` (10) for the file; on timeout it prints `RELAY_FAILED <key> handoff not written` and changes nothing. Then it splits a new pane next to the lane's, starts the same agent command and model with the brief and handoff in the prompt, and runs the launch startup check. On `STARTUP_OK` the registry takes the new pane (`relays`, `previousPanes`, placement `split`), the old pane closes, and it prints `RELAYED <key> <old> -> <new>` (exit 0). On a failed start the new pane is closed, the old lane is untouched, and it prints `RELAY_FAILED` (exit 3). A lane with an open approval prompt, or whose agent is not idle or working, prints `RELAY_SKIPPED <key> <reason>` (exit 2).
 
 ### `dori pause <key> [--note TEXT]` / `dori resume <key> [--note TEXT]`
 `pause` is for when the owner said wait. It works on a `working` or `not-done` lane. It sends `/goal pause` to the lane's pane, then reads back the goal state the lane's session records in its pane state file (`<stateDir>/sessions/<pane>.json`, written by the omp-dori extension) until it reads `paused`, or `none`, since a lane with no goal has nothing to continue. A finished (`complete` or `dropped`) goal counts as no goal only when omp's `No active goal to pause.` line also appears on screen. Only then does it mark the lane `paused` (recorded in its history) and send Escape if a turn is running. The goal is paused first, so stopping the turn cannot hand off to a goal continuation. If the state does not change, the pane has no state file, or the send fails (it is never sent while a tool approval prompt is open), the lane is left as it was and the command prints `PAUSE_UNVERIFIED` and exits 3.

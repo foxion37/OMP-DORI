@@ -63,7 +63,7 @@ Do it yourself with every tool you have. Fix bugs without asking. Before buildin
 
 ## Sessions (lanes)
 
-Real work runs in its own herdr tab, called a lane. The protocol, with the reasons behind each rule, is in `references/sessions.md`; the short version:
+Real work runs in its own herdr session, called a lane. Each lane gets a placement: different projects or accounts (company, singandmong, personal) each get their own workspace, and side work on the same project is a split pane in that project's workspace. Pass the same `--group <project>` to `dori launch` for work on one project. Finished lanes are closed with their panes, and a dori-created workspace is closed with its last lane. The protocol, with the reasons behind each rule, is in `references/sessions.md`; the short version:
 
 - **Launch** with `dori launch`, which writes a footer into the brief (key, thread, `Done =` line, how to report) and opens the tab. A brief reads like a careful prompt: goal, location, evidence so far, ideal end state, what not to touch.
 - **Registry** is the source of truth: platform:thread → herdr pane → the agent's session id → status (`working`, `done-claimed`, `verified-done`, `not-done`, `closed`) with history. `dori sync` rebuilds it from live state and reports drift; it never deletes anything.
@@ -89,11 +89,13 @@ Real work runs in its own herdr tab, called a lane. The protocol, with the reaso
 
 | Command | Does |
 |---|---|
-| `dori launch` / `dori adopt` | open a lane in a new tab, or register one already running |
+| `dori launch` / `dori adopt` | open a lane (own tab, or with `--group` a split in the group's workspace), or register one already running |
 | `dori sync [--write]` | rebuild the registry from live panes, report drift |
 | `dori claim-done` / `dori object-done` / `dori close` | the done flow |
 | `dori pause` / `dori resume` | the owner said wait: no nudges, goal paused, running turn stopped; and back |
 | `dori watch` | the 5-minute auto-close watcher (run it under the `monitor` tool) |
+| `dori context [--relay]` | context use per lane: `CONTEXT_HIGH` at 40% for Claude-family models (60% others); `--relay` hands full lanes over |
+| `dori relay <key>` | lane writes a handoff, a successor pane starts next to it, the old pane closes |
 | `dori freshness` | nudge silent lanes, post their last report to their thread |
 | `dori dead-panes` | report agent panes that stopped |
 | `dori guard` | host load, memory, disk and pane-count alerts |

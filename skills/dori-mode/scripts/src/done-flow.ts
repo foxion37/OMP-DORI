@@ -4,6 +4,7 @@ import { type DoriConfig, fill } from "./config.ts";
 import { type Lane, type Registry, statusOf, withStatus } from "./registry.ts";
 import { type Clock, iso, type Runner } from "./run.ts";
 import { sendVerified } from "./panes.ts";
+import { closePlacement } from "./placement.ts";
 import { checkDone, type SignalIo } from "./signals.ts";
 
 export type FlowDeps = {
@@ -75,8 +76,7 @@ export const closeLane = async (deps: FlowDeps, lane: Lane, note: string): Promi
     const r = await deps.run(fill(hook, { thread: lane.thread, text: note, key: lane.key }));
     cleanup.push(r.code === 0 ? "thread marked done" : `thread hook failed: ${r.err.slice(0, 160)}`);
   }
-  if (lane.tab) cleanup.push((await deps.run(["herdr", "tab", "close", lane.tab])).code === 0 ? `tab ${lane.tab} closed` : `tab ${lane.tab} not closed`);
-  else if (lane.pane) cleanup.push((await deps.run(["herdr", "pane", "close", lane.pane])).code === 0 ? `pane ${lane.pane} closed` : `pane ${lane.pane} not closed`);
+  cleanup.push(...(await closePlacement(deps, lane)));
   const root = lane.cwd ?? deps.config.defaultCwd;
   for (const wt of (await discoverWorktrees(lane, deps.run, [deps.config.defaultCwd])).filter(exists)) {
     const r = await deps.run(["git", "-C", root, "worktree", "remove", wt]);
