@@ -139,7 +139,8 @@ test("launch reports STARTUP_OK only on a ready agent status; a blank pane is un
   expect(await run(undefined, "Error: provider refused the key\n$ ", "worded-lane")).toStartWith("STARTUP_UNCONFIRMED worded-lane w:p9");
   expect(await run("idle", "No API key found\n❯ ", "err-lane")).toBe("STARTUP_ERROR err-lane w:p9: No API key");
   expect(await run("blocked", "❯ ", "blocked-lane")).toStartWith("STARTUP_UNCONFIRMED blocked-lane w:p9");
-  expect(await run("done", "❯ ", "done-lane")).toStartWith("STARTUP_UNCONFIRMED done-lane w:p9");
+  // herdr shows an agent that finished its first turn and waits for input as "done": it is running.
+  expect(await run("done", "❯ ", "done-lane")).toBe("STARTUP_OK done-lane w:p9");
   // omp's own startup failures: omp-dori missing (its flag unknown), an extension that did not load, a bad model.
   expect(await run(undefined, "Error: unknown flag: --dori-role\nRun `omp --help` for available flags.\n$ ", "flag-lane")).toBe("STARTUP_ERROR flag-lane w:p9: unknown flag: ");
   expect(await run("idle", "Failed to load extension ~/.omp/agent/extensions/omp-dori: boom\n❯ ", "ext-lane")).toBe("STARTUP_ERROR ext-lane w:p9: Failed to load extension");
