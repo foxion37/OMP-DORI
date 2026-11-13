@@ -75,7 +75,8 @@ export const checkStartup = async (deps: FlowDeps, key: string, pane: string): P
   const bad = STARTUP_FAILURE.exec(screen);
   if (bad) return `STARTUP_ERROR ${key} ${pane}: ${bad[0]}`;
   const { status, error } = await statusLookup(deps.run, pane);
-  if (status === "idle" || status === "working") return `STARTUP_OK ${key} ${pane}`;
+  // herdr reports an agent that finished its first turn and sits ready as "done".
+  if (status === "idle" || status === "working" || status === "done") return `STARTUP_OK ${key} ${pane}`;
   const why = error ? `status lookup failed: ${error}` : `no ready agent status (${status ?? "none"})`;
   return `STARTUP_UNCONFIRMED ${key} ${pane}: ${why}; last lines: ${lastLines(screen)}`;
 };
