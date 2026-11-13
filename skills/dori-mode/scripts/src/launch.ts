@@ -1,6 +1,7 @@
 import { fill } from "./config.ts";
 import type { FlowDeps } from "./done-flow.ts";
 import { listPanes, readScreen, statusLookup } from "./panes.ts";
+import { applyLaneLabel, laneLabel } from "./labels.ts";
 import { GROUP_NAME, placeLane } from "./placement.ts";
 import { LANE_KEY, type Lane } from "./registry.ts";
 import { iso } from "./run.ts";
@@ -46,26 +47,31 @@ export const footer = (lane: Lane, leadPane: string): string => [
 export const adoptLane = async (deps: FlowDeps, input: LaunchInput & { readonly pane: string }): Promise<Lane> => {
   await validateLaunch(deps, input);
   const workspace = input.group ? (await listPanes(deps.run).catch(() => [])).find((p) => p.pane_id === input.pane)?.workspace_id : undefined;
-  const lane: Lane = { key: input.key, title: input.title, thread: input.thread ?? "none", pane: input.pane, brief: input.brief, done: input.done, cwd: input.cwd ?? deps.config.defaultCwd, openedAt: iso(deps.clock), ...(input.group ? { group: input.group } : {}), ...(workspace ? { workspace } : {}) };
+  const thread = input.thread ?? "none";
+  const lane: Lane = { key: input.key, title: input.title, thread, label: laneLabel({ title: input.title, thread }), pane: input.pane, brief: input.brief, done: input.done, cwd: input.cwd ?? deps.config.defaultCwd, openedAt: iso(deps.clock), ...(input.group ? { group: input.group } : {}), ...(workspace ? { workspace } : {}) };
   await deps.registry.write(lane);
   return lane;
 };
 
-export const launchLane = async (deps: FlowDeps, input: LaunchInput): Promise<{ readonly lane: Lane; readonly startup: string }> => {
+export const launchLane = async (deps: FlowDeps, input: LaunchInput): Promise<{ readonly lane: Lane; readonly startup: string; readonly labels: readonly string[] }> => {
   await validateLaunch(deps, input);
   const model = input.model ?? deps.config.defaultModel;
   const cwd = input.cwd ?? deps.config.defaultCwd;
   const briefFile = Bun.file(input.brief);
   if (!(await briefFile.exists())) throw new LaunchError(`brief not found: ${input.brief}`);
-  const draft: Lane = { key: input.key, title: input.title, thread: input.thread ?? "none", brief: input.brief, done: input.done, cwd, model, openedAt: iso(deps.clock), ...(input.group ? { group: input.group } : {}) };
+  const thread = input.thread ?? "none";
+  const label = laneLabel({ title: input.title, thread });
+  const draft: Lane = { key: input.key, title: input.title, thread, label, brief: input.brief, done: input.done, cwd, model, openedAt: iso(deps.clock), ...(input.group ? { group: input.group } : {}) };
   await Bun.write(input.brief, `${(await briefFile.text()).replace(/\s*$/, "")}\n${footer(draft, deps.config.leadPane)}`);
-  const placed = await placeLane(deps, { key: input.key, group: input.group, cwd });
+  const placed = await placeLane(deps, { key: input.key, label, group: input.group, cwd });
   const pane = placed.pane;
   const prompt = `${deps.config.launchKeywords}. Read and execute the lane brief at ${input.brief} in full. You are the ${input.key} lane; report as the brief's footer says.`;
-  await deps.run(["herdr", "pane", "run", pane, fill(deps.config.agentCommand, { model, prompt }).map(quoteForPane).join(" ")]);
+  await deps.run(["herdr", "pane", "run", pane, agentLine(deps, label, model, prompt)]);
+  // The tab and workspace were created with this label; a split pane only needs its own rename.
+  const labels = await applyLaneLabel(deps, { pane }, label);
   const lane: Lane = { ...draft, ...placed, ...(input.group ? { group: input.group } : {}) };
   await deps.registry.write(lane);
-  return { lane, startup: await checkStartup(deps, input.key, pane) };
+  return { lane, startup: await checkStartup(deps, input.key, pane), labels };
 };
 
 /** Waits for a freshly started agent, then reports STARTUP_ERROR / STARTUP_OK / STARTUP_UNCONFIRMED for its pane. */
@@ -85,3 +91,10 @@ const lastLines = (screen: string): string =>
   screen.split("\n").map((s) => s.trim()).filter(Boolean).slice(-3).join(" / ").replace(/\/(Users|home|Volumes|private)\/\S+/g, "(local path)").slice(0, 240) || "(blank)";
 
 export const quoteForPane = (arg: string): string => (/^[\w./:@=-]+$/.test(arg) ? arg : `'${arg.replace(/'/g, `'\\''`)}'`);
+
+/**
+ * The command line a pane runs verbatim, with the lane label in `DORI_LANE_LABEL` so the omp-dori extension can name
+ * the session after it. `env` keeps the assignment out of the shell's own parsing.
+ */
+export const agentLine = (deps: FlowDeps, label: string, model: string, prompt: string): string =>
+  ["env", `DORI_LANE_LABEL=${label}`, ...fill(deps.config.agentCommand, { model, prompt })].map(quoteForPane).join(" ");

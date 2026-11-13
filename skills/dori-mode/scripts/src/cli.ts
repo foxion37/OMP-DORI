@@ -99,7 +99,8 @@ try {
   switch (command) {
     case "launch": {
       const r = await launchLane(deps, { key: key ?? "", title: need("title"), brief: need("brief"), done: need("done"), thread: opt("thread"), model: opt("model"), cwd: opt("cwd"), group: opt("group") });
-      console.log(`LAUNCHED ${r.lane.key} pane=${r.lane.pane} tab=${r.lane.tab ?? "?"} placement=${r.lane.placement ?? "?"} workspace=${r.lane.workspace ?? "?"}${r.lane.group ? ` group=${r.lane.group}` : ""}`);
+      console.log(`LAUNCHED ${r.lane.key} pane=${r.lane.pane} tab=${r.lane.tab ?? "?"} placement=${r.lane.placement ?? "?"} workspace=${r.lane.workspace ?? "?"}${r.lane.group ? ` group=${r.lane.group}` : ""} label=${JSON.stringify(r.lane.label ?? "")}`);
+      for (const line of r.labels) console.log(line);
       console.log(r.startup);
       process.exit(r.startup.startsWith("STARTUP_OK") ? 0 : 3);
     }

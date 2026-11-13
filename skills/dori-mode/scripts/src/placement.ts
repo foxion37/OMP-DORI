@@ -41,7 +41,7 @@ export const splitPane = async (deps: FlowDeps, from: string, direction: Directi
   return parse("pane split", r.out, (j) => (j.result.pane?.pane_id ? (j.result.pane as PaneInfo) : undefined));
 };
 
-export const placeLane = async (deps: FlowDeps, input: { key: string; group?: string | undefined; cwd: string }): Promise<Placed> => {
+export const placeLane = async (deps: FlowDeps, input: { key: string; label: string; group?: string | undefined; cwd: string }): Promise<Placed> => {
   const plan = planPlacement(await deps.registry.open(), input.group);
   if (plan.kind === "split") {
     const workspace = plan.from.workspace ?? (await listPanes(deps.run)).find((p) => p.pane_id === plan.from.pane)?.workspace_id;
@@ -50,13 +50,13 @@ export const placeLane = async (deps: FlowDeps, input: { key: string; group?: st
     return { pane: pane.pane_id, ...(pane.tab_id ? { tab: pane.tab_id } : {}), ...(ws ? { workspace: ws } : {}), placement: "split" };
   }
   if (plan.kind === "workspace") {
-    const r = await deps.run(["herdr", "workspace", "create", "--cwd", input.cwd, "--label", input.group ?? input.key, "--no-focus"]);
+    const r = await deps.run(["herdr", "workspace", "create", "--cwd", input.cwd, "--label", input.label, "--no-focus"]);
     if (r.code !== 0) throw new LaunchError(`herdr workspace create failed: ${r.err || r.out}`);
     const made = parse("workspace create", r.out, (j) => (j.result.root_pane?.pane_id ? { root: j.result.root_pane as PaneInfo, ws: j.result.workspace?.workspace_id as string | undefined } : undefined));
     const ws = made.ws ?? made.root.workspace_id;
     return { pane: made.root.pane_id, ...(made.root.tab_id ? { tab: made.root.tab_id } : {}), ...(ws ? { workspace: ws } : {}), placement: "workspace", workspaceCreated: true };
   }
-  const created = await deps.run(["herdr", "tab", "create", ...(deps.config.laneWorkspace ? ["--workspace", deps.config.laneWorkspace] : []), "--cwd", input.cwd, "--label", input.key, "--no-focus"]);
+  const created = await deps.run(["herdr", "tab", "create", ...(deps.config.laneWorkspace ? ["--workspace", deps.config.laneWorkspace] : []), "--cwd", input.cwd, "--label", input.label, "--no-focus"]);
   if (created.code !== 0) throw new LaunchError(`herdr tab create failed: ${created.err || created.out}`);
   const made = parse("tab create", created.out, (j) => (j.result.root_pane?.pane_id ? { root: j.result.root_pane as PaneInfo, tab: j.result.tab_id as string | undefined } : undefined));
   const tab = made.tab ?? made.root.tab_id;

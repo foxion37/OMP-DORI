@@ -1,9 +1,9 @@
 import { existsSync, mkdirSync, renameSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-import { fill } from "./config.ts";
 import type { FlowDeps } from "./done-flow.ts";
-import { checkStartup, quoteForPane } from "./launch.ts";
+import { applyLaneLabel, laneLabelOf } from "./labels.ts";
+import { agentLine, checkStartup } from "./launch.ts";
 import { statusLookup, sendVerified } from "./panes.ts";
 import { splitPane } from "./placement.ts";
 import { type Lane, statusOf } from "./registry.ts";
@@ -76,18 +76,22 @@ export const relayLane = async (deps: FlowDeps, listed: Lane): Promise<RelayResu
   }
   const pane = fresh.pane_id;
   const prompt = `${deps.config.launchKeywords}. Read the lane brief at ${lane.brief} and the handoff at ${handoff}; you are the ${key} lane taking over; verify the handoff against the real state, then continue.`;
-  const started = await deps.run(["herdr", "pane", "run", pane, fill(deps.config.agentCommand, { model, prompt }).map(quoteForPane).join(" ")]);
+  // The successor shows the same label: the session name comes from the environment, the pane from the rename below.
+  const label = laneLabelOf(lane);
+  const started = await deps.run(["herdr", "pane", "run", pane, agentLine(deps, label, model, prompt)]);
   const startup = started.code === 0 ? await checkStartup(deps, key, pane) : `STARTUP_ERROR ${key} ${pane}: herdr pane run failed`;
   if (!startup.startsWith("STARTUP_OK")) {
     await deps.run(["herdr", "pane", "close", pane]);
     return fail(key, `successor did not start (${startup.slice(0, 200)}); old pane ${oldPane} kept`);
   }
 
+  const labels = await applyLaneLabel(deps, { pane }, label);
   const workspace = lane.workspace ?? fresh.workspace_id;
   const tab = fresh.tab_id ?? lane.tab;
   const { session: _session, sessionVia: _via, tab: _tab, ...kept } = lane;
   await deps.registry.write({
     ...kept,
+    label,
     pane,
     ...(tab ? { tab } : {}),
     ...(workspace ? { workspace } : {}),
@@ -100,5 +104,5 @@ export const relayLane = async (deps: FlowDeps, listed: Lane): Promise<RelayResu
     contextUnknownAlerted: false,
   });
   const closed = (await deps.run(["herdr", "pane", "close", oldPane])).code === 0;
-  return { outcome: "relayed", lines: [`RELAYED ${key} ${oldPane} -> ${pane}${closed ? "" : ` (old pane ${oldPane} could not be closed)`}`] };
+  return { outcome: "relayed", lines: [`RELAYED ${key} ${oldPane} -> ${pane}${closed ? "" : ` (old pane ${oldPane} could not be closed)`}`, ...labels] };
 };
