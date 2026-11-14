@@ -109,6 +109,7 @@ export const prepareLaunch = async (
       ...Object.fromEntries(Object.entries(input.budget ?? {}).filter(([, value]) => value !== undefined)),
     },
     activityPaths: input.activityPaths ?? [],
+    ...(input.group === undefined ? {} : { group: input.group }),
   };
   // A damaged journal line is a warning: it must not keep a lane from starting or hide the lessons around it.
   const { lessons, problems, omitted } = new Lessons(deps.config.stateDir).forRepo(cwd);

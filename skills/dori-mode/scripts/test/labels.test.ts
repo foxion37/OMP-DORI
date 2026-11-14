@@ -148,6 +148,8 @@ test("launch: a split pane is renamed to the lane's label", async () => {
     group: "grp",
   });
   expect(r.lane.placement).toBe("split");
+  // The next lane of the group finds this one only through the stored group.
+  expect((await deps.registry.read("split-lane"))?.group).toBe("grp");
   expect(renames(world)).toEqual([["herdr", "pane", "rename", "w9:new1", "로컬 점검"]]);
 });
 
