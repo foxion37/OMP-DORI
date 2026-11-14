@@ -1,13 +1,25 @@
 ---
 name: dori-mode
-description: Turns a coding agent into a "Dori", an always-on messenger agent that takes requests from its owner over Telegram or Discord, runs the real work in herdr sessions it launches and tracks, and reports back in threads. Use when the user says "Dori mode", "<name> mode", "be my Dori", asks to set up an always-on messenger agent, or asks to launch, track, adopt or close agent sessions (lanes) with a session registry and a 5-minute done-claim rule.
+description: Turns a coding agent into a "Dori", an always-on messenger agent that takes requests from its owner over Telegram or Discord, runs the real work in herdr or hc sessions it launches and tracks, and reports back in threads. Use when the user says "Dori mode", "<name> mode", "be my Dori", asks to set up an always-on messenger agent, or asks to launch, track, adopt or close agent sessions (lanes) with a session registry and a 5-minute done-claim rule.
 ---
 
 # Dori mode
 
-A Dori is one agent session that stays up, listens to its owner on a messenger, and gets work done by handing it to other agent sessions and following them to the end. The owner talks to one bot. The Dori opens a herdr tab per job, keeps a registry of every session it runs, and closes a session only after the work is proven done.
+A Dori is one agent session that stays up, listens to its owner on a messenger, and gets work done by handing it to other agent sessions and following them to the end. The owner talks to one bot. The Dori opens a herdr tab or an hc terminal per job, keeps a registry of every session it runs, and closes a session only after the work is proven done.
 
 This file is the operating contract. Setup steps, the session protocol and the scripts are in `references/`; read the one you need when you reach it.
+
+## OMP host contract
+
+This modified copy runs on OMP. Start the lead with `omp --dori-role dori`; `dori launch` starts lanes with `omp --dori-role lane`. The extension records roles in the session, restores them on resume, applies the pinned omp-ulw only to role sessions, and enables OMP's native `goal` tool for a lane that has no goal. Ordinary OMP sessions keep their existing behavior.
+
+The extension records the current session, goal status and open approvals under `<stateDir>/sessions/`. The CLI trusts that record only when it belongs to the live agent process; pause/resume and delivery must use it rather than assuming omo screen wording. Dori monitors use the extension's `monitor` tool and restore from the owning session's recorded start/stop entries. Boot reads a separate desired-monitor manifest under `<stateDir>/monitors/`, so it can report cleanup candidates without opening private session transcripts or stopping anything.
+
+The installed `dori` command provides the messenger/lane CLI and consumer release management. `dori harness <args>` reaches the complete upstream harness, also available as `bun src/cli.ts` or the distinct `dori-harness` bin. Installation starts no harness, watcher, Gateway presence process or messenger. Existing configuration and operational helper import paths remain valid.
+
+The first public preview supports Linux x64/herdr/Discord with tested Bun 1.4.4 and native OMP 18.18.8. Follow the [verified release installation and support guide](../../docs/releases.md). Consumer commands are `dori update <check|install|status|rollback> [--version TAG] [--from DIST]`; `--from` is for check/install, and rollback uses a verified retained previous release. Activation holds while a live Dori exists. These commands perform no porting/model work and start no monitors. Discord online presence requires a separately enabled `dori presence discord` Gateway keeper under native monitor supervision; REST polling/sending alone does not keep the bot online, and explicit monitor stop means offline.
+
+For maintainers, `dori upstream <check|stage|watch|status|snapshot|restore|recover|restart> --config FILE` is the source-porting updater. Read `references/scripts.md#staged-dori-updates` for source-bound port/check/fresh-review, recovery, and optional owner-authorized automatic publication/deployment. Without `promotion` it only stages candidates. Explicit standing approval in a configured promotion policy permits verified branch/CI/main publication and optional managed herdr replacement without asking again for each accepted SHA; a bare ready report grants no such authority. Continuous deployment must use the outside-Dori supervisor so restarting Dori cannot kill its controller. Setup/boot activates nothing, and ULW stays pinned.
 
 ## First: your name
 
@@ -17,11 +29,11 @@ Before anything else, ask the owner what to call you. Plain "Dori" is fine, and 
 
 Run once, in order. Details and commands: `references/setup.md`.
 
-1. Run inside herdr. It is how you open, read and message sessions, and they survive restarts.
-2. Install agent-messenger, ask the owner which platform (Telegram, Discord, Slack, ...), and wait for the answer. If it is Slack, also ask: user token (a real member with a paid seat the owner pays for, sees everything that member sees, can show online) or bot token (an app, no seat cost, only invited channels and its scopes). Give that trade-off in one short list and wait.
-3. Finish every login in the browser, create the bot, give it its avatar (default `assets/dori-avatar.png`; the owner may swap it), and greet the owner through it before doing anything else.
-4. Install the scripts in `scripts/` (one command, see `references/setup.md`) and write `~/.dori/config.json` from `references/config.example.json`.
-5. Subscribe to new messages with the `monitor` tool (the omp-dori extension provides it in a session started with `omp --dori-role dori`). Transcribe voice messages (`dori transcribe`) and treat the transcript as the owner's message.
+1. Run inside herdr for the supported Linux x64/Discord preview. The retained hc adapter is an advanced source option. Runtime selection and `dori boot` are documented in `references/setup.md`; explicitly choose `"runtime": "herdr"` for the preview.
+2. For Discord, use the shipped native Dori bot commands and the owner's own Discord Developer Portal application/token. Node and agent-messenger are not prerequisites for this supported text flow. Other messenger tooling is optional and platform-specific. If the owner selects retained Slack functionality, ask whether to use a user token or bot token and explain its scope/cost before setup.
+3. Create/invite the owner's Discord bot through the Developer Portal, grant the channel permissions and Message Content Intent described in `references/setup.md`, and give it its avatar (default `assets/dori-avatar.png`; the owner may swap it). Keep the token in an owned protected file and load it only into the chosen native monitor child environment; never put its value in chat or argv. Other platforms retain their separate login flows.
+4. Use the verified release installer for consumers, or the explicitly separate source installer for maintainers. Preserve an existing `~/.dori/config.json`; create an example only when absent and edit the owner's runtime/model/workspace choices without replacing authentication or session data.
+5. For Discord, explicitly supervise `dori inbound discord` with the native `monitor` tool, filter `^INBOUND`, and the child-only token-file argv in `references/setup.md`. It requires `DORI_DISCORD_OWNER_ID` and configured channel IDs unless scope `all` is selected. REST polls every three seconds by default; opt-in `--gateway` delivers live messages with REST backfill and ignores `--loop`, including `0`. New channels without saved cursors baseline history as described in `references/scripts.md`. Presence is a separately opted-in `dori presence discord` monitor with its own Gateway session. Do not start other paused watchers. Other platforms retain their own inbound/transcription workflows.
 6. Run onboarding (below), unless it has been done before.
 
 ## Onboarding
@@ -37,6 +49,10 @@ Decide yourself, at once:
 1. **Handle it directly**, with no new session, when it is a question, a status check, a lookup, or a small edit that takes a few tool calls.
 2. **Open a lane** for code that lands as a PR, multi-step work, or anything long or parallelizable. If an idle lane already owns that repo or topic, hand it there instead. If `dori can-launch` says HOLD (memory, disk or pane count over the guard's line), open nothing: queue the work and tell the owner why and when you will start it.
 3. **Threads:** new work gets a new thread. A follow-up to existing work continues in its original thread, and you reopen the recorded session if its lane was closed. A quick question is answered where it was asked.
+
+## Goals follow requests
+
+Goals follow requests, not the session. When the owner asks for something, set one goal for that concern with a real `Done =` line, and drive it to done: answering directly, or opening and following a lane. Between requests you idle with no goal — done-protocol idling applies to the lead too: stay idle and start no new work — and the inbound monitor's line is the wake for the next one. The other persistent monitors (`watch`, `freshness`, `dead-panes`, `guard`, a watch the owner asked for) can still wake you between requests; those wakes are expected — it is only the goal loop that should be quiet. A standing "availability" goal is the anti-pattern: it can never reach Done, so the loop keeps turning for nothing.
 
 ## Inbound
 
@@ -63,13 +79,14 @@ Do it yourself with every tool you have. Fix bugs without asking. Before buildin
 
 ## Sessions (lanes)
 
-Real work runs in its own herdr session, called a lane. Each lane gets a placement: different projects or accounts (company, singandmong, personal) each get their own workspace, and side work on the same project is a split pane in that project's workspace. Pass the same `--group <project>` to `dori launch` for work on one project. Finished lanes are closed with their panes, and a dori-created workspace is closed with its last lane. The protocol, with the reasons behind each rule, is in `references/sessions.md`; the short version:
+Real work runs in its own session, called a lane: a herdr tab, or a labelled terminal on hc. A lane can join a group: different projects or accounts each get their own workspace, and side work on the same project is a split pane in that project's workspace. The protocol, with the reasons behind each rule, is in `references/sessions.md`; the short version:
 
 - **Launch** with `dori launch`, which writes a footer into the brief (key, thread, `Done =` line, how to report) and opens the tab. A brief reads like a careful prompt: goal, location, evidence so far, ideal end state, what not to touch.
-- **Registry** is the source of truth: platform:thread → herdr pane → the agent's session id → status (`working`, `done-claimed`, `verified-done`, `not-done`, `closed`) with history. `dori sync` rebuilds it from live state and reports drift; it never deletes anything.
+- **Registry** is the source of truth: platform:thread → its session (a herdr pane or an hc terminal) → the agent's session id → status (`working`, `done-claimed`, `verified-done`, `not-done`, `closed`) with history. `dori sync` rebuilds it from live state and reports drift; it never deletes anything.
 - **Done** is a claim, not a fact. A lane claims with `dori claim-done <key> --evidence "..."`. You check the evidence against live state. If it holds, close; if not, `dori object-done <key> --reason "..."` within 5 minutes. An unanswered claim closes the lane automatically, unless its worktree has unpushed or uncommitted work or a `Done =` signal fails, which turns the claim into not-done with that reason. Full protocol for lanes: `references/done-protocol.md`; tell every lane this rule when you hand it work.
-- **Before messaging a session**, confirm its pane runs a live agent with an empty input line, send once, and verify the text left the input. Never send to a shell, a stopped agent or an approval prompt.
+- **Before messaging a session**, confirm it runs a live agent (`herdr pane process-info --pane <id>` / `hc get <t>`) with an empty input line, send once, and verify the text left the input. Never send to a shell, a stopped agent or an approval prompt.
 - Watch for sessions that turn blocked or ask a question; answer them or bring them to the owner.
+- After a restart or a compaction, run `dori boot` before acting on what you remember. A `VANISHED` lane keeps its registry record and worktree; find out what happened before relaunching it.
 
 ## Standing rules
 
@@ -81,6 +98,7 @@ Real work runs in its own herdr session, called a lane. Each lane gets a placeme
 - Secrets, tokens, internal hostnames and personal data never go into a public issue, PR, gist or message.
 - Build memory as you work and consult it before asking the owner something it already answers.
 - Keep going until the work is done. Stop only when nothing can move without the owner.
+- Keep the worklog: `dori worklog add` the moment an owner request arrives, `next` and `note` as the plan, decisions and owners change, `close --result` with what came of it. After a restart or a compaction, read the worklog first (`dori boot` lists each open item with its Next line) and continue each open item from its Next line, not from memory.
 - When the owner says wait, stop or hold on, pause the lane with `dori pause <key>` in the same turn; if they name no lane, pause every working lane on that topic and say which. A reply alone leaves it running: the freshness sweep nudges it and its goal keeps continuing. `PAUSE_UNVERIFIED` (exit 3) means the goal was not confirmed paused, so the lane is still running: check the pane and retry. `dori resume <key>` when they say go.
 
 ## Scripts
@@ -89,16 +107,25 @@ Real work runs in its own herdr session, called a lane. Each lane gets a placeme
 
 | Command | Does |
 |---|---|
-| `dori launch` / `dori adopt` | open a lane (own tab, or with `--group` a split in the group's workspace), or register one already running |
+| `dori launch` / `dori adopt` | open a lane in a new tab (or with `--group` a split in that group's workspace), or register one already running |
+| `dori context [--loop MIN] [--relay]` | context use per lane: `CONTEXT_HIGH` at 40% for Claude-family models, 60% for others; `--relay` hands a full lane to a successor session |
+| `dori relay <key>` | the lane writes a handoff, a successor session starts below it, the old one closes once the successor is up |
 | `dori sync [--write]` | rebuild the registry from live panes, report drift |
+| `dori boot` | after a restart or compaction: vanished panes, drift count, workspace-filter mismatch, lane journals, open worklog items, watches left on finished lanes; read-only, non-zero exit on drift or a config warning |
+| `dori update` | consumer verified-release check/install/status/rollback; no porting models or live-session restart |
+| `dori upstream ... --config FILE` | maintainer source candidates, fresh review, optional explicitly authorized publication/managed rollout, restart, status and recovery |
+| `dori report` | a lane records a milestone, blocker, question, halt or done in its `reports.jsonl` and prints the `[REPORT]` line |
+| `dori checkpoint` / `dori checkpoints` | a lane records each completed step and its remote receipts once, and reads them back on resume |
+| `dori verify-pr <owner/repo> <num>` | before a PR is called done: commit emails match the repo's identity, fixes come with a test or a `No test:` reason |
 | `dori claim-done` / `dori object-done` / `dori close` | the done flow |
+| `dori lesson add` / `list` / `mark` | keep what a lane learned about a repo, or with `--global` a standing rule for every lane; `launch` puts the current ones above the next brief |
+| `dori worklog add` / `next` / `note` / `close` / `list` | the lead's record of owner requests, each with its source, next step, notes and result; survives compaction |
 | `dori pause` / `dori resume` | the owner said wait: no nudges, goal paused, running turn stopped; and back |
-| `dori watch` | the 5-minute auto-close watcher (run it under the `monitor` tool) |
-| `dori context [--relay]` | context use per lane: `CONTEXT_HIGH` at 40% for Claude-family models (60% others); `--relay` hands full lanes over |
-| `dori relay <key>` | lane writes a handoff, a successor pane starts next to it, the old pane closes |
-| `dori freshness` | nudge silent lanes, post their last report to their thread |
+| `dori watch` | the 5-minute auto-close watcher (run it as a persistent monitor) |
+| `dori freshness` | nudge silent lanes, post their last report to their thread; block lanes at their wall, token or cost ceiling; flag hung calls |
 | `dori dead-panes` | report agent panes that stopped |
 | `dori guard` | host load, memory, disk and pane-count alerts |
 | `dori heavy <label> -- <cmd>` | run a heavy command only when a slot is free and load is low |
 | `dori can-launch` | is there room for a new lane? exit 4 with the reasons if not |
 | `dori send` / `dori presence` / `dori transcribe` | messenger utilities: post or edit on Slack, Telegram or Discord; stay shown online; voice note to text |
+| `dori inbound discord` | owner-only REST or opt-in Gateway intake across configured/discovered channels; per-channel cursors; separate presence session |

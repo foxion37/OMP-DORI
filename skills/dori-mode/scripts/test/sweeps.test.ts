@@ -1,31 +1,43 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdirSync, utimesSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-
 import { deadPaneTick, newDeadPaneState } from "../src/dead-panes.ts";
-import { freshnessTick } from "../src/freshness.ts";
-import { acquireSlot, releaseSlot } from "../src/heavy-slot.ts";
-import { guardTick } from "../src/host-guard.ts";
-import { adoptLane, launchLane, LaunchError } from "../src/launch.ts";
+import { freshnessTick, lastReportLine } from "../src/freshness.ts";
 import type { Lane } from "../src/registry.ts";
-import { resolveSession, sessionDirFor } from "../src/session-id.ts";
-import { depsFor, fakeClock, laneState, newWorld, sent, withState, type World } from "./fakes.ts";
+import { runtimesFor } from "../src/run.ts";
+import { syncRegistry } from "../src/sync.ts";
+import { hcTerm } from "./hc-runner.ts";
+import { depsFor, fakeClock, newWorld, sent, withState, type World } from "./fakes.ts";
 
 const T0 = Date.parse("2026-01-01T12:00:00.000Z");
+
 const MIN = 60_000;
+
 let state: ReturnType<typeof withState>;
+
 let world: World;
+
 beforeEach(() => {
   state = withState();
   world = newWorld();
 });
+
 afterEach(() => state.done());
 
-const working: Lane = { key: "quiet-lane", title: "quiet", thread: "chat:team/9", pane: "w:p7", brief: "/b.md", done: "merged acme/app#1", openedAt: new Date(T0).toISOString(), lastReplyAt: T0 };
+const working: Lane = {
+  key: "quiet-lane",
+  title: "quiet",
+  thread: "chat:team/9",
+  pane: "w:p7",
+  brief: "/b.md",
+  done: "merged acme/app#1",
+  openedAt: new Date(T0).toISOString(),
+  lastReplyAt: T0,
+};
 
 test("a lane silent past the nudge time is nudged once, then its last report is posted for it", async () => {
-  const deps = (ms: number) => depsFor(world, fakeClock(ms), state.dir, { hooks: { threadReply: ["notify", "{thread}", "{text}"] } });
+  const deps = (ms: number) =>
+    depsFor(world, fakeClock(ms), state.dir, { hooks: { threadReply: ["notify", "{thread}", "{text}"] } });
   await deps(T0).registry.write(working);
+  world.panes = [{ pane_id: "w:p7", workspace_id: "w", agent: "pi", agent_status: "idle" }];
   world.screen = "noise\n[REPORT] quiet-lane | milestone | tests green on /home/test/repo, PR open\n❯ ";
   expect(await freshnessTick(deps(T0 + 10 * MIN), "/home/test")).toEqual([]);
   expect((await freshnessTick(deps(T0 + 16 * MIN), "/home/test")).map((a) => a.kind)).toEqual(["nudged"]);
@@ -41,15 +53,57 @@ test("a lane silent past the nudge time is nudged once, then its last report is 
 });
 
 test("a stopped agent pane is reported once per hour and the lead pane is never reported", async () => {
-  world.panes = [{ pane_id: "w:p1", workspace_id: "w" }, { pane_id: "lead:p1", workspace_id: "lead" }];
+  world.panes = [
+    { pane_id: "w:p1", workspace_id: "w" },
+    { pane_id: "lead:p1", workspace_id: "lead" },
+  ];
   world.screen = "omo has stopped\n$ ";
   const deps = depsFor(world, fakeClock(T0), state.dir);
   const seen = new Set<string>();
+  const rts = runtimesFor(deps.config, {}, deps.run);
   const st = newDeadPaneState();
-  expect(await deadPaneTick(deps.run, deps.config, seen, "2026-01-01T12", st)).toEqual([]);
-  expect(await deadPaneTick(deps.run, deps.config, seen, "2026-01-01T12", st)).toEqual(["DEAD_PANE w:p1"]);
-  expect(await deadPaneTick(deps.run, deps.config, seen, "2026-01-01T12", st)).toEqual([]);
-  expect(await deadPaneTick(deps.run, deps.config, seen, "2026-01-01T13", st)).toEqual(["DEAD_PANE w:p1"]);
+  expect(await deadPaneTick(deps.run, deps.config, seen, "2026-01-01T12", st, rts)).toEqual([]);
+  expect(await deadPaneTick(deps.run, deps.config, seen, "2026-01-01T12", st, rts)).toEqual(["DEAD_PANE w:p1"]);
+  expect(await deadPaneTick(deps.run, deps.config, seen, "2026-01-01T12", st, rts)).toEqual([]);
+  expect(await deadPaneTick(deps.run, deps.config, seen, "2026-01-01T13", st, rts)).toEqual(["DEAD_PANE w:p1"]);
+});
+
+test("with workspaces set, herdr panes are still filtered by their workspace", async () => {
+  world.panes = [
+    { pane_id: "w:p1", workspace_id: "w" },
+    { pane_id: "x:p2", workspace_id: "x" },
+  ];
+  world.screen = "omo has stopped\n$ ";
+  const deps = depsFor(world, fakeClock(T0), state.dir, { workspaces: ["w"] });
+  const rts = runtimesFor(deps.config, {}, deps.run);
+  const st = newDeadPaneState();
+  const tick = () => deadPaneTick(deps.run, deps.config, new Set(), "2026-01-01T12", st, rts);
+  expect(await tick()).toEqual([]);
+  expect(await tick()).toEqual(["DEAD_PANE w:p1"]);
+});
+
+test("with workspaces set, hc lanes in a watched dori.group are reported and the others are not (#196)", async () => {
+  const stopped = { status: null, foreground: null, screen: "omo has stopped\n$ " };
+  world.terminals = {
+    t1: hcTerm({ ...stopped, labels: { "dori.group": "lanes" } }),
+    t2: hcTerm({ ...stopped, labels: { "dori.group": "other" } }),
+  };
+  const deps = depsFor(world, fakeClock(T0), state.dir, { runtime: "hc", workspaces: ["lanes"] });
+  const rts = runtimesFor(deps.config, {}, deps.run);
+  const st = newDeadPaneState();
+  const tick = () => deadPaneTick(deps.run, deps.config, new Set(), "2026-01-01T12", st, rts);
+  expect(await tick()).toEqual([]);
+  expect(await tick()).toEqual(["DEAD_PANE t1"]);
+});
+
+test("with workspaces set, sync lists an unregistered hc agent in a watched dori.group and skips the others", async () => {
+  world.terminals = {
+    t1: hcTerm({ labels: { "dori.group": "lanes" } }),
+    t2: hcTerm({ labels: { "dori.group": "other" } }),
+  };
+  const deps = depsFor(world, fakeClock(T0), state.dir, { runtime: "hc", workspaces: ["lanes"] });
+  const { unregistered } = await syncRegistry({ ...deps, rts: runtimesFor(deps.config, {}, deps.run) }, false);
+  expect(unregistered.map((row) => row.pane)).toEqual(["t1"]);
 });
 
 test("a reworded stop message is not dead: with no alive status it is unrecognised, and repeated reads raise one alert", async () => {
@@ -57,36 +111,43 @@ test("a reworded stop message is not dead: with no alive status it is unrecognis
   world.screen = "the agent process went away\n$ ";
   const deps = depsFor(world, fakeClock(T0), state.dir);
   const seen = new Set<string>();
+  const rts = runtimesFor(deps.config, {}, deps.run);
   const st = newDeadPaneState();
-  expect(await deadPaneTick(deps.run, deps.config, seen, "2026-01-01T12", st)).toEqual([]);
-  expect(await deadPaneTick(deps.run, deps.config, seen, "2026-01-01T12", st)).toEqual([]);
-  expect(await deadPaneTick(deps.run, deps.config, seen, "2026-01-01T12", st)).toEqual(["UNRECOGNISED_PANE w:p1 dead-panes: no alive status and no dead marker for 3 ticks"]);
-  expect(await deadPaneTick(deps.run, deps.config, seen, "2026-01-01T12", st)).toEqual([]);
+  expect(await deadPaneTick(deps.run, deps.config, seen, "2026-01-01T12", st, rts)).toEqual([]);
+  expect(await deadPaneTick(deps.run, deps.config, seen, "2026-01-01T12", st, rts)).toEqual([]);
+  expect(await deadPaneTick(deps.run, deps.config, seen, "2026-01-01T12", st, rts)).toEqual([
+    "UNRECOGNISED_PANE w:p1 dead-panes: no alive status and no dead marker for 3 ticks",
+  ]);
+  expect(await deadPaneTick(deps.run, deps.config, seen, "2026-01-01T12", st, rts)).toEqual([]);
 });
 
 test("a pane whose agent status says it is alive is never reported dead, whatever the screen shows", async () => {
   world.panes = [{ pane_id: "w:p1", workspace_id: "w", agent: "pi", agent_status: "working" }];
   world.screen = "grep output: has stopped\n❯ ";
   const deps = depsFor(world, fakeClock(T0), state.dir);
+  const rts = runtimesFor(deps.config, {}, deps.run);
   const st = newDeadPaneState();
-  expect(await deadPaneTick(deps.run, deps.config, new Set(), "2026-01-01T12", st)).toEqual([]);
-  expect(await deadPaneTick(deps.run, deps.config, new Set(), "2026-01-01T12", st)).toEqual([]);
+  expect(await deadPaneTick(deps.run, deps.config, new Set(), "2026-01-01T12", st, rts)).toEqual([]);
+  expect(await deadPaneTick(deps.run, deps.config, new Set(), "2026-01-01T12", st, rts)).toEqual([]);
 });
 
 test("a dead marker that does not hold to the next tick is never dead", async () => {
   world.panes = [{ pane_id: "w:p1", workspace_id: "w" }];
   world.screens = ["omo has stopped\n$ ", "redrawing\n", "omo has stopped\n$ ", "redrawing\n"];
   const deps = depsFor(world, fakeClock(T0), state.dir);
+  const rts = runtimesFor(deps.config, {}, deps.run);
   const st = newDeadPaneState();
-  for (let i = 0; i < 4; i++) expect(await deadPaneTick(deps.run, deps.config, new Set(), "2026-01-01T12", st)).toEqual([]);
+  for (let i = 0; i < 4; i++)
+    expect(await deadPaneTick(deps.run, deps.config, new Set(), "2026-01-01T12", st, rts)).toEqual([]);
 });
 
 test("an alive status resets the unrecognised count, so two unknown ticks on each side of it raise no alert", async () => {
   world.panes = [{ pane_id: "w:p1", workspace_id: "w" }];
   world.screen = "something else\n$ ";
   const deps = depsFor(world, fakeClock(T0), state.dir);
+  const rts = runtimesFor(deps.config, {}, deps.run);
   const st = newDeadPaneState();
-  const tick = () => deadPaneTick(deps.run, deps.config, new Set(), "2026-01-01T12", st);
+  const tick = () => deadPaneTick(deps.run, deps.config, new Set(), "2026-01-01T12", st, rts);
   expect(await tick()).toEqual([]);
   expect(await tick()).toEqual([]);
   world.panes[0] = { pane_id: "w:p1", workspace_id: "w", agent: "pi", agent_status: "idle" };
@@ -97,7 +158,8 @@ test("an alive status resets the unrecognised count, so two unknown ticks on eac
 });
 
 test("a posted [REPORT] line is saved: the same line on later ticks is stale, logged once, and never posted again", async () => {
-  const deps = (ms: number) => depsFor(world, fakeClock(ms), state.dir, { hooks: { threadReply: ["notify", "{thread}", "{text}"] } });
+  const deps = (ms: number) =>
+    depsFor(world, fakeClock(ms), state.dir, { hooks: { threadReply: ["notify", "{thread}", "{text}"] } });
   await deps(T0).registry.write({ ...working, lastNudgeAt: T0 + MIN });
   world.screen = "[REPORT] quiet-lane | milestone | tests green\n❯ ";
   expect((await freshnessTick(deps(T0 + 21 * MIN), "/home/test")).map((a) => a.kind)).toEqual(["pending-report"]);
@@ -111,7 +173,8 @@ test("a posted [REPORT] line is saved: the same line on later ticks is stale, lo
 });
 
 test("a quiet lane with no [REPORT] line logs NO-REPORT once, not on every tick", async () => {
-  const deps = (ms: number) => depsFor(world, fakeClock(ms), state.dir, { hooks: { threadReply: ["notify", "{thread}", "{text}"] } });
+  const deps = (ms: number) =>
+    depsFor(world, fakeClock(ms), state.dir, { hooks: { threadReply: ["notify", "{thread}", "{text}"] } });
   await deps(T0).registry.write({ ...working, lastNudgeAt: T0 + MIN });
   world.screen = "just thinking\n❯ ";
   expect((await freshnessTick(deps(T0 + 21 * MIN), "/home/test")).map((a) => a.kind)).toEqual(["no-report"]);
@@ -119,117 +182,19 @@ test("a quiet lane with no [REPORT] line logs NO-REPORT once, not on every tick"
   expect(await freshnessTick(deps(T0 + 31 * MIN), "/home/test")).toEqual([]);
 });
 
-test("launch reports STARTUP_OK only on a ready agent status; a blank pane is unconfirmed, a known failure is an error", async () => {
-  const brief = join(state.dir, "brief.md");
-  const run = async (status: string | undefined, screen: string, key: string) => {
-    writeFileSync(brief, "# brief\n");
-    world = newWorld();
-    world.screen = screen;
-    const base = depsFor(world, fakeClock(T0), state.dir);
-    const inner = base.run;
-    const deps = { ...base, run: async (argv: readonly string[]) => {
-      if (argv[0] === "herdr" && argv[1] === "tab" && argv[2] === "create") return { code: 0, out: JSON.stringify({ result: { root_pane: { pane_id: "w:p9" }, tab_id: "w:t9" } }), err: "" };
-      if (argv[0] === "herdr" && argv[1] === "pane" && argv[2] === "list") return { code: 0, out: JSON.stringify({ result: { panes: [{ pane_id: "w:p9", workspace_id: "w", ...(status ? { agent: "pi", agent_status: status } : {}) }] } }), err: "" };
-      return inner(argv);
-    } };
-    return (await launchLane(deps, { key, title: "t", brief, done: "closed acme/app#3" })).startup;
-  };
-  expect(await run("idle", "❯ ", "ok-lane")).toBe("STARTUP_OK ok-lane w:p9");
-  expect(await run(undefined, "", "blank-lane")).toStartWith("STARTUP_UNCONFIRMED blank-lane w:p9");
-  expect(await run(undefined, "Error: provider refused the key\n$ ", "worded-lane")).toStartWith("STARTUP_UNCONFIRMED worded-lane w:p9");
-  expect(await run("idle", "No API key found\n❯ ", "err-lane")).toBe("STARTUP_ERROR err-lane w:p9: No API key");
-  expect(await run("blocked", "❯ ", "blocked-lane")).toStartWith("STARTUP_UNCONFIRMED blocked-lane w:p9");
-  // herdr shows an agent that finished its first turn and waits for input as "done": it is running.
-  expect(await run("done", "❯ ", "done-lane")).toBe("STARTUP_OK done-lane w:p9");
-  // omp's own startup failures: omp-dori missing (its flag unknown), an extension that did not load, a bad model.
-  expect(await run(undefined, "Error: unknown flag: --dori-role\nRun `omp --help` for available flags.\n$ ", "flag-lane")).toBe("STARTUP_ERROR flag-lane w:p9: unknown flag: ");
-  expect(await run("idle", "Failed to load extension ~/.omp/agent/extensions/omp-dori: boom\n❯ ", "ext-lane")).toBe("STARTUP_ERROR ext-lane w:p9: Failed to load extension");
-  expect(await run(undefined, "Model anthropic/claude-nope not found\n$ ", "model-lane")).toBe("STARTUP_ERROR model-lane w:p9: Model anthropic/claude-nope not found");
-  expect(await run(undefined, "No models available.\n$ ", "none-lane")).toBe("STARTUP_ERROR none-lane w:p9: No models available");
-});
-
-test("the host guard alerts on low disk, clears when it recovers, and flips compute readiness on load", () => {
-  const t = { loadAlert: 150, loadOk: 80, memFreeMinPct: 20, diskFreeMinGb: 50, panesMax: 20 };
-  const st = { alerting: false } as { alerting: boolean; computeReady?: boolean };
-  const healthy = { load1: 40, memFreePct: 50, diskFreeGb: 200, swapFreeGb: 4, panes: 5 };
-  expect(guardTick(healthy, t, st)).toEqual(["HOST_GUARD COMPUTE_READY load 40 < 80"]);
-  expect(guardTick({ ...healthy, diskFreeGb: 12 }, t, st)).toEqual(["HOST_GUARD ALERT disk free 12 GB < 50 GB"]);
-  expect(guardTick({ ...healthy, diskFreeGb: 12 }, t, st)).toEqual([]);
-  const recovered = guardTick({ ...healthy, load1: 120 }, t, st);
-  expect(recovered[0]).toStartWith("HOST_GUARD CLEAR");
-  expect(recovered.slice(1)).toEqual(["HOST_GUARD COMPUTE_BUSY load 120"]);
-});
-
-test("a heavy slot waits for load to drop, and a slot held by a dead process is taken over", async () => {
-  const dir = join(state.dir, "heavy");
-  const clock = fakeClock(T0);
-  let loads = [120, 95, 40];
-  const base = { dir, slots: 1, maxLoad: 80, clock, pid: 4242, load: async () => loads.shift() ?? 40 };
-  const slot = await acquireSlot({ ...base, alive: () => true }, "build");
-  expect(loads).toEqual([]);
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(slot, "owner"), "999999 other 2026-01-01T00:00:00Z");
-  loads = [10];
-  let polls = 0;
-  const stolen = await acquireSlot({ ...base, alive: (pid) => pid !== 999999, clock: { ...clock, sleep: async () => { polls++; } } }, "test");
-  expect(stolen).toBe(slot);
-  expect(polls).toBe(0);
-  releaseSlot(stolen);
-});
-
-test("a slot whose owner is alive is not taken", async () => {
-  const dir = join(state.dir, "heavy");
-  mkdirSync(join(dir, "slot.1"), { recursive: true });
-  writeFileSync(join(dir, "slot.1", "owner"), "1 busy now");
-  utimesSync(join(dir, "slot.1"), new Date(), new Date());
-  let polls = 0;
-  const clock = { now: () => Date.now(), sleep: async () => { polls++; if (polls > 2) throw new Error("stop"); } };
-  await expect(acquireSlot({ dir, slots: 1, maxLoad: 80, clock, pid: 7, load: async () => 10, alive: () => true }, "x", 1)).rejects.toThrow("stop");
-});
-
-test("adopting a lane refuses a Done line the watcher could never check", async () => {
-  const deps = depsFor(world, fakeClock(T0), state.dir);
-  await expect(adoptLane(deps, { key: "x-lane", title: "x", brief: "/b.md", done: "two clean QA passes", pane: "w:p2" })).rejects.toBeInstanceOf(LaunchError);
-  const ok = await adoptLane(deps, { key: "x-lane", title: "x", brief: "/b.md", done: "closed acme/app#3", pane: "w:p2" });
-  expect(ok.thread).toBe("none");
-  await expect(adoptLane(deps, { key: "x-lane", title: "x", brief: "/b.md", done: "closed acme/app#3", pane: "w:p2" })).rejects.toThrow("already registered");
-});
-
-test("the session id is read from the omp-dori pane state while its writer lives, then the omp session file made at start", async () => {
-  const info = JSON.stringify({ result: { process_info: { shell_pid: 10 } } });
-  const fake = (extra: Record<string, string>) => async (argv: readonly string[]) => {
-    const line = argv.join(" ");
-    if (line.startsWith("herdr pane process-info")) return { code: 0, out: info, err: "" };
-    const hit = Object.entries(extra).find(([k]) => line.startsWith(k));
-    return { code: hit ? 0 : 1, out: hit?.[1] ?? "", err: "" };
-  };
-  const omp = [{ pid: 10, ppid: 1, cmd: "zsh" }, { pid: 11, ppid: 10, cmd: "bun /Users/me/.bun/bin/omp --dori-role lane --model m hi" }, { pid: 12, ppid: 11, cmd: "bun /x/mcp/cli.js mcp" }];
-  const listDir = (dir: string) => (dir === "/s/--repo--" ? ["2026-01-01T09-00-00-000Z_01a10000-0000-7000-8000-000000000000.jsonl", "2026-01-01T12-00-02-113Z_01a11440-ee81-7f90-b2ed-dcc7d51a0adf.jsonl"] : []);
-  const started = fake({ "ps -o lstart=": "Thu Jan  1 12:00:01 2026 GMT" });
-  const deps = { run: started, sessionsDir: "/s", stateDir: state.dir, listDir };
-
-  laneState(state.dir, "w:p1", { sessionId: "01a178c6-8e23-719d-b48a-03eff7fc554a", pid: 11 });
-  expect(await resolveSession("w:p1", "/repo", omp, deps)).toEqual({ id: "01a178c6-8e23-719d-b48a-03eff7fc554a", via: "extension", pid: 11 });
-  // The process that wrote the state is gone: the pane runs something else now, so the file is stale.
-  laneState(state.dir, "w:p1", { sessionId: "01a178c6-8e23-719d-b48a-03eff7fc554a", pid: 99 });
-  expect(await resolveSession("w:p1", "/repo", omp, deps)).toEqual({ id: "01a11440-ee81-7f90-b2ed-dcc7d51a0adf", via: "start-time", pid: 11 });
-  // Its pid now belongs to a live process outside this pane: still not this pane's session.
-  expect(await resolveSession("w:p1", "/repo", [...omp, { pid: 99, ppid: 1, cmd: "bun /Users/me/.bun/bin/omp" }], deps)).toEqual({ id: "01a11440-ee81-7f90-b2ed-dcc7d51a0adf", via: "start-time", pid: 11 });
-
-  // omp is also recognized by its package entry point; an mcp child never is.
-  const cli = [{ pid: 10, ppid: 1, cmd: "zsh" }, { pid: 11, ppid: 10, cmd: "/bin/bun /x/node_modules/@oh-my-pi/pi-coding-agent/dist/cli.js --model m" }];
-  expect((await resolveSession("w:p2", "/repo", cli, deps)).via).toBe("start-time");
-  const mcpOnly = [{ pid: 10, ppid: 1, cmd: "zsh" }, { pid: 12, ppid: 10, cmd: "bun /x/omp mcp" }];
-  expect(await resolveSession("w:p2", "/repo", mcpOnly, deps)).toEqual({ id: "", via: "none" });
-});
-
-test("omp's session folder: temp-root relative first, then home relative, else the legacy absolute name", () => {
-  const dir = (cwd: string) => sessionDirFor("/s", cwd, "/nohome/me", "/nohome/me/tmp");
-  expect(dir("/nohome/me/tmp")).toBe("/s/-tmp");
-  expect(dir("/nohome/me/tmp/build/x")).toBe("/s/-tmp-build-x");
-  expect(dir("/nohome/me")).toBe("/s/-");
-  expect(dir("/nohome/me/dev/omp-dori")).toBe("/s/-dev-omp-dori");
-  expect(dir("/nohome/meow/x")).toBe("/s/--nohome-meow-x--");
-  expect(dir("/private/tmp/mw")).toBe("/s/--private-tmp-mw--");
-  expect(dir("/nohome/me/dev/../dev/a:b")).toBe("/s/-dev-a-b");
+test("a [REPORT] template with an unfilled placeholder is source, not a report: the last emitted report wins (#22)", () => {
+  const emitted = "[REPORT] demo-lane | milestone | checks passed";
+  const screen = [
+    emitted,
+    'print(f"[REPORT] demo-lane | milestone | {message}")',
+    'echo "[REPORT] demo-lane | milestone | ${message}"',
+  ].join("\n");
+  expect(lastReportLine(screen, "demo-lane")).toBe(emitted);
+  expect(lastReportLine('echo "[REPORT] demo-lane | done | ${message}"', "demo-lane")).toBeNull();
+  expect(lastReportLine("[REPORT] demo-lane | done | PR #12 merged", "demo-lane")).toBe(
+    "[REPORT] demo-lane | done | PR #12 merged",
+  );
+  expect(lastReportLine("[REPORT] demo-lane | milestone | added getUser({id}) and ${HOME} docs", "demo-lane")).toBe(
+    "[REPORT] demo-lane | milestone | added getUser({id}) and ${HOME} docs",
+  );
 });

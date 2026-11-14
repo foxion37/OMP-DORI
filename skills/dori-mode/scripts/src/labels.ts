@@ -17,6 +17,8 @@ export const laneLabel = (lane: Pick<Lane, "title" | "thread">): string => {
 export const laneLabelOf = (lane: Lane): string => lane.label ?? laneLabel(lane);
 
 export type LabelTargets = {
+  /** The session's runtime: only herdr has named panes, tabs and workspaces to rename. */
+  readonly runtime?: string | undefined;
   readonly pane?: string | undefined;
   /** The tab dori created for this lane alone; a shared tab keeps its label. */
   readonly tab?: string | undefined;
@@ -24,18 +26,23 @@ export type LabelTargets = {
   readonly workspace?: string | undefined;
 };
 
-const rename = async (deps: FlowDeps, what: "pane" | "tab" | "workspace", id: string, label: string): Promise<string | undefined> => {
+const rename = async (deps: FlowDeps, what: "pane" | "tab" | "workspace", id: string, label: string) => {
   const r = await deps.run(["herdr", what, "rename", id, label]);
   return r.code === 0 ? undefined : `LABEL_FAILED ${what} ${id}: ${(r.err || r.out).trim().slice(0, 160)}`;
 };
 
 /**
  * Applies the lane label to what dori named for it: the pane always, plus the tab and workspace it created for this
- * lane alone. The label is cosmetic, so a failed rename comes back as a line for the caller to print, never a throw.
+ * lane alone. The runtime has no rename, so this is the raw herdr call, herdr only. The label is cosmetic: a failed
+ * rename comes back as a line for the caller to print, never a throw.
  */
 export const applyLaneLabel = async (deps: FlowDeps, targets: LabelTargets, label: string): Promise<string[]> => {
+  if (targets.runtime !== undefined && targets.runtime !== "herdr") return [];
   const out: string[] = [];
-  for (const [what, id] of [["tab", targets.tab], ["workspace", targets.workspace]] as const) {
+  for (const [what, id] of [
+    ["tab", targets.tab],
+    ["workspace", targets.workspace],
+  ] as const) {
     if (!id) continue;
     const failure = await rename(deps, what, id, label);
     if (failure) out.push(failure);

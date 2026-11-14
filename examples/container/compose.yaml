@@ -1,0 +1,35 @@
+# OMP Dori source candidate; state and credentials stay in project-scoped named volumes.
+# First run and daily use are documented in docs/container.md.
+name: omp-dori-candidate
+services:
+  dori:
+    build:
+      context: ../..
+      dockerfile: examples/container/Dockerfile
+    image: omp-dori-candidate:local
+    init: true
+    # panes are hosted by the herdr server inside the container; a TTY is only needed
+    # by the `docker exec -it` sessions that attach to them
+    tty: true
+    stdin_open: true
+    # the container idles in sleep; work happens through docker exec
+    command: ["sleep", "infinity"]
+    # sized like a small dev machine: lanes run builds and tests of their own
+    cpus: "4"
+    mem_limit: 8g
+    # no credentials and no secrets in this file or in the image; interactive logins
+    # (gh, agent-messenger, OMP providers) are done once inside the running container
+    # and persist in the volumes below
+    volumes:
+      - dori-state:/home/dori/.dori
+      - omp-state:/home/dori/.omp
+      - gh-auth:/home/dori/.config/gh
+      - messenger-auth:/home/dori/.config/agent-messenger
+      - projects:/home/dori/projects
+
+volumes:
+  dori-state: {}
+  omp-state: {}
+  gh-auth: {}
+  messenger-auth: {}
+  projects: {}

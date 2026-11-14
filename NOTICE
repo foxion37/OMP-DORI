@@ -1,0 +1,24 @@
+Modified copy notice
+
+This is a modified copy of sisyphuslabs/dori-superagent, based on upstream
+97d807b9037cb050a72129659cf6306d8055010d (2026-11-11 source snapshot).
+It incorporates the OMP-specific adaptations from omp-dori source
+75a1b28de8caddb6d30b2e3d72ef3dec09450b47 and additional OMP compatibility
+changes for sessions, goals, approvals, monitors, runtime adapters,
+configuration, packaging and documentation.
+This copy also integrates upstream 49fba4dc081c9238f01e617b2fd17f548438e624,
+preserving those local adaptations and the separately pinned omp-ulw source.
+
+The upstream Sustainable Use License and original notices are preserved in
+LICENSE and the imported source. LICENSE permits own internal business use
+and personal/non-commercial use under its stated terms. This modified copy
+does not relabel current upstream code as MIT.
+
+The pre-existing omp-dori material incorporated from the local source,
+including its extension and OMP integration changes, retains its original
+copyright and permission notice in LICENSE.omp-dori. Third-party components
+retain their original licenses. omp-ulw is not vendored or relicensed; its
+source revision remains pinned by omp-ulw.lock.
+
+Installation and runtime activation are separate operator actions. Installing
+this copy does not replace a running Dori or activate another harness.

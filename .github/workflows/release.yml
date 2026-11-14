@@ -1,0 +1,39 @@
+name: release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.repository == 'vntrevx/omp-dori'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: read
+      checks: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.4
+      - name: Build committed preview assets
+        run: bun scripts/release.ts build --out dist --prerelease
+      # ci.yml runs on main/PR pushes, not tags. Its exact main commit must already have all four successes.
+      - name: Require own exact-commit CI4 and canonical main ancestry
+        run: bun scripts/release.ts gate --from dist
+      - name: Publish verified draft assets
+        run: bun scripts/release.ts publish --from dist

@@ -5,10 +5,21 @@ import { join } from "node:path";
 import ompDori from "../index";
 import type { CommandOptions as Command, DoriApi, DoriContext, ToolDefinition as Tool } from "../index";
 
-export type Entry = { type: string; customType?: string; data?: unknown; mode?: string; modeData?: Record<string, unknown> };
+export type Entry = {
+  type: string;
+  customType?: string;
+  data?: unknown;
+  mode?: string;
+};
 export type FakeSession = { id: string; file?: string; entries: Entry[] };
 type Agent = DoriContext["agent"];
-export type FakeOptions = { session: FakeSession; flags?: Record<string, string>; agent?: Agent; active?: string[] };
+export type FakeOptions = {
+  session: FakeSession;
+  flags?: Record<string, string>;
+  agent?: Agent;
+  active?: string[];
+  model?: DoriContext["model"];
+};
 
 export type FakePi = {
   api: DoriApi;
@@ -20,11 +31,14 @@ export type FakePi = {
   userMessages: string[];
   notes: string[];
   session: FakeSession;
-  /** What ctx.model / ctx.getContextUsage() report; tests change these between turns. */
-  model?: { provider?: string; id: string };
+  /** What ctx.model reports; change it between turns to move the lane's model. */
+  model?: DoriContext["model"];
+  /** What ctx.getContextUsage() returns; undefined until a test sets it. */
   usage?: { tokens: number; contextWindow: number; percent: number };
+  /** Session names the extension set through pi.setSessionName. */
+  sessionNames: string[];
   ctx(): DoriContext;
-  /** Runs handlers in registration order, like omp's runner; returns their results. */
+  /** Runs handlers in registration order, chaining before_agent_start prompt replacements as OMP does. */
   emit(event: string, payload?: unknown): Promise<unknown[]>;
   command(name: string, args?: string): Promise<void>;
 };
@@ -43,18 +57,40 @@ export const fakePi = (options: FakeOptions): FakePi => {
     userMessages: [],
     notes: [],
     session: options.session,
+    sessionNames: [],
+    ...(options.model === undefined ? {} : { model: options.model }),
     ctx: () => ({
       cwd: tmpdir(),
       mode: "print",
       agent,
-      ...(fake.model ? { model: fake.model } : {}),
+      ...(fake.model === undefined ? {} : { model: fake.model }),
       getContextUsage: () => fake.usage,
-      sessionManager: { getSessionId: () => fake.session.id, getSessionFile: () => fake.session.file, getBranch: () => fake.session.entries },
+      sessionManager: {
+        getSessionId: () => fake.session.id,
+        getSessionFile: () => fake.session.file,
+        getBranch: () => fake.session.entries,
+      },
       ui: { notify: (message: string) => void fake.notes.push(message) },
     }),
     emit: async (event, payload = { type: event }) => {
       const results: unknown[] = [];
-      for (const handler of [...(fake.handlers.get(event) ?? [])]) results.push(await handler(payload, fake.ctx()));
+      let current = payload;
+      for (const handler of [...(fake.handlers.get(event) ?? [])]) {
+        const result = await handler(current, fake.ctx());
+        results.push(result);
+        if (
+          event === "before_agent_start" &&
+          result &&
+          typeof result === "object" &&
+          "systemPrompt" in result &&
+          result.systemPrompt !== undefined
+        ) {
+          current = {
+            ...(typeof current === "object" && current !== null ? current : {}),
+            systemPrompt: typeof result.systemPrompt === "string" ? [result.systemPrompt] : result.systemPrompt,
+          };
+        }
+      }
       return results;
     },
     command: async (name, args = "") => {
@@ -77,15 +113,20 @@ export const fakePi = (options: FakeOptions): FakePi => {
         fake.handlers.set(event, list);
       },
       appendEntry: (customType, data) => void fake.session.entries.push({ type: "custom", customType, data }),
-      sendMessage: (message, sendOptions) => void fake.messages.push({ content: message.content, options: sendOptions }),
+      sendMessage: (message, sendOptions) =>
+        void fake.messages.push({ content: message.content, options: sendOptions }),
       getActiveTools: () => [...fake.active],
       setActiveTools: async (names) => {
         fake.active = [...names];
       },
+      setSessionName: async (name) => void fake.sessionNames.push(name),
     },
   };
   // omp-ulw talks to these too; they are outside omp-dori's own API surface.
-  Object.assign(fake.api, { sendUserMessage: (text: string) => void fake.userMessages.push(text), getAllTools: () => fake.active.map((name) => ({ name })) });
+  Object.assign(fake.api, {
+    sendUserMessage: (text: string) => void fake.userMessages.push(text),
+    getAllTools: () => fake.active.map((name) => ({ name })),
+  });
   return fake;
 };
 

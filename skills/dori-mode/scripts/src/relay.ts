@@ -1,20 +1,27 @@
 import { existsSync, mkdirSync, renameSync, statSync } from "node:fs";
 import { join } from "node:path";
 
+import type { SessionRef } from "../../../../src/runtime/types.ts";
+import { configPath, fill } from "./config.ts";
 import type { FlowDeps } from "./done-flow.ts";
+import { checkStartup } from "./launch.ts";
+import { quoteForPane } from "./launch-footer.ts";
 import { applyLaneLabel, laneLabelOf } from "./labels.ts";
-import { agentLine, checkStartup } from "./launch.ts";
-import { statusLookup, sendVerified } from "./panes.ts";
-import { splitPane } from "./placement.ts";
-import { type Lane, statusOf } from "./registry.ts";
-import { iso } from "./run.ts";
+import { splitFrom } from "./placement.ts";
+import { type Lane, sessionFields, sessionOf, statusOf } from "./registry.ts";
+import { iso, runtimesOf } from "./run.ts";
+import { sendVerified, statusLookup } from "./sessions.ts";
 import { trustedPaneState } from "./session-id.ts";
+import { laneLaunchEnv, TokenFileError } from "./slack-token.ts";
 
 export type RelayResult = { readonly outcome: "relayed" | "skipped" | "failed"; readonly lines: string[] };
 
 const POLL_MS = 3_000;
+/** An agent in these states is there and takes the message: herdr's "done" is an agent waiting at its prompt. */
+const RELAYABLE: Readonly<Record<string, true>> = { idle: true, working: true, done: true };
 
-export const handoffPath = (stateDir: string, key: string, n: number): string => join(stateDir, "handoffs", `${key}-${n}.md`);
+export const handoffPath = (stateDir: string, key: string, n: number): string =>
+  join(stateDir, "handoffs", `${key}-${n}.md`);
 
 const size = (path: string): number => {
   try {
@@ -38,71 +45,102 @@ const waitForHandoff = async (deps: FlowDeps, path: string): Promise<boolean> =>
 };
 
 const fail = (key: string, why: string): RelayResult => ({ outcome: "failed", lines: [`RELAY_FAILED ${key} ${why}`] });
-const skip = (key: string, why: string): RelayResult => ({ outcome: "skipped", lines: [`RELAY_SKIPPED ${key} ${why}`] });
+const skip = (key: string, why: string): RelayResult => ({
+  outcome: "skipped",
+  lines: [`RELAY_SKIPPED ${key} ${why}`],
+});
+
+/** The environment a lane is created with, so its successor runs under the same config and label. */
+const successorEnv = (): Record<string, string> => {
+  try {
+    return laneLaunchEnv(process.env, configPath());
+  } catch (e) {
+    throw e instanceof TokenFileError ? new Error(`token file refused: ${e.message}`) : e;
+  }
+};
 
 /**
- * Hands a lane over to a fresh pane: the lane writes a handoff, a successor starts next to it from the same brief plus
- * that handoff, and only after the successor's startup check passes is the old pane closed. Any failure before that
+ * Hands a lane over to a fresh session: the lane writes a handoff, a successor starts below it from the same brief plus
+ * that handoff, and only after the successor's startup check passes is the old session closed. Any failure before that
  * leaves the old lane exactly as it was.
  */
 export const relayLane = async (deps: FlowDeps, listed: Lane): Promise<RelayResult> => {
   const lane = (await deps.registry.read(listed.key)) ?? listed;
   const key = lane.key;
-  if (!lane.pane) return skip(key, "lane has no pane");
-  const oldPane = lane.pane;
+  const ref = sessionOf(lane);
+  if (ref === undefined) return skip(key, "lane has no session");
   const status = statusOf(lane);
   if (status !== "working" && status !== "not-done") return skip(key, `lane is ${status}`);
-  const state = await trustedPaneState(deps.run, deps.config.stateDir, oldPane);
+  const state = await trustedPaneState(deps.run, deps.config.stateDir, ref);
   if (state?.approvalPending) return skip(key, "a tool approval prompt is open");
-  const agent = await statusLookup(deps.run, oldPane);
+  const agent = await statusLookup(runtimesOf(deps), ref);
+  if (agent.error) return skip(key, `status lookup failed: ${agent.error}`);
   // herdr reports "done" for an agent that finished a turn and waits at its prompt: alive, and it takes the message.
-  if (agent.status !== "idle" && agent.status !== "working" && agent.status !== "done") return skip(key, `agent status is ${agent.status ?? agent.error ?? "unknown"}`);
+  if (agent.status === undefined || RELAYABLE[agent.status] !== true)
+    return skip(key, `agent status is ${agent.status ?? "none"}`);
 
   const n = (lane.relays ?? 0) + 1;
   const handoff = handoffPath(deps.config.stateDir, key, n);
   mkdirSync(join(deps.config.stateDir, "handoffs"), { recursive: true });
   if (existsSync(handoff)) renameSync(handoff, `${handoff}.stale-${deps.clock.now()}`);
-  const ask = `[LEAD] context is filling up. Stop starting new work, finish the step you are on, then write a handoff to ${handoff} with: goal, done and not done, evidence, files/branches/SHAs, the next 1-3 steps; no secrets. Print HANDOFF-WRITTEN when the file is saved and stay idle: a successor pane takes over.`;
-  if ((await sendVerified(deps.run, deps.clock, oldPane, ask, deps.config.stateDir)) === "failed") return fail(key, "could not message the lane");
+  const ask = `[LEAD] context is filling up. Stop starting new work, finish the step you are on, then write a handoff to ${handoff} with: goal, done and not done, evidence, files/branches/SHAs, the next 1-3 steps; no secrets. Print HANDOFF-WRITTEN when the file is saved and stay idle: a successor session takes over.`;
+  if ((await sendVerified(runtimesOf(deps), deps.clock, ref, ask)) === "failed")
+    return fail(key, "could not message the lane");
   if (!(await waitForHandoff(deps, handoff))) return fail(key, "handoff not written");
 
   const cwd = lane.cwd ?? deps.config.defaultCwd;
   const model = lane.model ?? deps.config.defaultModel;
-  let fresh;
+  const label = laneLabelOf(lane);
+  let fresh: SessionRef;
   try {
-    fresh = await splitPane(deps, oldPane, n % 2 === 1 ? "right" : "down", cwd);
+    fresh = await splitFrom(deps, ref, { name: label, cwd, env: { ...successorEnv(), DORI_LANE_LABEL: label } });
   } catch (e) {
     return fail(key, e instanceof Error ? e.message : String(e));
   }
-  const pane = fresh.pane_id;
   const prompt = `${deps.config.launchKeywords}. Read the lane brief at ${lane.brief} and the handoff at ${handoff}; you are the ${key} lane taking over; verify the handoff against the real state, then continue.`;
-  // The successor shows the same label: the session name comes from the environment, the pane from the rename below.
-  const label = laneLabelOf(lane);
-  const started = await deps.run(["herdr", "pane", "run", pane, agentLine(deps, label, model, prompt)]);
-  const startup = started.code === 0 ? await checkStartup(deps, key, pane) : `STARTUP_ERROR ${key} ${pane}: herdr pane run failed`;
+  let startup: string;
+  try {
+    await runtimesOf(deps)
+      .for(fresh)
+      .start(fresh, fill(deps.config.agentCommand, { model, prompt }).map(quoteForPane).join(" "));
+    startup = await checkStartup(deps, key, fresh);
+  } catch (e) {
+    startup = `STARTUP_ERROR ${key} ${fresh.id}: ${e instanceof Error ? e.message : String(e)}`;
+  }
   if (!startup.startsWith("STARTUP_OK")) {
-    await deps.run(["herdr", "pane", "close", pane]);
-    return fail(key, `successor did not start (${startup.slice(0, 200)}); old pane ${oldPane} kept`);
+    await runtimesOf(deps)
+      .for(fresh)
+      .close(fresh, "session")
+      .catch(() => undefined);
+    return fail(key, `successor did not start (${startup.slice(0, 200)}); old session ${ref.id} kept`);
   }
 
-  const labels = await applyLaneLabel(deps, { pane }, label);
-  const workspace = lane.workspace ?? fresh.workspace_id;
-  const tab = fresh.tab_id ?? lane.tab;
-  const { session: _session, sessionVia: _via, tab: _tab, ...kept } = lane;
+  const { session: _session, sessionVia: _via, ...kept } = lane;
+  // The successor pane shows the same label; its tab and workspace are the ones the lane already had.
+  const labels = await applyLaneLabel(deps, { runtime: fresh.runtime, pane: fresh.id }, label);
   await deps.registry.write({
     ...kept,
     label,
-    pane,
-    ...(tab ? { tab } : {}),
-    ...(workspace ? { workspace } : {}),
+    ...sessionFields(fresh),
+    ...((lane.workspace ?? fresh.group === undefined) ? {} : { workspace: fresh.group }),
     placement: "split",
     relays: n,
-    previousPanes: [...(lane.previousPanes ?? []), oldPane],
+    previousPanes: [...(lane.previousPanes ?? []), ref.id],
     lastRelayAt: iso(deps.clock),
     contextAlerted: false,
     relayFailed: false,
     contextUnknownAlerted: false,
   });
-  const closed = (await deps.run(["herdr", "pane", "close", oldPane])).code === 0;
-  return { outcome: "relayed", lines: [`RELAYED ${key} ${oldPane} -> ${pane}${closed ? "" : ` (old pane ${oldPane} could not be closed)`}`, ...labels] };
+  const closed = await runtimesOf(deps)
+    .for(ref)
+    .close(ref, "session")
+    .then(() => true)
+    .catch(() => false);
+  return {
+    outcome: "relayed",
+    lines: [
+      `RELAYED ${key} ${ref.id} -> ${fresh.id}${closed ? "" : ` (old session ${ref.id} could not be closed)`}`,
+      ...labels,
+    ],
+  };
 };

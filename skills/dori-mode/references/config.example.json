@@ -1,22 +1,16 @@
 {
+  "runtime": "herdr",
   "stateDir": "~/.dori/state",
   "laneWorkspace": "lanes",
-  "workspaces": [
-    "lanes"
-  ],
+  "workspaces": ["lanes"],
   "ignorePanes": [],
   "leadPane": "<your herdr pane id, from: herdr pane current>",
   "defaultCwd": "~/code/my-project",
-  "agentCommand": [
-    "omp",
-    "--dori-role",
-    "lane",
-    "--model",
-    "{model}",
-    "{prompt}"
-  ],
+  "agentCommand": ["omp", "--dori-role", "lane", "--model", "{model}", "{prompt}"],
   "defaultModel": "anthropic/claude-opus-5-5",
   "launchKeywords": "ulw set goal and work",
+  "goalMarker": "Pursuing goal",
+  "startupWaitSeconds": 180,
   "sessionsDir": "~/.omp/agent/sessions",
   "ompUlwPath": "~/.dori/omp-ulw/index.ts",
   "nudgeAfterMin": 15,
@@ -27,12 +21,23 @@
   "contextHandoffPctOther": 60,
   "contextUnknownAfterMin": 10,
   "relayTimeoutMin": 10,
+  "repoIdentities": {
+    "my-org/my-project": {
+      "name": "Your Name",
+      "email": "12345+you@users.noreply.github.com"
+    }
+  },
+  "supervision": {
+    "hungAfterMinutes": 20,
+    "staleAfterMinutes": 20,
+    "defaults": { "wallMinutes": null, "tokens": null, "costUsd": null },
+    "lanes": {},
+    "activityPaths": [],
+    "gitActivity": true
+  },
   "heavySlots": 1,
   "heavyMaxLoad": 80,
-  "deadPanePatterns": [
-    "has stopped",
-    "no suitable jobs"
-  ],
+  "deadPanePatterns": ["has stopped", "no suitable jobs"],
   "guard": {
     "loadAlert": 150,
     "loadOk": 80,
@@ -41,28 +46,8 @@
     "panesMax": 20
   },
   "hooks": {
-    "threadReply": [
-      "my-messenger",
-      "reply",
-      "--thread",
-      "{thread}",
-      "--text",
-      "{text}"
-    ],
-    "threadDone": [
-      "my-messenger",
-      "set-status",
-      "--thread",
-      "{thread}",
-      "--status",
-      "done",
-      "--note",
-      "{text}"
-    ],
-    "transcribe": [
-      "my-stt",
-      "--file",
-      "{file}"
-    ]
+    "threadReply": ["my-messenger", "reply", "--thread", "{thread}", "--text", "{text}"],
+    "threadDone": ["my-messenger", "set-status", "--thread", "{thread}", "--status", "done", "--note", "{text}"],
+    "transcribe": ["my-stt", "--file", "{file}"]
   }
 }

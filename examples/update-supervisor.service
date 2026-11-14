@@ -1,0 +1,22 @@
+[Unit]
+Description=Dori verified upstream update supervisor
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=%h/.dori/update/config.json
+
+[Service]
+Type=simple
+WorkingDirectory=%h
+Environment=PATH=%h/.dori/toolchains/bun-1.4.4:%h/.bun/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=DORI_TELEMETRY=0
+Environment=DO_NOT_TRACK=1
+UnsetEnvironment=DORI_DISCORD_TOKEN DORI_SUDO_PASSWORD SUDO_UID SUDO_GID SUDO_USER GH_TOKEN GITHUB_TOKEN
+ExecStart=%h/.dori/toolchains/bun-1.4.4/bun %h/.dori/update/controller/scripts/update-supervisor.ts --config %h/.dori/update/config.json --controller %h/.dori/update/controller --bun %h/.dori/toolchains/bun-1.4.4/bun
+Restart=always
+RestartSec=5
+RestartPreventExitStatus=2 130
+TimeoutStopSec=90
+KillMode=control-group
+
+[Install]
+WantedBy=default.target

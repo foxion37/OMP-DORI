@@ -1,41 +1,54 @@
 #!/usr/bin/env bun
 import { parseArgs } from "node:util";
+import { runConsumerUpdate } from "../../../../src/release/cli.ts";
+import { releaseVersion } from "../../../../src/release/version.ts";
+import { runUpdate } from "../../../../src/update/cli.ts";
 
-import { loadConfig } from "./config.ts";
-import { deadPaneTick, newDeadPaneState } from "./dead-panes.ts";
-import { contextTick } from "./context.ts";
-import { claimDone, closeLane, type FlowDeps, objectDone, watchTick } from "./done-flow.ts";
-import { freshnessTick } from "./freshness.ts";
-import { acquireSlot, pidAlive, releaseSlot } from "./heavy-slot.ts";
-import { guardTick, sampleHost } from "./host-guard.ts";
-import { adoptLane, launchLane, LaunchError } from "./launch.ts";
-import { pauseLane, resumeLane } from "./pause.ts";
-import { Registry, statusOf } from "./registry.ts";
-import { relayLane } from "./relay.ts";
+import { type Command, die, makeCli } from "./cli-context.ts";
+import { runHarness } from "./cli-harness.ts";
+import { journalCommands, journalErrors } from "./cli-journal.ts";
+import { laneCommands } from "./cli-lanes.ts";
+import { messengerCommands, messengerErrors } from "./cli-messenger.ts";
+import { opsCommands } from "./cli-ops.ts";
+import { ConfigError, loadConfig } from "./config.ts";
+import type { FlowDeps } from "./done-flow.ts";
+import { LaunchError } from "./launch.ts";
+import { Registry } from "./registry.ts";
 import { realClock, run } from "./run.ts";
-import { syncRegistry } from "./sync.ts";
-import { canLaunch } from "./routing.ts";
-import { fetchHttp, MessengerError, UnsafeMessageError } from "./messenger/http.ts";
-import { Slack } from "./messenger/slack.ts";
-import { pollSlackInbound } from "./messenger/slack-inbound.ts";
-import { ThreadLedger } from "./messenger/thread-ledger.ts";
-import { slackPresence } from "./messenger/slack-presence.ts";
-import { Telegram } from "./messenger/telegram.ts";
-import { Discord, discordPresence } from "./messenger/discord.ts";
-import { realTimers } from "./messenger/typing.ts";
-import { transcribe, TranscriptionError } from "./messenger/voice.ts";
 
 const USAGE = `dori <command> [options]
 
-  launch <key> --title T --brief FILE --done "merged o/r#N; closed o/r#M" [--thread REF] [--model M] [--cwd DIR] [--group NAME]
-                                       --group: split next to an open lane of that group, else open a workspace for it
+  harness <command> [args...]          dispatch every upstream harness command (up, inbox, duty, review, merge, loop, backlog, migrate...)
+  update <command> [options]           verified releases: check, install, status, rollback [--version TAG] [--from DIST]
+  upstream <command> --config FILE     maintainer staging: check, stage, watch, status, snapshot, restore, recover, restart
+  launch <key> --title T --brief FILE --done "merged o/r#N; closed o/r#M" [--thread REF] [--model M] [--cwd DIR]
+         [--group NAME] [--wall-minutes N|none] [--token-limit N|none] [--cost-limit N|none] [--activity-path FILE ...] [--dry-run]
+                                       --group: split below an open lane of that group, else open a workspace for it
   adopt  <key> --pane ID --title T --brief FILE --done "..." [--thread REF] [--group NAME]
-  context [--loop MIN] [--relay]       CONTEXT_HIGH / CONTEXT_UNKNOWN per lane; --relay hands full lanes to a fresh pane
-  relay  <key>                         handoff file, successor pane next to the lane, old pane closed
+  context [--loop MIN] [--relay]        CONTEXT_HIGH / CONTEXT_UNKNOWN per lane; --relay hands full lanes to a successor
+  relay  <key>                          handoff file, successor session below the lane, old session closed after STARTUP_OK
   sync   [--write]                     registry vs live panes; read-only unless --write
-  claim-done [<key>] --evidence TEXT  key defaults to the lane registered for $HERDR_PANE_ID
+  boot                                 read-only check after a restart: Slack auth, vanished panes, journals, open worklog items, stale watches
+  report <key> --kind milestone|blocker|question|halted|done --text TEXT
+                                       append a durable progress report and print its [REPORT] line
+  checkpoint <key> --step ID --result TEXT --evidence PATH [--remote-effect RECEIPT]...
+                                       record a completed step once; a conflicting rewrite is refused
+  checkpoints <key>                    read completed steps before resuming remote work
+  verify-pr <owner/repo> <num> [--loop N] [--cwd DIR]
+                                       check every commit's author/committer email and PR-level tests; print the UI test loop (not run)
+  claim-done [<key>] --evidence TEXT  key defaults to the lane registered for your own session (HC_TERMINAL_ID or HERDR_PANE_ID)
   object-done <key> --reason TEXT [--reason TEXT ...]
-  close  <key> [--note TEXT]           close now (Done signals must read back live)
+  lesson add <key> --rule TEXT --evidence PATH [--cwd DIR]
+  lesson add --global --rule TEXT --evidence REF
+                                       the lead's lesson for every lane, whatever its repo
+  lesson list [--cwd DIR]             show current lessons (global ones included), newest first
+  lesson mark <id> --outcome pending|helped|no-effect|harmful|encoded
+  worklog add <title> --source REF     record an owner request when it arrives
+  worklog next|note <id> <text>        set the item's next step, or add a note (a decision, an owner)
+  worklog close <id> --result TEXT     close the item with what came of it
+  worklog list [--open]                items as JSON; <stateDir>/worklog.md holds the same for reading
+  close  <key> [--note TEXT] [--lesson TEXT] [--evidence PATH]
+                                       close now (Done signals must read back live); an optional lesson never blocks it
   pause  <key> [--note TEXT]           the owner said wait: goal paused (read back), running turn stopped, no nudges; exit 3 if unconfirmed
   resume <key> [--note TEXT]           undo pause: goal resumed (read back), lane back to its earlier status
   watch                                long-running: emits LANE_* lines every 30 s
@@ -45,239 +58,101 @@ const USAGE = `dori <command> [options]
   heavy <label> -- <command ...>       run a heavy command when a slot is free and load is low
   can-launch                           exit 0 if the host has room for a new lane, else print why and exit 4
   send <slack|telegram|discord> --to TARGET --text TEXT [--thread ID] [--edit ID]
-                                       post or edit a message (tokens from DORI_SLACK_TOKEN, DORI_TELEGRAM_TOKEN, DORI_DISCORD_TOKEN)
+                                       Discord accepts channel names with DORI_DISCORD_GUILD_ID; --thread needs no --to and also targets edits
+  thread discord create --to CHANNEL --title T [--text T] [--tag NAME]...
+  thread discord set <thread> [--title T] [--tag NAME]... [--archive|--unarchive]
+                                       open a forum post or text-channel thread; rename, replace tags, archive or reopen
+  react discord --to CHANNEL [--thread ID] --message ID [--emoji E] [--remove]
+                                       add or remove the bot's own reaction (eyes by default); --thread needs no --to
   presence <slack|discord>             keep the account shown as online until stopped
-  transcribe <audio-file>              run hooks.transcribe and print the text
-  inbound slack [--loop MIN]           print INBOUND lines: unread thread replies (threads view), replies in threads
-                                       the Dori posted in (any helper), DMs and channels with unread mentions`;
+  transcribe <audio-file|url>           run hooks.transcribe and print the text; HTTP(S) downloads are private and temporary
+  inbound slack|telegram|discord [--loop MIN] [--gateway]
+                                       print INBOUND lines: Slack unread thread replies / Telegram owner DMs, edits and media + configured topic
+                                       the Dori posted in (any helper), DMs and channels with unread mentions
+                                       Discord requires DORI_DISCORD_TOKEN, DORI_DISCORD_OWNER_ID and configured channel IDs
+                                       (more channels or threads: DORI_DISCORD_CHANNEL_IDS=a,b; every readable one: DORI_DISCORD_SCOPE=all)
+                                       Discord polls every 3 seconds by default; --loop MIN overrides the interval;
+                                       --gateway delivers owner messages live with REST backfill and ignores --loop, including 0
+  inbound-lag [--limit N]              receive-lag percentiles from state/telegram-lag.jsonl (the meter behind the INBOUND lines)`;
 
-const die = (message: string, code = 1): never => {
-  console.error(message);
-  process.exit(code);
-};
-
-const config = await loadConfig();
-const deps: FlowDeps = { run, clock: realClock, registry: new Registry(config.stateDir), config };
 const [command = "", ...rest] = process.argv.slice(2);
+if (command === "harness") process.exit(await runHarness(rest));
+if (command === "--version") {
+  console.log(releaseVersion);
+  process.exit(0);
+}
+if (command === "update") process.exit(await runConsumerUpdate(rest));
+if (command === "upstream") process.exit(await runUpdate(rest));
+
+const config = await loadConfig().catch((e: unknown) =>
+  e instanceof ConfigError ? die(e.message) : Promise.reject(e),
+);
+const deps: FlowDeps = { run, clock: realClock, registry: new Registry(config.stateDir), config };
 
 const flags = parseArgs({
   args: rest,
   allowPositionals: true,
   strict: false,
   options: {
-    title: { type: "string" }, brief: { type: "string" }, done: { type: "string" }, thread: { type: "string" },
-    model: { type: "string" }, cwd: { type: "string" }, pane: { type: "string" }, evidence: { type: "string" },
-    reason: { type: "string", multiple: true }, note: { type: "string" }, write: { type: "boolean" }, loop: { type: "string" },
-    group: { type: "string" }, relay: { type: "boolean" },
-    to: { type: "string" }, text: { type: "string" }, edit: { type: "string" },
+    title: { type: "string" },
+    brief: { type: "string" },
+    done: { type: "string" },
+    thread: { type: "string" },
+    model: { type: "string" },
+    cwd: { type: "string" },
+    pane: { type: "string" },
+    evidence: { type: "string" },
+    reason: { type: "string", multiple: true },
+    note: { type: "string" },
+    write: { type: "boolean" },
+    loop: { type: "string" },
+    group: { type: "string" },
+    relay: { type: "boolean" },
+    gateway: { type: "boolean" },
+    to: { type: "string" },
+    text: { type: "string" },
+    edit: { type: "string" },
+    tag: { type: "string", multiple: true },
+    archive: { type: "boolean" },
+    unarchive: { type: "boolean" },
+    message: { type: "string" },
+    emoji: { type: "string" },
+    remove: { type: "boolean" },
+    kind: { type: "string" },
+    step: { type: "string" },
+    result: { type: "string" },
+    "remote-effect": { type: "string", multiple: true },
+    "wall-minutes": { type: "string" },
+    "token-limit": { type: "string" },
+    "cost-limit": { type: "string" },
+    "activity-path": { type: "string", multiple: true },
+    rule: { type: "string" },
+    outcome: { type: "string" },
+    lesson: { type: "string" },
+    "dry-run": { type: "boolean" },
+    global: { type: "boolean" },
+    source: { type: "string" },
+    open: { type: "boolean" },
+    limit: { type: "string" },
   },
 });
-const opt = (name: string): string | undefined => {
-  const v = flags.values[name];
-  return typeof v === "string" ? v.trim() : undefined;
-};
-const need = (name: string): string => opt(name) || die(`--${name} is required`);
-const key = flags.positionals[0];
-const loopMin = Number(opt("loop") ?? 0);
 
-const lane = async (k: string | undefined) => {
-  const found = k ? await deps.registry.read(k) : await deps.registry.byPane(process.env.HERDR_PANE_ID ?? "");
-  if (!found) return die(k ? `no registered lane "${k}"` : "no open lane is registered for this pane");
-  if (statusOf(found) === "closed") return die(`lane ${found.key} is already closed`);
-  return found;
+const commands: Readonly<Record<string, Command>> = {
+  ...journalCommands,
+  ...laneCommands,
+  ...opsCommands,
+  ...messengerCommands,
 };
-
-const every = async (minutes: number, tick: () => Promise<void>): Promise<void> => {
-  for (;;) {
-    await tick().catch((e: unknown) => console.log(`WARN ${e instanceof Error ? e.message : String(e)}`.slice(0, 300)));
-    if (minutes <= 0) return;
-    await Bun.sleep(minutes * 60_000);
-  }
-};
+const handler = Object.hasOwn(commands, command) ? commands[command] : undefined;
 
 try {
-  switch (command) {
-    case "launch": {
-      const r = await launchLane(deps, { key: key ?? "", title: need("title"), brief: need("brief"), done: need("done"), thread: opt("thread"), model: opt("model"), cwd: opt("cwd"), group: opt("group") });
-      console.log(`LAUNCHED ${r.lane.key} pane=${r.lane.pane} tab=${r.lane.tab ?? "?"} placement=${r.lane.placement ?? "?"} workspace=${r.lane.workspace ?? "?"}${r.lane.group ? ` group=${r.lane.group}` : ""} label=${JSON.stringify(r.lane.label ?? "")}`);
-      for (const line of r.labels) console.log(line);
-      console.log(r.startup);
-      process.exit(r.startup.startsWith("STARTUP_OK") ? 0 : 3);
-    }
-    case "adopt": {
-      const l = await adoptLane(deps, { key: key ?? "", title: need("title"), brief: need("brief"), done: need("done"), thread: opt("thread"), pane: need("pane"), group: opt("group") });
-      console.log(`ADOPTED ${l.key} pane=${l.pane} thread=${l.thread}`);
-      break;
-    }
-    case "sync": {
-      const r = await syncRegistry(deps, Boolean(flags.values.write));
-      console.log("key | thread | pane | session | status");
-      for (const row of [...r.rows, ...r.unregistered]) console.log([row.key, row.thread, row.pane, row.session, row.status].join(" | "));
-      console.log(r.drift.length ? `DRIFT (${r.drift.length}):\n${r.drift.map((d) => `- ${d}`).join("\n")}` : "DRIFT none");
-      console.log(flags.values.write ? "WROTE session ids" : "READ_ONLY");
-      break;
-    }
-    case "context":
-      await every(loopMin, async () => {
-        for (const line of await contextTick(deps, { relay: Boolean(flags.values.relay) })) console.log(line);
-      });
-      break;
-    case "relay": {
-      const r = await relayLane(deps, await lane(key ?? die("relay needs a lane key")));
-      for (const line of r.lines) console.log(line);
-      process.exit(r.outcome === "relayed" ? 0 : r.outcome === "skipped" ? 2 : 3);
-    }
-    case "claim-done":
-      console.log(await claimDone(deps, await lane(key), need("evidence")));
-      break;
-    case "object-done": {
-      const reasons = (flags.values.reason as string[] | undefined)?.map((r) => r.trim()).filter(Boolean) ?? [];
-      if (!reasons.length) die("--reason is required");
-      console.log(await objectDone(deps, await lane(key ?? die("object-done needs a lane key")), reasons));
-      break;
-    }
-    case "close": {
-      const r = await closeLane(deps, await lane(key ?? die("close needs a lane key")), opt("note") ?? "closed by the lead");
-      for (const line of r.lines) console.log(line);
-      process.exit(r.closed ? 0 : 2);
-    }
-    case "pause":
-    case "resume": {
-      const act = command === "pause" ? pauseLane : resumeLane;
-      const r = await act(deps, await lane(key ?? die(`${command} needs a lane key`)), opt("note") ?? `${command}d by the lead`);
-      for (const line of r.lines) console.log(line);
-      process.exit(r.code);
-    }
-    case "watch":
-      console.log("LANE_WATCH_READY");
-      for (;;) {
-        for (const line of await watchTick(deps).catch((e: unknown) => [`LANE_WATCH_WARN ${String(e).slice(0, 200)}`])) console.log(line);
-        await Bun.sleep(30_000);
-      }
-    case "freshness":
-      await every(loopMin, async () => {
-        for (const a of await freshnessTick(deps, process.env.HOME ?? "")) console.log(`${a.kind.toUpperCase()} ${a.lane} ${a.detail}`);
-      });
-      break;
-    case "dead-panes": {
-      const seen = new Set<string>();
-      const paneState = newDeadPaneState();
-      await every(loopMin, async () => {
-        for (const line of await deadPaneTick(run, config, seen, new Date().toISOString().slice(0, 13), paneState)) console.log(line);
-      });
-      break;
-    }
-    case "guard": {
-      const state = { alerting: false };
-      console.log("HOST_GUARD_READY");
-      await every(loopMin, async () => {
-        for (const line of guardTick(await sampleHost(run), config.guard, state)) console.log(line);
-      });
-      break;
-    }
-    case "heavy": {
-      const sep = rest.indexOf("--");
-      const label = rest[0];
-      const cmd = sep >= 0 ? rest.slice(sep + 1) : [];
-      if (!label || label === "--" || !cmd.length) die("usage: dori heavy <label> -- <command ...>");
-      const load = async () => (await sampleHost(run)).load1;
-      const slot = await acquireSlot({ dir: `${config.stateDir}/heavy`, slots: config.heavySlots, maxLoad: config.heavyMaxLoad, clock: realClock, load, alive: pidAlive, pid: process.pid }, label ?? "");
-      try {
-        const child = Bun.spawn(cmd, { stdout: "inherit", stderr: "inherit", stdin: "inherit" });
-        process.exitCode = await child.exited;
-      } finally {
-        releaseSlot(slot);
-      }
-      break;
-    }
-    case "can-launch": {
-      const v = canLaunch(await sampleHost(run), config.guard);
-      console.log(v.ok ? "CAN_LAUNCH" : `HOLD ${v.reasons.join(" | ")}`);
-      process.exit(v.ok ? 0 : 4);
-    }
-    case "send": {
-      const platform = key ?? die("send needs slack, telegram or discord");
-      const to = need("to");
-      const text = need("text");
-      const thread = opt("thread");
-      const edit = opt("edit");
-      const token = (name: string) => process.env[name] ?? die(`${name} is not set`);
-      if (platform === "slack") {
-        const slack = new Slack(fetchHttp, realClock, { token: token("DORI_SLACK_TOKEN"), cookie: process.env.DORI_SLACK_COOKIE }, undefined, new ThreadLedger(`${config.stateDir}/slack-threads.json`));
-        if (edit) await slack.edit(to, edit, text);
-        else console.log(`SENT ${(await slack.post(to, text, thread)).ts}`);
-      } else if (platform === "telegram") {
-        const tg = new Telegram(fetchHttp, realClock, token("DORI_TELEGRAM_TOKEN"));
-        const target = { chatId: to, ...(thread ? { threadId: Number(thread) } : {}) };
-        if (edit) await tg.edit(target, Number(edit), text);
-        else console.log(`SENT ${await tg.send(target, text)}`);
-      } else if (platform === "discord") {
-        const dc = new Discord(fetchHttp, realClock, token("DORI_DISCORD_TOKEN"));
-        if (edit) await dc.edit(to, edit, text);
-        else console.log(`SENT ${await dc.send(thread ?? to, text)}`);
-      } else die(`unknown platform ${platform}`);
-      break;
-    }
-    case "presence": {
-      if (key === "slack") {
-        const auth = { token: process.env.DORI_SLACK_TOKEN ?? die("DORI_SLACK_TOKEN is not set"), cookie: process.env.DORI_SLACK_COOKIE ?? die("DORI_SLACK_COOKIE is not set (user-token presence needs the d cookie)") };
-        const p = slackPresence(new Slack(fetchHttp, realClock, auth), (url, headers) => {
-          const options: Bun.WebSocketOptions = { headers: { ...headers } };
-          const ws = new WebSocket(url, options);
-          return { isOpen: () => ws.readyState === WebSocket.OPEN, send: (f) => ws.send(f), close: () => ws.close() };
-        }, auth);
-        console.log("PRESENCE_READY slack");
-        await every(1, async () => console.log(`PRESENCE slack ${await p.hold()}`));
-      } else if (key === "discord") {
-        const token = process.env.DORI_DISCORD_TOKEN ?? die("DORI_DISCORD_TOKEN is not set");
-        // Discord closes gateway sockets routinely (op 7 reconnect, network drops). Each close opens a
-        // fresh session; without this loop the process stays alive while the bot shows offline.
-        let backoffMs = 5_000;
-        let announced = false;
-        for (;;) {
-          const closed = Promise.withResolvers<number>();
-          const openedAt = Date.now();
-          const p = discordPresence(() => {
-            const ws = new WebSocket("wss://gateway.discord.gg/?v=10&encoding=json");
-            let handler: (d: string) => void = () => {};
-            ws.addEventListener("message", (e) => handler(String(e.data)));
-            ws.addEventListener("close", (e) => closed.resolve(e.code));
-            return { send: (d) => ws.send(d), close: () => ws.close(), onMessage: (cb) => { handler = cb; } };
-          }, token, realTimers);
-          if (!announced) {
-            console.log("PRESENCE_READY discord");
-            announced = true;
-          }
-          const code = await closed.promise;
-          p.close();
-          // A session that held for a minute resets the backoff; fast failures (bad token, rate limit) grow it.
-          backoffMs = Date.now() - openedAt > 60_000 ? 5_000 : Math.min(backoffMs * 2, 300_000);
-          console.log(`PRESENCE_RECONNECT discord code=${code} retry_in=${backoffMs / 1000}s`);
-          await Bun.sleep(backoffMs);
-        }
-      } else die("presence needs slack or discord");
-      break;
-    }
-    case "inbound": {
-      if (key !== "slack") die("inbound supports slack");
-      const auth = { token: process.env.DORI_SLACK_TOKEN ?? die("DORI_SLACK_TOKEN is not set"), cookie: process.env.DORI_SLACK_COOKIE };
-      const ledger = new ThreadLedger(`${config.stateDir}/slack-threads.json`);
-      const slack = new Slack(fetchHttp, realClock, auth, undefined, ledger);
-      const me = String((await slack.call("auth.test", {})).user_id ?? die("auth.test returned no user_id"));
-      console.log("INBOUND_READY slack");
-      await every(loopMin, async () => {
-        for (const i of await pollSlackInbound(slack, ledger, { selfUserId: me })) console.log(`INBOUND ${i.source} ${i.channel} ${i.threadTs ?? "-"} ${i.ts || "-"} ${i.user ?? "-"} ${JSON.stringify((i.text ?? "").slice(0, 200))}`);
-      });
-      break;
-    }
-    case "transcribe":
-      console.log(await transcribe(run, config.hooks.transcribe, key ?? die("transcribe needs an audio file path")));
-      break;
-    default:
-      console.log(USAGE);
-      process.exit(command ? 1 : 0);
+  if (handler) await handler(makeCli(command, rest, flags, config, deps));
+  else {
+    console.log(USAGE);
+    process.exit(command ? 1 : 0);
   }
 } catch (e) {
-  if (e instanceof LaunchError || e instanceof UnsafeMessageError || e instanceof MessengerError || e instanceof TranscriptionError) die(e.message);
+  if (e instanceof LaunchError || [...messengerErrors, ...journalErrors].some((type) => e instanceof type))
+    die((e as Error).message);
   throw e;
 }

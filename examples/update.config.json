@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "target": "dori",
+  "runtime": "herdr",
+  "root": "../../dori-update-staging",
+  "remote": "https://github.com/sisyphuslabs/dori-superagent.git",
+  "ref": "refs/heads/main",
+  "baseUpstream": "97d807b9037cb050a72129659cf6306d8055010d",
+  "localSource": "..",
+  "intervalSeconds": 300,
+  "modelEnv": ["ANTHROPIC_API_KEY"],
+  "reporterEnv": [],
+  "worker": {
+    "name": "port",
+    "engine": "omp",
+    "argv": ["omp", "-p", "--model", "anthropic/claude-opus-5-5", "--thinking", "high", "{prompt}"],
+    "timeoutMs": 3600000
+  },
+  "reviewer": {
+    "name": "fresh-review",
+    "engine": "omp",
+    "argv": ["omp", "-p", "--model", "anthropic/claude-opus-5-5", "--thinking", "xhigh", "{prompt}"],
+    "timeoutMs": 3600000
+  },
+  "provision": [
+    { "name": "install-root", "argv": ["bun", "install", "--frozen-lockfile"], "timeoutMs": 300000 },
+    {
+      "name": "install-skill",
+      "argv": ["bun", "install", "--frozen-lockfile"],
+      "cwd": "skills/dori-mode/scripts",
+      "timeoutMs": 300000
+    },
+    {
+      "name": "install-extension",
+      "argv": ["bun", "install", "--frozen-lockfile"],
+      "cwd": "extension",
+      "timeoutMs": 300000
+    },
+    { "name": "normalize-source", "argv": ["bun", "run", "fmt"], "timeoutMs": 300000 }
+  ],
+  "checks": [
+    { "name": "biome", "argv": ["bun", "run", "check"], "timeoutMs": 300000 },
+    { "name": "types", "argv": ["bun", "run", "typecheck"], "timeoutMs": 300000 },
+    { "name": "unused", "argv": ["bun", "run", "knip"], "timeoutMs": 300000 },
+    { "name": "source-size", "argv": ["bun", "run", "lint:loc"], "timeoutMs": 300000 },
+    { "name": "harness-tests", "argv": ["bun", "run", "test"], "timeoutMs": 600000 },
+    { "name": "skill-tests", "argv": ["bun", "run", "test:skill"], "timeoutMs": 600000 },
+    { "name": "extension-tests", "argv": ["bun", "run", "test:extension"], "timeoutMs": 300000 }
+  ]
+}

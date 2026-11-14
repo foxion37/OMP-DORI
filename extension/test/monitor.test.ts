@@ -16,7 +16,15 @@ const alive = (pid: number): boolean => {
 const collect = (): { messages: string[]; monitors: Monitors; current: { session: string } } => {
   const messages: string[] = [];
   const current = { session: "s1" };
-  return { messages, current, monitors: new Monitors((content) => messages.push(content), () => current.session, 100) };
+  return {
+    messages,
+    current,
+    monitors: new Monitors(
+      (content) => messages.push(content),
+      () => current.session,
+      100,
+    ),
+  };
 };
 
 describe("Monitors", () => {
@@ -33,12 +41,24 @@ describe("Monitors", () => {
 
   test("delivers only matching stdout/stderr lines, a burst as one message, then the exit", async () => {
     const { messages, monitors } = collect();
-    monitors.start("inbox", ["sh", "-c", "echo 'msg 1'; echo noise; echo 'msg 2' >&2; echo 'msg 3'"], "^msg", "/", "s1");
+    monitors.start(
+      "inbox",
+      ["sh", "-c", "echo 'msg 1'; echo noise; echo 'msg 2' >&2; echo 'msg 3'"],
+      "^msg",
+      "/",
+      "s1",
+    );
     await until(() => messages.join("\n").includes("exited"));
     const lines = messages.join("\n").split("\n");
-    expect(lines.filter((line) => !line.includes("exited")).sort()).toEqual(["[inbox] msg 1", "[inbox] msg 2", "[inbox] msg 3"]);
+    expect(lines.filter((line) => !line.includes("exited")).sort()).toEqual([
+      "[inbox] msg 1",
+      "[inbox] msg 2",
+      "[inbox] msg 3",
+    ]);
     expect(messages[0]?.split("\n").length).toBeGreaterThanOrEqual(3);
-    expect(lines.at(-1)).toBe("[inbox] monitor exited (code 0): sh -c echo 'msg 1'; echo noise; echo 'msg 2' >&2; echo 'msg 3'");
+    expect(lines.at(-1)).toBe(
+      "[inbox] monitor exited (code 0): sh -c echo 'msg 1'; echo noise; echo 'msg 2' >&2; echo 'msg 3'",
+    );
     expect(monitors.list()).toEqual([]);
   });
 
@@ -86,7 +106,8 @@ describe("monitor tool", () => {
     await dori.emit("session_start");
   });
 
-  const run = (pi: FakePi, params: Record<string, unknown>) => pi.tools.get("monitor")?.execute("call", params, undefined, undefined, pi.ctx());
+  const run = (pi: FakePi, params: Record<string, unknown>) =>
+    pi.tools.get("monitor")?.execute("call", params, undefined, undefined, pi.ctx());
 
   test("wakes the Dori session with an aside message and stops every monitor at session shutdown", async () => {
     await run(dori, { op: "start", name: "inbox", argv: ["sh", "-c", "echo 'msg hi'; exec sleep 30"], filter: "^msg" });
@@ -122,6 +143,8 @@ describe("monitor tool", () => {
     const lane = await load({ session: { id: "lane", entries: [] }, flags: { "dori-role": "lane" } });
     await lane.emit("session_start");
     expect(lane.active).not.toContain("monitor");
-    await expect(run(lane, { op: "list" })).rejects.toThrow("monitor works only in the Dori session (omp --dori-role dori)");
+    await expect(run(lane, { op: "list" })).rejects.toThrow(
+      "monitor works only in the Dori session (omp --dori-role dori)",
+    );
   });
 });

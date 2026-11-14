@@ -1,94 +1,81 @@
-<p align="center">
-  <img src="skills/dori-mode/assets/dori-avatar.png" alt="Dori" width="120">
-</p>
-
 # omp-dori
 
-[Dori 모드](https://github.com/sisyphuslabs/dori-superagent/tree/main/skills/dori-mode)를 [omp](https://github.com/can1357/oh-my-pi) 위에서 omo 모델 프롬프트로 돌립니다.
+세 프로젝트의 철학을 하나의 Dori로 합쳤습니다.
 
-[English](README.md) | 한국어
+1. [dori-superagent](https://github.com/sisyphuslabs/dori-superagent) — 메신저에서 요청을 받아 끝까지 책임지고, 증거를 바탕으로 작업을 조율합니다.
+2. [oh-my-pi](https://github.com/can1357/oh-my-pi) — native 코딩 에이전트 런타임과 도구를 제공합니다.
+3. [omp-ulw](https://github.com/dbc-hbin/omp-ulw) — 결과를 중심으로 규율 있게 실행하는 워크플로를 더합니다.
 
-Dori는 늘 켜져 있는 에이전트 세션 하나입니다. Telegram, Discord, Slack으로 주인의 요청을 받고, 일마다 [herdr](https://herdr.dev) 탭(레인)을 열어 맡깁니다. 레인은 장부에 기록해 두고, 일이 끝났다는 증거를 확인한 뒤에만 닫습니다. 원본은 omo(senpi) 위에서 돕니다. omp-dori는 원본의 동작과 규칙을 그대로 두고 한 가지만 바꿉니다. Dori와 모든 레인이 omp에서 돌고, 모델 프롬프트로는 [omp-ulw](https://github.com/dbc-hbin/omp-ulw)가 omp로 옮긴 omo 프롬프트를 씁니다.
+omp-dori는 메신저 요청을 담당 코딩 에이전트 레인에 맡기고 완료 증거와 함께 보고하는 수정 OMP 포트입니다.
 
-## 원본과 다른 점
+[English](README.md) | [한국어](README.ko.md) | [日本語](README.ja.md) | [Deutsch](README.de.md) | [Italiano](README.it.md) | [中文](README.zh.md)
 
-| | 원본 Dori 모드 | omp-dori |
-|---|---|---|
-| 에이전트 | `omo` | `omp`. Dori는 `omp --dori-role dori`, 레인은 `omp --dori-role lane` |
-| 모델 프롬프트 | omo에 내장 | omp-ulw의 omo 프리셋. Dori와 레인 세션에만 적용 |
-| 레인 goal | 레인이 `create_goal`로 직접 만듦 | 레인이 omp의 `goal` 도구로 직접 만듦. omp-dori가 레인 세션에서 이 도구를 켬 |
-| 상시 모니터 | 호스트의 monitor 도구 | omp-dori 확장의 `monitor` 도구 |
-| 세션 ID 찾기 | `--session`, `PI_SESSION_ID`, 세션 파일 시각 | 세션이 직접 쓰는 상태 파일, 그다음 세션 파일 시각 |
-| `dori pause` / `resume` 확인 | 화면의 `Goal paused` / `Goal active` | 세션이 기록한 goal 상태 |
-| herdr 통합 | `pi` | `omp` |
+## 주요 기능
 
-나머지(요청 분류, 스레드, done 프로토콜, `Done =` 신호, 장부, 점검 루프, 메신저 스크립트)는 원본 코드와 문서 그대로입니다.
+- 긴 작업마다 brief, 에이전트 세션과 추적 레인을 만들고, 작은 요청은 lead가 직접 처리합니다.
+- 레인은 lead에게 보고하고 lead가 요청 스레드에 답해 대화 창구를 하나로 유지합니다.
+- Discord owner 메시지의 답장 맥락과 첨부 메타데이터를 받으며, 서명된 미디어 URL과 제공된 음성 길이를 전달합니다.
+- 전달 전에 살아 있는 에이전트의 신원·입력·승인 상태를 확인하고, 바쁘거나 상태가 불명확한 세션에는 전송을 보류하거나 대기열에 넣습니다.
+- 완료 증거를 요구하고 PR merge, 버전 발행, 명령 성공, 파일 일치 등 지정한 완료 신호를 실제 상태와 대조합니다.
+- worklog, 레인 checkpoint와 레지스트리를 디스크에 남겨 재시작 후 `dori boot`로 점검합니다.
+- lessons, backlog, 선택적 시간 단위 스케줄링과 호스트·정체 감시로 지속적인 작업을 지원합니다.
 
-## omp와 맞물리는 방식
+## 요청이 완료될 때까지
 
-확장은 전역(`~/.omp/agent/extensions/omp-dori`)에 한 번 설치됩니다. `--dori-role` 없이 시작한 세션에서는 아무 일도 하지 않습니다. 역할은 세션 안에 저장됩니다. 그래서 `omp --resume=<id>`로 다시 열거나, herdr가 재시작 후 pane을 복원하거나, 닫았던 레인을 다시 열어도 플래그 없이 역할이 유지됩니다.
-
-Dori나 레인 세션에서 확장이 하는 일:
-
-- omp-ulw를 적용합니다(omo 모델 프리셋, ULW, 워크플로 명령). 이 세션들이 띄우는 서브에이전트의 프리셋도 포함합니다.
-- pane 상태 파일(`~/.dori/state/sessions/<pane>.json`)을 씁니다. 세션 ID, goal 상태, 도구 승인 창이 열려 있는지가 들어갑니다. 그래서 `dori`는 승인 창에 글자를 입력하지 않습니다.
-- goal이 아직 없는 레인에서 omp의 `goal` 도구를 켭니다.
-- Dori 세션에서 `monitor` 도구를 켭니다. 세션이 재개되면(herdr가 재시작 후 복원하거나 `omp --resume`으로 다시 열면) 그 세션이 켜 두었던 모니터를 다시 띄웁니다. 그래서 메신저 수신기가 누가 시키지 않아도 돌아옵니다.
-
-다른 omp 세션의 프롬프트, 도구, 동작은 그대로입니다. 다만 omp는 확장이 등록한 것을 지울 수 없게 되어 있어서, 차이가 두 가지 남습니다.
-
-- omp-ulw의 명령(`/ulw`, `/review-work` 등)은 세션 역할이 정해지기 전, omp가 확장을 불러오는 시점에 등록됩니다. 그래서 어느 세션의 명령 목록에나 보일 수 있습니다. Dori나 레인이 아닌 세션에서 실행하면 안내만 띄우고 아무 일도 하지 않습니다.
-- omp 프로세스 하나가 Dori나 레인 세션을 한 번이라도 띄우면, 그 프로세스가 끝날 때까지 omp-dori가 도구 승인 창을 지켜봅니다. 무언가 승인 창을 지켜보는 동안 omp는 읽기 추측 실행(read speculation)을 끕니다. 그래서 Dori나 레인 세션에서 `/resume`이나 `/new`로 넘어간 평소 세션은 이 기능 없이 돕니다. Dori나 레인 세션을 띄운 적 없는 프로세스는 영향이 없습니다.
-
-레인은 브리프의 지시를 따라 스스로 goal을 만들고 `dori claim-done`을 실행합니다. 그래서 지시를 잘 지키는 모델이 필요합니다. 기본값 `anthropic/claude-opus-5-5` 레인은 둘 다 해냈고, Haiku 4.5 레인은 일은 했지만 goal과 claim을 건너뛰었습니다.
-
-omp는 세션을 새 프로세스로 재개하면 goal을 일시정지 상태로 되돌립니다. `omp --resume=<id>`로 다시 열거나 herdr가 복원한 레인은 역할과 omo 프롬프트는 유지하지만, goal은 `/goal resume`을 보내야 다시 돕니다(`references/sessions.md`).
-
-## 설치
-
-git, bun 1.3 이상, omp 18.14.2 이상, herdr가 필요합니다.
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/foxion37/OMP-DORI/main/install.sh | bash
+```mermaid
+flowchart TD
+    request["메신저로 요청"] --> route{"작은 작업인가?"}
+    route -->|예| direct["Dori가 직접 처리"]
+    route -->|아니요| lane["작업 설명과 전담 레인 생성"]
+    direct --> verify{"결과와 완료 증거 확인?"}
+    lane --> verify
+    verify -->|확인됨| report["원래 스레드에 결과 보고"]
+    verify -->|미확인| resolve["문제 수정 또는 사용자에게 질문"]
+    resolve --> verify
 ```
 
-설치 스크립트가 하는 일:
+## 지원하는 preview
 
-- omp-dori를 `~/.dori/src`에, omp-ulw를 `omp-ulw.lock`에 고정된 커밋으로 `~/.dori/omp-ulw`에 받습니다.
-- 스킬을 `~/.agents/skills/dori-mode`에, 확장을 `~/.omp/agent/extensions/omp-dori`에 연결합니다.
-- `dori`를 PATH에 올리고 `~/.dori/config.json`을 씁니다.
+**`v0.1.2`는 Linux x64 + herdr + Discord용 GitHub prerelease입니다.** Bun **1.4.4**와 native OMP **18.18.8**은 테스트 기준이자 최소 버전입니다. 더 높은 버전과 다른 Linux 배포판이 자동으로 검증되는 것은 아닙니다.
 
-같은 명령을 다시 실행하면 갱신됩니다. 직접 받아 둔 omp-ulw를 쓰려면 `OMP_ULW_SRC`를 지정하세요.
+macOS와 hc는 CI 범위와 소스 어댑터를 유지하며 실제 소비자 preview 지원 대상에서는 제외됩니다. Slack과 Telegram은 소스 기능으로 남아 있습니다. 이 지원 범위가 독립 외부 사용자 beta 완료나 모든 provider·기능의 검증을 뜻하지는 않습니다.
 
-설치 후:
+## 시작하기
 
-```sh
-herdr integration install omp
-$EDITOR ~/.dori/config.json        # leadPane, laneWorkspace, defaultCwd, hooks
-omp --dori-role dori               # herdr pane 안에서
-```
+1. git, Bun 1.4.4+, native OMP 18.18.8+, herdr를 `PATH`에 준비하세요. 설치기는 이 도구들을 점검하며 설치·업그레이드는 하지 않습니다.
+2. [정확한 릴리스 설치·검증 절차](docs/releases.md#install-the-exact-preview)를 따르세요. canonical 저장소·태그와 네 asset을 검증한 뒤 내려받은 설치기에 `--version v0.1.2`를 명시합니다. 실행 경로는 `~/.dori/bin/dori`이며 `~/.dori/bin`을 `PATH`에 추가하세요.
+3. 본인의 `~/.dori/config.json`에 `runtime: "herdr"`, 작업 경로, provider가 포함된 모델과 메신저 hook을 설정하세요. 기존 설정·인증·작업·세션은 보존됩니다. 본인의 OMP provider 계정과 Discord 봇을 사용합니다.
+4. [인증과 명시적 시작](docs/releases.md#your-authentication-and-explicit-startup)에 따라 herdr의 OMP integration, 봇 채널 권한과 Message Content Intent, owner·channel ID를 설정하세요. herdr에서 `omp --dori-role dori`를 실행한 뒤 “Dori mode”라고 말합니다.
+5. [Discord owner 수신](docs/releases.md#discord-owner-intake)용 native monitor를 명시적으로 켜세요. 토큰은 본인 소유 mode-0600 파일에 두고 monitor 자식 프로세스에서만 읽습니다. `INBOUND_READY` 후 새 owner 메시지를 보내세요. [Online presence](docs/releases.md#discord-online-presence)는 별도 monitor를 켜야 합니다.
 
-그리고 "Dori mode"라고 말하면 됩니다. 메신저, 봇, 온보딩 과정은 스킬이 안내합니다(`skills/dori-mode/references/setup.md`).
+설치는 에이전트·수신기·watcher·presence 프로세스·service·harness·추론 요청을 **시작하지 않습니다**. 기존 Dori 세션을 재개하면 그 세션에 기록된 monitor가 복원될 수 있으며, 새 설치는 monitor를 만들지 않습니다.
 
-## 제거
+### 업데이트와 rollback
 
-```sh
-rm ~/.omp/agent/extensions/omp-dori ~/.agents/skills/dori-mode
-(cd ~/.dori/src/skills/dori-mode/scripts && bun unlink)
-rm -rf ~/.dori/src ~/.dori/omp-ulw     # ~/.dori/config.json과 ~/.dori/state에는 설정과 레인 장부가 있습니다
-```
+`dori update check --version v0.1.2`, `dori update install --version v0.1.2`, `dori update status`, `dori update rollback`을 사용합니다. 살아 있는 Dori가 있으면 idle이어도 활성화가 보류되므로 세션을 종료한 유지보수 시간을 계획하세요. Rollback에는 검증된 직전 릴리스가 보존되어 있어야 합니다. [업데이트 옵션과 복구](docs/releases.md#updates-and-rollback)를 확인하세요.
 
-## 개발
+### 기존 Dori 옆에 소스 설치
 
-```sh
-cd skills/dori-mode/scripts && bun install && bun test && bunx tsc --noEmit
-cd extension && bun test && bunx tsc --noEmit
-```
+Maintainer는 별도의 일반 checkout과 `scripts/install-source.sh`를 사용하며 [소스 설치 가이드](docs/releases.md#source-checkouts-for-maintainers)를 따릅니다. Side 모드는 별도 home·wrapper·skill을 사용해 primary Dori 설치를 그대로 둡니다. 소비자 관리 home은 소스 설치로부터 보호됩니다. 설치된 소비자 릴리스 파일은 직접 수정하지 마세요.
 
-확장은 `~/.dori/config.json`의 `ompUlwPath`에서 omp-ulw를 읽습니다. 전역 설치 없이 작업본을 써 보려면 `omp -e ./extension/index.ts --dori-role dori`로 시작하세요.
+설치되는 `dori`는 메신저·레인 CLI입니다. 전체 harness는 `dori harness <args>`로, 소스 checkout에서는 `bun src/cli.ts <args>`로도 실행합니다. Harness 시작은 실제 세션과 loop를 만들며 레지스트리·완료 프로토콜은 skill과 별개입니다. Maintainer 소스 업데이트는 소비자 릴리스 업데이트와 구분되는 [`dori upstream`](skills/dori-mode/references/scripts.md#staged-dori-updates)을 사용합니다.
 
-원본에서 바꾼 부분은 작게, 원본 경로 그대로 둡니다. 그래서 `sisyphuslabs/dori-superagent`의 수정을 골라 받아올 수 있습니다(`git remote add upstream https://github.com/sisyphuslabs/dori-superagent.git`).
+## OMP session contract
 
-## 라이선스
+Lead·duty는 `omp --dori-role dori`, 작업 레인과 기본 reviewer는 `--dori-role lane`을 사용합니다. Dori 확장 handler는 역할로 제한되며 일반 OMP 세션의 동작을 유지합니다. 역할은 재개 시 복원되고 살아 있는 프로세스에 연결된 native 세션·승인 기록으로 입력 전달을 보호합니다. Native goal과 monitor 실행 의도는 세션 상태에 남으며, 소유 Dori 세션을 재개하면 기록된 monitor가 복원됩니다. 소비자 릴리스는 manifest에 묶인 omp-ulw pin과 역할별 import를 유지합니다. 소스 primary 모드는 omp-ulw를 전역으로 로드할 수 있고 side 모드는 wrapper 안에서만 로드합니다. [Runtime 계약](docs/runtime.md)을 확인하세요.
 
-원본과 같은 MIT입니다. omp-ulw는 저장소에 포함하지 않고, 설치 스크립트가 원래 저장소에서 받습니다.
+## 문서
+
+- [릴리스·설치·지원·업데이트·rollback](docs/releases.md)
+- [Dori skill과 운영 규칙](skills/dori-mode/SKILL.md) · [설정 상세](skills/dori-mode/references/setup.md)
+- [Runtime 어댑터와 세션 계약](docs/runtime.md)
+- [Maintainer container 예제](docs/container.md) · [시간 단위 loop와 backlog](docs/hourly-loop.md)
+- [기여 안내](CONTRIBUTING.md) · [변경 기록](CHANGELOG.md) · [수정본 고지](NOTICE)
+
+## 한계·개인정보·라이선스
+
+Dori는 사용자가 제공한 계정과 권한으로 실행합니다. 외부 변경에는 여전히 소유자의 승인이 필요하며 완료 검사는 설정한 신호를 입증하는 절차입니다. 모든 결과의 정확성을 보장하지는 않습니다. 운영할 세션과 monitor만 켜세요. AI 세션은 본인 provider의 사용량을 소비합니다.
+
+선택적 telemetry는 `DORI_TELEMETRY=0` 또는 `DO_NOT_TRACK=1`로 끕니다. 공개 보고에 인증 정보나 비공개 세션·프로젝트 데이터를 넣지 마세요.
+
+Upstream 코드는 [Sustainable Use License 1.0](LICENSE)을 유지합니다. 자체 내부 업무와 비상업·개인 이용을 허용하며 배포·고지 조건이 적용됩니다. 기존 OMP 통합 고지는 [LICENSE.omp-dori](LICENSE.omp-dori)에 남으며 upstream 코드를 MIT로 바꾸는 것은 아닙니다. [NOTICE](NOTICE)에 수정본과 출처를 기록합니다. omp-ulw와 다른 제3자 구성 요소는 각각의 라이선스를 유지합니다.

@@ -1,94 +1,127 @@
+import type { CloseScope, SessionRef } from "../../../../src/runtime/types.ts";
 import type { FlowDeps } from "./done-flow.ts";
-import { LaunchError } from "./launch.ts";
-import { listPanes } from "./panes.ts";
-import { type Lane, LANE_KEY } from "./registry.ts";
+import { LANE_KEY, type Lane, sessionFields, sessionOf } from "./registry.ts";
+import { runtimesOf } from "./run.ts";
 
+/** A group name is a lane key shape: lowercase, no spaces, and it labels the workspace a group opens. */
 export const GROUP_NAME = LANE_KEY;
-export type Direction = "right" | "down";
 
 export type PlacementPlan =
   | { readonly kind: "tab" }
   | { readonly kind: "workspace" }
-  | { readonly kind: "split"; readonly from: Lane; readonly direction: Direction };
+  | { readonly kind: "split"; readonly near: SessionRef };
 
 /**
  * Where a new lane goes. No group: its own tab in `laneWorkspace` (the old behavior). A group with an open lane:
- * split that group's most recently opened lane pane, alternating right/down. A group with no open lane: a workspace.
+ * a split below that group's most recently opened lane. A group with no open lane: a workspace of its own.
  */
 export const planPlacement = (open: readonly Lane[], group: string | undefined): PlacementPlan => {
   if (!group) return { kind: "tab" };
-  const mates = open.filter((l) => l.group === group && l.pane);
-  if (!mates.length) return { kind: "workspace" };
-  const from = mates.reduce((best, l) => (Date.parse(l.openedAt) >= Date.parse(best.openedAt) ? l : best));
-  return { kind: "split", from, direction: mates.length % 2 === 1 ? "right" : "down" };
+  const mates = open.flatMap((lane) => {
+    const ref = sessionOf(lane);
+    return lane.group === group && ref !== undefined ? [{ lane, ref }] : [];
+  });
+  const newest = mates.reduce<{ lane: Lane; ref: SessionRef } | undefined>(
+    (best, mate) =>
+      best === undefined || Date.parse(mate.lane.openedAt) >= Date.parse(best.lane.openedAt) ? mate : best,
+    undefined,
+  );
+  return newest === undefined ? { kind: "workspace" } : { kind: "split", near: newest.ref };
 };
 
-export type Placed = Pick<Lane, "pane" | "tab" | "workspace" | "placement" | "workspaceCreated"> & { readonly pane: string };
-
-type PaneInfo = { pane_id: string; tab_id?: string; workspace_id?: string };
-
-const parse = <T>(what: string, out: string, pick: (json: { result: Record<string, any> }) => T | undefined): T => {
-  try {
-    const v = pick(JSON.parse(out) as { result: Record<string, any> });
-    if (v !== undefined) return v;
-  } catch {}
-  throw new LaunchError(`herdr ${what} returned no pane: ${out.slice(0, 160)}`);
+export type PlaceInput = {
+  /** What the runtime names the session it creates: the lane label once it exists, else the lane key. */
+  readonly name: string;
+  readonly cwd: string;
+  readonly env: Readonly<Record<string, string>>;
+  readonly group?: string | undefined;
 };
 
-export const splitPane = async (deps: FlowDeps, from: string, direction: Direction, cwd: string): Promise<PaneInfo> => {
-  const r = await deps.run(["herdr", "pane", "split", from, "--direction", direction, "--cwd", cwd, "--no-focus"]);
-  if (r.code !== 0) throw new LaunchError(`herdr pane split failed: ${r.err || r.out}`);
-  return parse("pane split", r.out, (j) => (j.result.pane?.pane_id ? (j.result.pane as PaneInfo) : undefined));
-};
+/** The lane fields a placement sets, plus the session it opened. */
+export type Placed = { readonly ref: SessionRef } & Pick<
+  Lane,
+  "sessionRef" | "pane" | "tab" | "placement" | "workspace" | "workspaceCreated"
+>;
 
-export const placeLane = async (deps: FlowDeps, input: { key: string; label: string; group?: string | undefined; cwd: string }): Promise<Placed> => {
-  const plan = planPlacement(await deps.registry.open(), input.group);
-  if (plan.kind === "split") {
-    const workspace = plan.from.workspace ?? (await listPanes(deps.run)).find((p) => p.pane_id === plan.from.pane)?.workspace_id;
-    const pane = await splitPane(deps, plan.from.pane ?? "", plan.direction, input.cwd);
-    const ws = workspace ?? pane.workspace_id;
-    return { pane: pane.pane_id, ...(pane.tab_id ? { tab: pane.tab_id } : {}), ...(ws ? { workspace: ws } : {}), placement: "split" };
-  }
-  if (plan.kind === "workspace") {
-    const r = await deps.run(["herdr", "workspace", "create", "--cwd", input.cwd, "--label", input.label, "--no-focus"]);
-    if (r.code !== 0) throw new LaunchError(`herdr workspace create failed: ${r.err || r.out}`);
-    const made = parse("workspace create", r.out, (j) => (j.result.root_pane?.pane_id ? { root: j.result.root_pane as PaneInfo, ws: j.result.workspace?.workspace_id as string | undefined } : undefined));
-    const ws = made.ws ?? made.root.workspace_id;
-    return { pane: made.root.pane_id, ...(made.root.tab_id ? { tab: made.root.tab_id } : {}), ...(ws ? { workspace: ws } : {}), placement: "workspace", workspaceCreated: true };
-  }
-  const created = await deps.run(["herdr", "tab", "create", ...(deps.config.laneWorkspace ? ["--workspace", deps.config.laneWorkspace] : []), "--cwd", input.cwd, "--label", input.label, "--no-focus"]);
-  if (created.code !== 0) throw new LaunchError(`herdr tab create failed: ${created.err || created.out}`);
-  const made = parse("tab create", created.out, (j) => (j.result.root_pane?.pane_id ? { root: j.result.root_pane as PaneInfo, tab: j.result.tab_id as string | undefined } : undefined));
-  const tab = made.tab ?? made.root.tab_id;
-  const ws = made.root.workspace_id;
-  return { pane: made.root.pane_id, ...(tab ? { tab } : {}), ...(ws ? { workspace: ws } : {}), placement: "tab" };
-};
-
-const protectedPane = (deps: FlowDeps, pane: string): boolean => pane === deps.config.leadPane || deps.config.ignorePanes.includes(pane);
+const placed = (ref: SessionRef, placement: NonNullable<Lane["placement"]>, created = false): Placed => ({
+  ref,
+  ...sessionFields(ref),
+  placement,
+  ...(ref.group === undefined ? {} : { workspace: ref.group }),
+  ...(created ? { workspaceCreated: true } : {}),
+});
 
 /**
- * Closes what dori opened for a lane. A dori-created workspace is closed when no other open lane uses it; a lane placed
- * as a tab closes its tab; anything else closes its pane. A lane recorded before placement existed keeps the old rule:
- * its tab if it has one, else its pane. Never a workspace dori did not create, never the lead or an ignored pane.
+ * Opens the lane's session where its plan says: `workspace-root` for a group's first lane, `split-below` the group's
+ * newest lane, else a tab. hc has neither workspaces nor splits, so every plan there is one labelled terminal and the
+ * group is that label.
+ */
+export const placeLane = async (deps: FlowDeps, input: PlaceInput): Promise<Placed> => {
+  const rt = runtimesOf(deps).default;
+  const plan: PlacementPlan =
+    rt.kind === "hc" ? { kind: "tab" } : planPlacement(await deps.registry.open(), input.group);
+  const base = { name: input.name, cwd: input.cwd, env: input.env, role: "lane" } as const;
+  if (plan.kind === "split") {
+    return placed(await rt.create({ ...base, container: "split-below", near: plan.near }), "split");
+  }
+  if (plan.kind === "workspace") {
+    return placed(await rt.create({ ...base, container: "workspace-root" }), "workspace", true);
+  }
+  const group = input.group ?? (deps.config.laneWorkspace || undefined);
+  return placed(await rt.create({ ...base, container: "tab", ...(group === undefined ? {} : { group }) }), "tab");
+};
+
+/** A fresh pane next to `near`, for a lane that takes over another's work (relay). */
+export const splitFrom = async (
+  deps: FlowDeps,
+  near: SessionRef,
+  input: Omit<PlaceInput, "group">,
+): Promise<SessionRef> =>
+  runtimesOf(deps)
+    .for(near)
+    .create({ name: input.name, cwd: input.cwd, env: input.env, role: "lane", container: "split-below", near });
+
+/** The group (a herdr workspace, an hc label) an existing session sits in, as its own runtime lists it. */
+export const groupOf = async (deps: FlowDeps, ref: SessionRef): Promise<string | undefined> =>
+  (await runtimesOf(deps).for(ref).list()).find((s) => s.ref.id === ref.id)?.ref.group;
+
+/** herdr owns workspaces; the runtime closes sessions, so closing one is the raw call, herdr only. */
+const closeWorkspace = async (deps: FlowDeps, ref: SessionRef, workspace: string): Promise<string> => {
+  if (ref.runtime !== "herdr") return `workspace ${workspace} not closed (${ref.runtime} has no workspaces)`;
+  const r = await deps.run(["herdr", "workspace", "close", workspace]);
+  return r.code === 0 ? `workspace ${workspace} closed` : `workspace ${workspace} not closed`;
+};
+
+/**
+ * Closes what dori opened for a lane. A workspace dori created is closed when no other open lane uses it; a lane placed
+ * in a tab closes the tab, a split its pane. A lane recorded before placement existed keeps the old rule: its tab if it
+ * has one, else its pane. Never a workspace dori did not create, never the lead or an ignored session.
  */
 export const closePlacement = async (deps: FlowDeps, lane: Lane): Promise<string[]> => {
+  const ref = sessionOf(lane);
+  if (ref === undefined) return [];
   const out: string[] = [];
-  if (lane.workspace) {
-    const all = await deps.registry.list();
-    const sameWs = all.filter((l) => l.workspace === lane.workspace && l.key !== lane.key);
-    const stillOpen = sameWs.some((l) => !l.closedAt);
-    const created = lane.workspaceCreated || sameWs.some((l) => l.workspaceCreated);
-    if (created && !stillOpen) {
-      const r = await deps.run(["herdr", "workspace", "close", lane.workspace]);
-      if (r.code === 0) return [`workspace ${lane.workspace} closed`];
-      out.push(`workspace ${lane.workspace} not closed`);
+  if (lane.workspace !== undefined) {
+    const others = (await deps.registry.list()).filter((l) => l.workspace === lane.workspace && l.key !== lane.key);
+    const created = lane.workspaceCreated === true || others.some((l) => l.workspaceCreated === true);
+    if (created && !others.some((l) => l.closedAt === undefined)) {
+      const line = await closeWorkspace(deps, ref, lane.workspace);
+      if (line.endsWith(" closed") && !line.endsWith(" not closed")) return [line];
+      out.push(line);
     }
   }
-  if (lane.tab && lane.placement !== "split" && lane.placement !== "workspace") {
-    out.push((await deps.run(["herdr", "tab", "close", lane.tab])).code === 0 ? `tab ${lane.tab} closed` : `tab ${lane.tab} not closed`);
-  } else if (lane.pane) {
-    if (protectedPane(deps, lane.pane)) out.push(`pane ${lane.pane} kept (protected)`);
-    else out.push((await deps.run(["herdr", "pane", "close", lane.pane])).code === 0 ? `pane ${lane.pane} closed` : `pane ${lane.pane} not closed`);
+  if (ref.id === deps.config.leadPane || deps.config.ignorePanes.includes(ref.id))
+    return [...out, `pane ${ref.id} kept (protected)`];
+  const scope: CloseScope =
+    lane.placement === "split" || lane.placement === "workspace" || ref.container === undefined
+      ? "session"
+      : "container";
+  const what = scope === "container" ? `tab ${ref.container}` : `pane ${ref.id}`;
+  try {
+    await runtimesOf(deps).for(ref).close(ref, scope);
+    out.push(`${what} closed`);
+  } catch {
+    out.push(`${what} not closed`);
   }
   return out;
 };

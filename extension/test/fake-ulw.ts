@@ -31,7 +31,10 @@ export default function fakeUlw(pi: UlwApi): void {
   }
   pi.on("before_agent_start", (event: unknown) => {
     calls.push("before_agent_start");
-    const prompt = event && typeof event === "object" && "systemPrompt" in event && Array.isArray(event.systemPrompt) ? event.systemPrompt : [];
+    const prompt =
+      event && typeof event === "object" && "systemPrompt" in event && Array.isArray(event.systemPrompt)
+        ? event.systemPrompt
+        : [];
     return { systemPrompt: [...prompt, "<fake-ulw-policy>"] };
   });
 }

@@ -1,0 +1,37 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "workspaces": {
+    ".": {
+      "entry": [
+        "scripts/update-supervisor.ts",
+        "scripts/bench-discord-intake.ts",
+        "src/update/deployment-launcher.ts",
+        "skills/dori-mode/scripts/src/cli.ts",
+        "src/update/reviewer-guard.ts",
+        "src/update/worker-guard.ts",
+        "extension/index.ts",
+        "extension/test/**/*.test.ts",
+        "extension/test/fake-ulw.ts",
+        "test/**/*.test.ts",
+        "skills/dori-mode/scripts/test/**/*.test.ts",
+        "skills/dori-mode/scripts/test/record-gateway.ts",
+        "skills/dori-mode/scripts/test/record-discord-inbound.ts",
+        "skills/dori-mode/scripts/test/record-fetch.ts",
+        "skills/dori-mode/scripts/test/record-discord.ts"
+      ],
+      "project": [
+        "src/**/*.ts",
+        "scripts/**/*.ts",
+        "test/**/*.ts",
+        "extension/**/*.ts",
+        "skills/dori-mode/scripts/src/**/*.ts",
+        "skills/dori-mode/scripts/test/**/*.ts"
+      ]
+    },
+    "test/fixtures/omp-native-host": {
+      "entry": ["compose.ts"],
+      "project": ["compose.ts"]
+    }
+  },
+  "ignoreExportsUsedInFile": true
+}
