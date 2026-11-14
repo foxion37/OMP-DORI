@@ -22,8 +22,11 @@ const USAGE = `dori <command> [options]
   update <command> [options]           verified releases: check, install, status, rollback [--version TAG] [--from DIST]
   upstream <command> --config FILE     maintainer staging: check, stage, watch, status, snapshot, restore, recover, restart
   launch <key> --title T --brief FILE --done "merged o/r#N; closed o/r#M" [--thread REF] [--model M] [--cwd DIR]
-         [--wall-minutes N|none] [--token-limit N|none] [--cost-limit N|none] [--activity-path FILE ...] [--dry-run]
-  adopt  <key> --pane ID --title T --brief FILE --done "..." [--thread REF]
+         [--group NAME] [--wall-minutes N|none] [--token-limit N|none] [--cost-limit N|none] [--activity-path FILE ...] [--dry-run]
+                                       --group: split below an open lane of that group, else open a workspace for it
+  adopt  <key> --pane ID --title T --brief FILE --done "..." [--thread REF] [--group NAME]
+  context [--loop MIN] [--relay]        CONTEXT_HIGH / CONTEXT_UNKNOWN per lane; --relay hands full lanes to a successor
+  relay  <key>                          handoff file, successor session below the lane, old session closed after STARTUP_OK
   sync   [--write]                     registry vs live panes; read-only unless --write
   boot                                 read-only check after a restart: Slack auth, vanished panes, journals, open worklog items, stale watches
   report <key> --kind milestone|blocker|question|halted|done --text TEXT
@@ -103,6 +106,8 @@ const flags = parseArgs({
     note: { type: "string" },
     write: { type: "boolean" },
     loop: { type: "string" },
+    group: { type: "string" },
+    relay: { type: "boolean" },
     gateway: { type: "boolean" },
     to: { type: "string" },
     text: { type: "string" },

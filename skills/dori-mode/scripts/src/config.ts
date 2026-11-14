@@ -45,6 +45,13 @@ export type DoriConfig = {
   readonly closeAfterMin: number;
   readonly heavySlots: number;
   readonly heavyMaxLoad: number;
+  /** Context handoff: `contextClaudePattern` models hand off at `contextHandoffPct`, others at `contextHandoffPctOther`;
+   * `contextUnknownAfterMin` and `relayTimeoutMin` are the monitor's silence window and the relay's handoff wait. */
+  readonly contextClaudePattern: string;
+  readonly contextHandoffPct: number;
+  readonly contextHandoffPctOther: number;
+  readonly contextUnknownAfterMin: number;
+  readonly relayTimeoutMin: number;
   readonly deadPanePatterns: readonly string[];
   readonly guard: GuardThresholds;
   readonly hooks: Hooks;
@@ -72,6 +79,11 @@ export const defaultConfig = (home = homedir()): DoriConfig => ({
   closeAfterMin: 5,
   heavySlots: 1,
   heavyMaxLoad: 80,
+  contextClaudePattern: "claude|opus|sonnet|haiku",
+  contextHandoffPct: 40,
+  contextHandoffPctOther: 60,
+  contextUnknownAfterMin: 10,
+  relayTimeoutMin: 10,
   deadPanePatterns: ["has stopped", "no suitable jobs"],
   guard: { loadAlert: 150, loadOk: 80, memFreeMinPct: 20, diskFreeMinGb: 50, panesMax: 20 },
   hooks: {},

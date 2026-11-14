@@ -31,6 +31,10 @@ export type FakePi = {
   userMessages: string[];
   notes: string[];
   session: FakeSession;
+  /** What ctx.model reports; change it between turns to move the lane's model. */
+  model?: DoriContext["model"];
+  /** What ctx.getContextUsage() returns; undefined until a test sets it. */
+  usage?: { tokens: number; contextWindow: number; percent: number };
   ctx(): DoriContext;
   /** Runs handlers in registration order, chaining before_agent_start prompt replacements as OMP does. */
   emit(event: string, payload?: unknown): Promise<unknown[]>;
@@ -51,11 +55,13 @@ export const fakePi = (options: FakeOptions): FakePi => {
     userMessages: [],
     notes: [],
     session: options.session,
+    ...(options.model === undefined ? {} : { model: options.model }),
     ctx: () => ({
       cwd: tmpdir(),
       mode: "print",
       agent,
-      model: options.model,
+      ...(fake.model === undefined ? {} : { model: fake.model }),
+      getContextUsage: () => fake.usage,
       sessionManager: {
         getSessionId: () => fake.session.id,
         getSessionFile: () => fake.session.file,

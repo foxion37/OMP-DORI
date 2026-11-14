@@ -2,7 +2,8 @@ import { configPath, fill, isOmpCommand } from "./config.ts";
 import type { FlowDeps } from "./done-flow.ts";
 import { laneGoalActive } from "./goal-record.ts";
 import { BRIEF_START, footer, originalBrief, quoteForPane } from "./launch-footer.ts";
-import { parseRef, type SessionRef } from "../../../../src/runtime/types.ts";
+import { type PlaceInput, type Placed, GROUP_NAME, groupOf, placeLane } from "./placement.ts";
+import { parseRef } from "../../../../src/runtime/types.ts";
 import { LANE_KEY, type Lane, RESERVED_LANE_KEY, sessionFields, upgradeLane } from "./registry.ts";
 import { iso, runtimesOf } from "./run.ts";
 import { Reports } from "./reports.ts";
@@ -11,7 +12,7 @@ import type { BudgetLimits } from "./supervision-observe.ts";
 import { Lessons, renderLessons } from "./lessons.ts";
 import { laneLaunchEnv, TokenFileError } from "./slack-token.ts";
 import { startupFailure } from "./startup-screen.ts";
-import { launchFinished, launchScreen, launchStatus } from "./launch-finished.ts";
+import { FIRST_CHECK_MS, launchFinished, launchScreen, launchStatus, lastLines, ready } from "./launch-finished.ts";
 
 export type LaunchInput = {
   readonly key: string;
@@ -23,14 +24,14 @@ export type LaunchInput = {
   readonly cwd?: string;
   readonly budget?: BudgetLimits;
   readonly activityPaths?: readonly string[];
+  /** Work stream: a lane of the same group is split below, a new group opens its own workspace. */
+  readonly group?: string;
 };
 
 export class LaunchError extends Error {}
 
-// The first check is 20 s after start, then the screen and status are re-read every 10 s until `startupWaitSeconds`.
-const FIRST_CHECK_MS = 20_000;
+// After the first check (launch-finished's FIRST_CHECK_MS) the screen and status are re-read every 10 s.
 const RECHECK_MS = 10_000;
-const ready = (s: string | undefined): boolean => s === "idle" || s === "working";
 const unreported = (s: string | undefined): boolean => s === undefined || s === "unknown";
 // OMP goals come from its trusted current-session record, never quoted screen text. Custom agents may use their
 // footer marker or omo goal record. An empty marker opts out of the goal check, not the ready-status check.
@@ -49,6 +50,8 @@ export const validateLaunch = async (deps: FlowDeps, input: LaunchInput): Promis
   if (await deps.registry.read(input.key)) throw new LaunchError(`lane ${input.key} is already registered`);
   const errors = doneSyntaxErrors(input.done);
   if (errors.length) throw new LaunchError(`Done line is not checkable: ${errors.join("; ")}`);
+  if (input.group !== undefined && !GROUP_NAME.test(input.group))
+    throw new LaunchError(`group must match ${GROUP_NAME}`);
   for (const [name, value] of Object.entries(input.budget ?? {})) {
     if (value != null && (!Number.isFinite(value) || value < 0)) throw new LaunchError(`invalid ${name} ceiling`);
   }
@@ -67,7 +70,15 @@ export const adoptLane = async (deps: FlowDeps, input: LaunchInput & { readonly 
   };
   // `hc:t7` or `herdr:w1:p3` names its runtime; any other id is a herdr pane, as before runtimes existed.
   const ref = parseRef(input.pane);
-  const lane = ref ? { ...base, ...sessionFields(ref) } : upgradeLane({ ...base, pane: input.pane });
+  const seated = ref ? { ...base, ...sessionFields(ref) } : upgradeLane({ ...base, pane: input.pane });
+  const workspace =
+    input.group === undefined || ref === undefined ? undefined : await groupOf(deps, ref).catch(() => undefined);
+  // A workspace someone else opened is never dori's to close, so `workspaceCreated` stays unset here.
+  const lane: Lane = {
+    ...seated,
+    ...(input.group === undefined ? {} : { group: input.group }),
+    ...(workspace === undefined ? {} : { workspace }),
+  };
   await deps.registry.write(lane);
   return lane;
 };
@@ -132,23 +143,28 @@ const startLane = async (
   const cwd = input.cwd ?? deps.config.defaultCwd;
   await Bun.write(input.brief, preamble);
   const rts = runtimesOf(deps);
-  const group = deps.config.laneWorkspace || undefined;
   let env: Record<string, string>;
   try {
     env = laneLaunchEnv(process.env, configPath());
   } catch (e) {
     throw e instanceof TokenFileError ? new LaunchError(`token file refused: ${e.message}`) : e;
   }
-  let ref: SessionRef;
+  let placed: Placed;
   try {
-    const spec = { name: input.key, role: "lane", container: "tab", cwd, env } as const;
-    ref = await rts.default.create(group === undefined ? spec : { ...spec, group });
+    const place: PlaceInput = {
+      name: input.key,
+      cwd,
+      env,
+      ...(input.group === undefined ? {} : { group: input.group }),
+    };
+    placed = await placeLane(deps, place);
   } catch (e) {
     throw new LaunchError(`session create failed: ${e instanceof Error ? e.message : String(e)}`);
   }
+  const { ref, ...seat } = placed;
   const pane = ref.id;
   // Registered before the agent starts: dori report refuses an unknown key, so a fast lane's first report would be lost.
-  const lane: Lane = { ...draft, ...sessionFields(ref) };
+  const lane: Lane = { ...draft, ...seat };
   await deps.registry.write(lane);
   // The launch is an activity record, not a report: it starts the journal (so the screen is watched for a stall) but is
   // never posted to the thread as if the agent had reported.
@@ -226,13 +242,3 @@ const startLane = async (
   const why = error ? `status lookup failed: ${error}` : `no ready agent status (${status ?? "none"})`;
   return { lane, startup: `STARTUP_UNCONFIRMED ${input.key} ${pane}: ${why}; last lines: ${lastLines(screen)}` };
 };
-
-const lastLines = (screen: string): string =>
-  screen
-    .split("\n")
-    .map((s) => s.trim())
-    .filter(Boolean)
-    .slice(-3)
-    .join(" / ")
-    .replace(/\/(Users|home|Volumes|private)\/\S+/g, "(local path)")
-    .slice(0, 240) || "(blank)";

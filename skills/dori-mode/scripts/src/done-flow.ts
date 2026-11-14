@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 
 import { type DoriConfig, fill } from "./config.ts";
-import type { SessionRef } from "../../../../src/runtime/types.ts";
+import { closePlacement } from "./placement.ts";
 import { type Lane, type Registry, sessionOf, statusOf, withStatus } from "./registry.ts";
 import { type ChosenRuntimes, type Clock, iso, type Runner, runtimesOf } from "./run.ts";
 import { sendVerified } from "./sessions.ts";
@@ -138,7 +138,7 @@ export const closeLane = async (
     cleanup.push(r.code === 0 ? "thread marked done" : `thread hook failed: ${r.err.slice(0, 160)}`);
   }
   const ref = sessionOf(lane);
-  if (ref) cleanup.push(await closeSession(deps, ref));
+  if (ref) cleanup.push(...(await closePlacement(deps, lane)));
   const root = lane.cwd ?? deps.config.defaultCwd;
   for (const wt of (await discoverWorktrees(lane, deps.run, [deps.config.defaultCwd])).filter(exists)) {
     const r = await deps.run(["git", "-C", root, "worktree", "remove", wt]);
@@ -157,19 +157,6 @@ export const closeLane = async (
     }
   }
   return { closed: true, lines: [...lines, `CLOSED ${lane.key} ${JSON.stringify(receipt)}`] };
-};
-
-/** Closes the lane's tab when it has one, else its session; a failed close is named in the receipt, never thrown. */
-const closeSession = async (deps: FlowDeps, ref: SessionRef): Promise<string> => {
-  const what = ref.container ? `tab ${ref.container}` : `pane ${ref.id}`;
-  try {
-    await runtimesOf(deps)
-      .for(ref)
-      .close(ref, ref.container ? "container" : "session");
-    return `${what} closed`;
-  } catch {
-    return `${what} not closed`;
-  }
 };
 
 const settle = async (deps: FlowDeps, lane: Lane, evidence: string): Promise<string> => {

@@ -45,6 +45,11 @@ export const footer = (
     FOOTER_START,
     FOOTER_HEADING,
     `- Key: ${lane.key}. Work thread: ${lane.thread}.`,
+    ...(lane.group
+      ? [
+          `- Group: ${lane.group}. Your session may be closed and replaced by a successor when your context fills (dori relay): when the lead asks for a handoff, stop new work, write it, and print HANDOFF-WRITTEN.`,
+        ]
+      : []),
     `- Done = ${lane.done}. The lane closes only when every signal reads back live.`,
     "- Persist each milestone, blocker, question, halt and completion with the report command below. It appends reports.jsonl and prints the human [REPORT] line.",
     "- Before forwarding, verify that the lead pane runs a live agent, its input is empty, and no approval or question prompt is open (references/sessions.md). A shell, unknown status or unconfirmed check holds forwarding.",

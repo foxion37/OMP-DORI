@@ -191,6 +191,28 @@ export const laneState = (stateDir: string, paneId: string, patch: Partial<PaneS
     ...patch,
   });
 
+/**
+ * An OMP lane in a herdr pane as the extension records it: the pane with its agent in front, the shell and agent
+ * processes under it, and the pane state file the runtime's own probe cross-checks.
+ */
+export const ompPane = (
+  w: World,
+  stateDir: string,
+  pane: string,
+  pid: number,
+  opts: { readonly status?: string; readonly state?: Partial<PaneState> } = {},
+): void => {
+  agentIn(w, pane, pid);
+  w.panes.push({
+    pane_id: pane,
+    workspace_id: "w9",
+    agent: "omp",
+    agent_status: opts.status ?? "idle",
+    foreground: [{ name: "omp", argv: ["omp"], pid }],
+  });
+  laneState(stateDir, pane, { pid, ...opts.state });
+};
+
 export const sent = (w: World): string[] =>
   w.calls.filter((c) => c[0] === "herdr" && c[2] === "send-text").map((c) => c[4] ?? "");
 

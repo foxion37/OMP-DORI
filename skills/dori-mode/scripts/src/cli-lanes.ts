@@ -1,8 +1,10 @@
-/** dori launch, adopt, claim-done, object-done, close, pause and resume. */
-import { type Command, die } from "./cli-context.ts";
+/** dori launch, adopt, claim-done, object-done, close, pause, resume, context and relay. */
+import { every, type Command, die } from "./cli-context.ts";
+import { contextTick } from "./context.ts";
 import { claimDone, closeLane, objectDone } from "./done-flow.ts";
 import { adoptLane, type LaunchInput, launchLane, prepareLaunch } from "./launch.ts";
 import { pauseLane, resumeLane } from "./pause.ts";
+import { relayLane } from "./relay.ts";
 
 const launch: Command = async ({ key, opt, need, ceiling, strings, values, deps }) => {
   const wallMinutes = ceiling("wall-minutes"),
@@ -10,7 +12,8 @@ const launch: Command = async ({ key, opt, need, ceiling, strings, values, deps 
     costUsd = ceiling("cost-limit");
   const thread = opt("thread"),
     model = opt("model"),
-    cwd = opt("cwd");
+    cwd = opt("cwd"),
+    group = opt("group");
   const input: LaunchInput = {
     key: key ?? "",
     title: need("title"),
@@ -19,6 +22,7 @@ const launch: Command = async ({ key, opt, need, ceiling, strings, values, deps 
     ...(thread !== undefined ? { thread } : {}),
     ...(model !== undefined ? { model } : {}),
     ...(cwd !== undefined ? { cwd } : {}),
+    ...(group !== undefined ? { group } : {}),
     budget: {
       ...(wallMinutes !== undefined ? { wallMinutes } : {}),
       ...(tokens !== undefined ? { tokens } : {}),
@@ -34,22 +38,39 @@ const launch: Command = async ({ key, opt, need, ceiling, strings, values, deps 
   }
   const r = await launchLane(deps, input);
   for (const warning of r.warnings) console.error(warning);
-  console.log(`LAUNCHED ${r.lane.key} pane=${r.lane.pane} tab=${r.lane.tab ?? "?"}`);
+  console.log(
+    `LAUNCHED ${r.lane.key} pane=${r.lane.pane} tab=${r.lane.tab ?? "?"} placement=${r.lane.placement ?? "?"} workspace=${r.lane.workspace ?? "?"}${r.lane.group ? ` group=${r.lane.group}` : ""}`,
+  );
   console.log(r.startup);
   process.exit(r.startup.startsWith("STARTUP_OK") || r.startup.startsWith("STARTUP_DONE") ? 0 : 3);
 };
 
 const adopt: Command = async ({ key, opt, need, deps }) => {
   const thread = opt("thread");
+  const group = opt("group");
   const l = await adoptLane(deps, {
     key: key ?? "",
     title: need("title"),
     brief: need("brief"),
     done: need("done"),
     ...(thread !== undefined ? { thread } : {}),
+    ...(group !== undefined ? { group } : {}),
     pane: need("pane"),
   });
-  console.log(`ADOPTED ${l.key} pane=${l.pane} thread=${l.thread}`);
+  console.log(`ADOPTED ${l.key} pane=${l.pane} thread=${l.thread}${l.group ? ` group=${l.group}` : ""}`);
+};
+
+const context: Command = async ({ values, loopMinutes, deps }) => {
+  const relay = values["relay"] === true;
+  await every(loopMinutes(), async () => {
+    for (const line of await contextTick(deps, { relay })) console.log(line);
+  });
+};
+
+const relay: Command = async ({ key, lane, deps }) => {
+  const result = await relayLane(deps, await lane(key ?? die("relay needs a lane key")));
+  for (const line of result.lines) console.log(line);
+  process.exit(result.outcome === "relayed" ? 0 : result.outcome === "skipped" ? 2 : 3);
 };
 
 const close: Command = async ({ key, opt, lane, deps }) => {
@@ -79,6 +100,8 @@ const pauseOrResume: Command = async ({ command, key, opt, lane, deps }) => {
 export const laneCommands: Readonly<Record<string, Command>> = {
   launch,
   adopt,
+  context,
+  relay,
   "claim-done": async ({ key, need, lane, deps }) => {
     console.log(await claimDone(deps, await lane(key), need("evidence")));
   },
