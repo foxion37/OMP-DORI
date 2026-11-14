@@ -20,6 +20,8 @@ export type HistoryEntry = { readonly at: string; readonly status: LaneStatus; r
 export type Lane = {
   readonly key: string;
   readonly title: string;
+  /** What dori shows for this lane everywhere it names it: `DICO : <title>`, `TLGR : <title>`, or the bare title. */
+  readonly label?: string | undefined;
   readonly thread: string;
   /** The lane's session on its runtime. `pane`/`tab` mirror its id and container for older readers. */
   readonly sessionRef?: SessionRef;

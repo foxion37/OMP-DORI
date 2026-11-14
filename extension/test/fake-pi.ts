@@ -35,6 +35,8 @@ export type FakePi = {
   model?: DoriContext["model"];
   /** What ctx.getContextUsage() returns; undefined until a test sets it. */
   usage?: { tokens: number; contextWindow: number; percent: number };
+  /** Session names the extension set through pi.setSessionName. */
+  sessionNames: string[];
   ctx(): DoriContext;
   /** Runs handlers in registration order, chaining before_agent_start prompt replacements as OMP does. */
   emit(event: string, payload?: unknown): Promise<unknown[]>;
@@ -55,6 +57,7 @@ export const fakePi = (options: FakeOptions): FakePi => {
     userMessages: [],
     notes: [],
     session: options.session,
+    sessionNames: [],
     ...(options.model === undefined ? {} : { model: options.model }),
     ctx: () => ({
       cwd: tmpdir(),
@@ -116,6 +119,7 @@ export const fakePi = (options: FakeOptions): FakePi => {
       setActiveTools: async (names) => {
         fake.active = [...names];
       },
+      setSessionName: async (name) => void fake.sessionNames.push(name),
     },
   };
   // omp-ulw talks to these too; they are outside omp-dori's own API surface.

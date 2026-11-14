@@ -2,6 +2,7 @@ import { configPath, fill, isOmpCommand } from "./config.ts";
 import type { FlowDeps } from "./done-flow.ts";
 import { laneGoalActive } from "./goal-record.ts";
 import { BRIEF_START, footer, originalBrief, quoteForPane } from "./launch-footer.ts";
+import { applyLaneLabel, laneLabel } from "./labels.ts";
 import { type PlaceInput, type Placed, GROUP_NAME, placeLane } from "./placement.ts";
 import type { SessionRef } from "../../../../src/runtime/types.ts";
 import { LANE_KEY, type Lane, RESERVED_LANE_KEY } from "./registry.ts";
@@ -94,6 +95,7 @@ export const prepareLaunch = async (
     key: input.key,
     title: input.title,
     thread: input.thread ?? "none",
+    label: laneLabel({ title: input.title, thread: input.thread ?? "none" }),
     brief: input.brief,
     done: input.done,
     cwd,
@@ -141,16 +143,17 @@ const startLane = async (
   const cwd = input.cwd ?? deps.config.defaultCwd;
   await Bun.write(input.brief, preamble);
   const rts = runtimesOf(deps);
+  const label = laneLabel(draft);
   let env: Record<string, string>;
   try {
-    env = laneLaunchEnv(process.env, configPath());
+    env = { ...laneLaunchEnv(process.env, configPath()), DORI_LANE_LABEL: label };
   } catch (e) {
     throw e instanceof TokenFileError ? new LaunchError(`token file refused: ${e.message}`) : e;
   }
   let placed: Placed;
   try {
     const place: PlaceInput = {
-      name: input.key,
+      name: label,
       cwd,
       env,
       ...(input.group === undefined ? {} : { group: input.group }),
@@ -164,6 +167,9 @@ const startLane = async (
   // Registered before the agent starts: dori report refuses an unknown key, so a fast lane's first report would be lost.
   const lane: Lane = { ...draft, ...seat };
   await deps.registry.write(lane);
+  // A tab or workspace dori created already carries the label; a split pane only needs its own rename.
+  if (seat.placement === "split" && ref.runtime === "herdr")
+    for (const line of await applyLaneLabel(deps, { runtime: ref.runtime, pane }, label)) console.error(line);
   // The launch is an activity record, not a report: it starts the journal (so the screen is watched for a stall) but is
   // never posted to the thread as if the agent had reported.
   new Reports(deps.config.stateDir).append({

@@ -6,6 +6,7 @@ import { configPath, fill } from "./config.ts";
 import type { FlowDeps } from "./done-flow.ts";
 import { checkStartup } from "./launch.ts";
 import { quoteForPane } from "./launch-footer.ts";
+import { applyLaneLabel, laneLabelOf } from "./labels.ts";
 import { splitFrom } from "./placement.ts";
 import { type Lane, sessionFields, sessionOf, statusOf } from "./registry.ts";
 import { iso, runtimesOf } from "./run.ts";
@@ -89,9 +90,10 @@ export const relayLane = async (deps: FlowDeps, listed: Lane): Promise<RelayResu
 
   const cwd = lane.cwd ?? deps.config.defaultCwd;
   const model = lane.model ?? deps.config.defaultModel;
+  const label = laneLabelOf(lane);
   let fresh: SessionRef;
   try {
-    fresh = await splitFrom(deps, ref, { name: key, cwd, env: successorEnv() });
+    fresh = await splitFrom(deps, ref, { name: label, cwd, env: { ...successorEnv(), DORI_LANE_LABEL: label } });
   } catch (e) {
     return fail(key, e instanceof Error ? e.message : String(e));
   }
@@ -114,8 +116,11 @@ export const relayLane = async (deps: FlowDeps, listed: Lane): Promise<RelayResu
   }
 
   const { session: _session, sessionVia: _via, ...kept } = lane;
+  // The successor pane shows the same label; its tab and workspace are the ones the lane already had.
+  const labels = await applyLaneLabel(deps, { runtime: fresh.runtime, pane: fresh.id }, label);
   await deps.registry.write({
     ...kept,
+    label,
     ...sessionFields(fresh),
     ...((lane.workspace ?? fresh.group === undefined) ? {} : { workspace: fresh.group }),
     placement: "split",
@@ -133,6 +138,9 @@ export const relayLane = async (deps: FlowDeps, listed: Lane): Promise<RelayResu
     .catch(() => false);
   return {
     outcome: "relayed",
-    lines: [`RELAYED ${key} ${ref.id} -> ${fresh.id}${closed ? "" : ` (old session ${ref.id} could not be closed)`}`],
+    lines: [
+      `RELAYED ${key} ${ref.id} -> ${fresh.id}${closed ? "" : ` (old session ${ref.id} could not be closed)`}`,
+      ...labels,
+    ],
   };
 };

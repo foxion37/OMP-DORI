@@ -102,6 +102,8 @@ test("relay: handoff, successor split below the lane, registry updated, old sess
     "--cwd",
     "/repo",
     "--no-focus",
+    "--env",
+    "DORI_LANE_LABEL=rl",
   ]);
   const run = world.calls.find((c) => c[2] === "run");
   expect(run?.[3]).toBe("w9:new1");

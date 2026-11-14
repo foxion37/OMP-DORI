@@ -104,6 +104,8 @@ export interface DoriApi {
   ): void;
   getActiveTools(): string[];
   setActiveTools(toolNames: string[]): Promise<void>;
+  /** omp's session name, shown in the session list and stored in the session file. */
+  setSessionName?(name: string): Promise<void>;
 }
 
 const ROLE_FLAG = "dori-role";
@@ -218,6 +220,7 @@ export default async function ompDori(pi: DoriApi): Promise<void> {
   let goalToolAdded = false;
   let paneWritten: string | undefined;
   let usageWritten = "";
+  let namedSession: string | undefined;
   const approvals = new Set<string>();
   let managedRestorePending = process.env.DORI_MANAGED_STARTUP === "1";
   const monitors = new Monitors(
@@ -391,6 +394,18 @@ export default async function ompDori(pi: DoriApi): Promise<void> {
     });
   };
 
+  // The lane label dori put on the launch command names the conversation: `DICO : <task>` / `TLGR : <task>`.
+  const nameSession = async (ctx: DoriContext): Promise<void> => {
+    const label = process.env["DORI_LANE_LABEL"]?.trim();
+    if (!label || !session || namedSession === session.id || typeof pi.setSessionName !== "function") return;
+    namedSession = session.id;
+    try {
+      await pi.setSessionName(label);
+    } catch (error) {
+      ctx.ui.notify(`omp-dori: could not name the session (${errorText(error)})`, "warning");
+    }
+  };
+
   const syncMain = async (ctx: DoriContext, branch: readonly SessionEntry[], bootstrap = false): Promise<void> => {
     const sessionId = ctx.sessionManager.getSessionId();
     // Monitors belong to the Dori session that started them; their lines must not wake whatever session comes next.
@@ -410,6 +425,7 @@ export default async function ompDori(pi: DoriApi): Promise<void> {
     }
     await syncTools();
     savePane(ctx);
+    if (role === "lane" && ctx.agent.kind === "main") await nameSession(ctx);
     if (role === "dori") {
       restoreMonitors(ctx, branch, managedRestorePending);
       managedRestorePending = false;

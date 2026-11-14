@@ -457,6 +457,24 @@ describe("context reporting", () => {
     await lane.emit("turn_end");
     expect(readPaneState(stateDir, PANE)?.updatedAt).toBe("marker");
   });
+
+  test("a lane session is named from DORI_LANE_LABEL, once per session", async () => {
+    process.env.DORI_LANE_LABEL = "TLGR : 정리";
+    try {
+      const lane = await load({ session: session("named"), flags: { "dori-role": "lane" } });
+      await lane.emit("session_start");
+      expect(lane.sessionNames).toEqual(["TLGR : 정리"]);
+      await lane.emit("session_start");
+      expect(lane.sessionNames).toEqual(["TLGR : 정리"]);
+
+      delete process.env.DORI_LANE_LABEL;
+      const plain = await load({ session: session("unnamed"), flags: { "dori-role": "lane" } });
+      await plain.emit("session_start");
+      expect(plain.sessionNames).toEqual([]);
+    } finally {
+      delete process.env.DORI_LANE_LABEL;
+    }
+  });
 });
 
 describe.skipIf(!existsSync(REAL_ULW))("with the real omp-ulw", () => {
