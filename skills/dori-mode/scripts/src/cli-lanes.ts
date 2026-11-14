@@ -2,7 +2,8 @@
 import { every, type Command, die } from "./cli-context.ts";
 import { contextTick } from "./context.ts";
 import { claimDone, closeLane, objectDone } from "./done-flow.ts";
-import { adoptLane, type LaunchInput, launchLane, prepareLaunch } from "./launch.ts";
+import { adoptLane } from "./adopt.ts";
+import { type LaunchInput, launchLane, prepareLaunch } from "./launch.ts";
 import { pauseLane, resumeLane } from "./pause.ts";
 import { relayLane } from "./relay.ts";
 

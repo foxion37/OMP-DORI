@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { SessionRef } from "../../../../src/runtime/types.ts";
 import { configPath, fill } from "./config.ts";
 import type { FlowDeps } from "./done-flow.ts";
-import { checkStartup } from "./launch-finished.ts";
+import { checkStartup } from "./launch.ts";
 import { quoteForPane } from "./launch-footer.ts";
 import { splitFrom } from "./placement.ts";
 import { type Lane, sessionFields, sessionOf, statusOf } from "./registry.ts";

@@ -2,9 +2,9 @@ import { configPath, fill, isOmpCommand } from "./config.ts";
 import type { FlowDeps } from "./done-flow.ts";
 import { laneGoalActive } from "./goal-record.ts";
 import { BRIEF_START, footer, originalBrief, quoteForPane } from "./launch-footer.ts";
-import { type PlaceInput, type Placed, GROUP_NAME, groupOf, placeLane } from "./placement.ts";
-import { parseRef } from "../../../../src/runtime/types.ts";
-import { LANE_KEY, type Lane, RESERVED_LANE_KEY, sessionFields, upgradeLane } from "./registry.ts";
+import { type PlaceInput, type Placed, GROUP_NAME, placeLane } from "./placement.ts";
+import type { SessionRef } from "../../../../src/runtime/types.ts";
+import { LANE_KEY, type Lane, RESERVED_LANE_KEY } from "./registry.ts";
 import { iso, runtimesOf } from "./run.ts";
 import { Reports } from "./reports.ts";
 import { doneSyntaxErrors } from "./signals.ts";
@@ -12,7 +12,7 @@ import type { BudgetLimits } from "./supervision-observe.ts";
 import { Lessons, renderLessons } from "./lessons.ts";
 import { laneLaunchEnv, TokenFileError } from "./slack-token.ts";
 import { startupFailure } from "./startup-screen.ts";
-import { FIRST_CHECK_MS, launchFinished, launchScreen, launchStatus, lastLines, ready } from "./launch-finished.ts";
+import { FIRST_CHECK_MS, launchFinished, launchScreen, launchStatus, lastLines } from "./launch-finished.ts";
 
 export type LaunchInput = {
   readonly key: string;
@@ -57,30 +57,28 @@ export const validateLaunch = async (deps: FlowDeps, input: LaunchInput): Promis
   }
 };
 
-export const adoptLane = async (deps: FlowDeps, input: LaunchInput & { readonly pane: string }): Promise<Lane> => {
-  await validateLaunch(deps, input);
-  const base: Lane = {
-    key: input.key,
-    title: input.title,
-    thread: input.thread ?? "none",
-    brief: input.brief,
-    done: input.done,
-    cwd: input.cwd ?? deps.config.defaultCwd,
-    openedAt: iso(deps.clock),
-  };
-  // `hc:t7` or `herdr:w1:p3` names its runtime; any other id is a herdr pane, as before runtimes existed.
-  const ref = parseRef(input.pane);
-  const seated = ref ? { ...base, ...sessionFields(ref) } : upgradeLane({ ...base, pane: input.pane });
-  const workspace =
-    input.group === undefined || ref === undefined ? undefined : await groupOf(deps, ref).catch(() => undefined);
-  // A workspace someone else opened is never dori's to close, so `workspaceCreated` stays unset here.
-  const lane: Lane = {
-    ...seated,
-    ...(input.group === undefined ? {} : { group: input.group }),
-    ...(workspace === undefined ? {} : { workspace }),
-  };
-  await deps.registry.write(lane);
-  return lane;
+/** The statuses that mean the agent is up and taking turns: herdr reports a finished first turn as "done". */
+export const ready = (status: string | undefined): boolean =>
+  status === "idle" || status === "working" || status === "done";
+
+/**
+ * One startup check for a session dori started outside a launch (a relay's successor): the screen for a known failure,
+ * then the runtime's status. STARTUP_DONE when the session is gone and the lane already finished; a relay keeps its
+ * old session unless this returns STARTUP_OK.
+ */
+export const checkStartup = async (deps: FlowDeps, key: string, ref: SessionRef): Promise<string> => {
+  const rts = runtimesOf(deps);
+  await deps.clock.sleep(FIRST_CHECK_MS);
+  const screen = await launchScreen(deps, rts, ref, key);
+  if (screen === null) return `STARTUP_DONE ${key}`;
+  const omp = isOmpCommand(deps.config.agentCommand);
+  const bad = startupFailure(screen, omp);
+  if (bad) return `STARTUP_ERROR ${key} ${ref.id}: ${bad}`;
+  const { status, error } = await launchStatus(rts, ref, omp);
+  if (status === "gone" && (await launchFinished(deps, key))) return `STARTUP_DONE ${key}`;
+  if (ready(status)) return `STARTUP_OK ${key} ${ref.id}`;
+  const why = error ? `status lookup failed: ${error}` : `no ready agent status (${status ?? "none"})`;
+  return `STARTUP_UNCONFIRMED ${key} ${ref.id}: ${why}; last lines: ${lastLines(screen)}`;
 };
 
 export const prepareLaunch = async (

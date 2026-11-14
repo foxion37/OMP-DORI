@@ -94,9 +94,8 @@ test("launch reports STARTUP_OK only on a ready agent status that shows a goal; 
       "quoted-goal-lane",
     ),
   ).toStartWith("STARTUP_NO_GOAL quoted-goal-lane w:p9");
-  expect(await run(["idle", "done"], ["❯ ", goal], "stopped-lane")).toStartWith(
-    "STARTUP_UNCONFIRMED stopped-lane w:p9",
-  );
+  // herdr shows an agent that finished its first turn and waits for input as "done": it is running.
+  expect(await run(["idle", "done"], ["❯ ", goal], "stopped-lane")).toBe("STARTUP_OK stopped-lane w:p9");
   // The marker is config, since the agent is: another agent's goal line counts, and an empty marker turns the wait off.
   expect(await run("idle", "❯ \n goal: ship the fix", "other-agent-lane", { goalMarker: "goal:" })).toBe(
     "STARTUP_OK other-agent-lane w:p9",
@@ -109,7 +108,9 @@ test("launch reports STARTUP_OK only on a ready agent status that shows a goal; 
   );
   expect(await run("idle", "No API key found\n❯ ", "err-lane")).toBe("STARTUP_ERROR err-lane w:p9: No API key");
   expect(await run("blocked", "❯ ", "blocked-lane")).toStartWith("STARTUP_UNCONFIRMED blocked-lane w:p9");
-  expect(await run("done", "❯ ", "done-lane")).toStartWith("STARTUP_UNCONFIRMED done-lane w:p9");
+  expect(await run("done", goal, "done-lane")).toBe("STARTUP_OK done-lane w:p9");
+  // ...but the goal check still applies to it: a "done" agent that shows no goal is not a started lane.
+  expect(await run("done", "❯ ", "done-no-goal-lane")).toStartWith("STARTUP_NO_GOAL done-no-goal-lane w:p9");
 
   // #202: omo starts despite a user extension it cannot load, so a line that is that warning is no start failure...
   const warning = `Warning: Failed to load extension "ext.js": Failed to load extension: Cannot find module '../gone.mjs'`;
