@@ -34,7 +34,19 @@ export async function committedSource(root: string, commit: string, destination:
   mkdirSync(destination, { mode: 0o700 });
   const raw = join(dirname(destination), "committed.tar");
   await git(root, ["archive", "--format=tar", `--output=${raw}`, commit, "--", ...files.map((file) => file.path)]);
-  await command(["tar", "-xf", raw, "--no-same-owner", "--no-same-permissions", "-C", destination]);
+  await command([
+    "/bin/sh",
+    "-c",
+    'umask 077; exec "$@"',
+    "dori-release-source",
+    "tar",
+    "-xf",
+    raw,
+    "--no-same-owner",
+    "--no-same-permissions",
+    "-C",
+    destination,
+  ]);
   const observed = sourceManifest(destination);
   assertSourceAdmission(observed, "upstream");
   const blobHashes = (

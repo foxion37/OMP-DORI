@@ -1,4 +1,4 @@
-import type { Deps } from "./harness.ts";
+import { harnessLaunchEnv, type Deps } from "./harness.ts";
 import { POLL_MS, type MigrateOpts, type Subject } from "./migrate-capture.ts";
 import { drainForward, moveBack, moveInbox } from "./migrate-inbox.ts";
 import { refText } from "./refs.ts";
@@ -84,7 +84,7 @@ export async function swapLoop(d: Deps, role: Role, j: MigrateJournal, cwd: stri
     if (closeFirst) await closeQuietly(d, j.from);
     const rt = runtimeOf(d, j.to);
     const group = await targetGroup(d, rt, cwd);
-    const spec = { name: role, role, container: "tab", cwd, env: { DORI_HOME: d.store.root }, group } as const;
+    const spec = { name: role, role, container: "tab", cwd, env: harnessLaunchEnv(d), group } as const;
     j = { ...j, phase: "opened", newRef: await openSession(rt, spec, command) };
     writeJournal(d.store.root, j);
   }

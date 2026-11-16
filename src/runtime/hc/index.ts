@@ -52,8 +52,9 @@ export class HcRuntime implements SessionRuntime {
     return label;
   }
 
+  /** `DORI_HC_SPACE` names the Herdr app space new sessions open in; unset, they stay hidden from the app. */
   create(spec: CreateSpec): Promise<SessionRef> {
-    return create(this.exec, spec, this.env["SHELL"] || "sh");
+    return create(this.exec, spec, this.env["SHELL"] || "sh", this.env["DORI_HC_SPACE"] || undefined);
   }
 
   start(ref: SessionRef, command: string): Promise<void> {

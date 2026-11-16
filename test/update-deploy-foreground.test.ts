@@ -1,7 +1,6 @@
 import { expect, test } from "bun:test";
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { probe } from "../src/runtime/herdr/probe.ts";
 import { captureRuntime } from "../src/update/deployment-native.ts";
 import { DeploymentBusy, DeploymentHeld, processIdentity, sameProcess } from "../src/update/deployment-process.ts";
 import type { DeploymentRecord, MonitorSet, RuntimeIdentity } from "../src/update/deployment-types.ts";
@@ -13,15 +12,17 @@ function untouched(f: { runtime: RuntimeIdentity; bootstrap: MonitorSet; signalP
   expect(existsSync(f.signalPath)).toBe(false);
 }
 
+// The kernels whose process identity deployment can bind.
+const posix = test.skipIf(process.platform !== "linux" && process.platform !== "darwin");
 const linux = test.skipIf(process.platform !== "linux");
-linux("capture admits Bash scripts beside Bun wrapper execs while the generic probe holds", async () => {
+posix("capture admits Bash scripts beside Bun wrapper execs while the generic probe holds", async () => {
   const f = await foregroundFixture();
-  expect((await probe(f.cli, f.config.pane, false, "held", f.config.stateDir)).shellInFront).toBe(true);
+  expect((await f.cli.probe(f.config.pane, "held", f.config.stateDir)).shellInFront).toBe(true);
   expect(await captureRuntime(f.config, f.cli)).toMatchObject({ ...f.runtime, busy: false, approvalPending: false });
   untouched(f);
 });
 
-linux.each(["argv", "cwd"] as const)("an attested shell still requires its declared %s", async (changed) => {
+posix.each(["argv", "cwd"] as const)("an attested shell still requires its declared %s", async (changed) => {
   const f = await foregroundFixture();
   f.writeBootstrap({
     ...f.bootstrap,
@@ -38,7 +39,7 @@ linux.each(["argv", "cwd"] as const)("an attested shell still requires its decla
   untouched(f);
 });
 
-linux.each(["native", "group", "pid", "runtime", "monitor"] as const)(
+posix.each(["native", "group", "pid", "runtime", "monitor"] as const)(
   "foreground exception requires complete group and bootstrap attestation: %s",
   async (missing) => {
     const f = await foregroundFixture();
@@ -61,7 +62,7 @@ linux.each(["native", "group", "pid", "runtime", "monitor"] as const)(
   },
 );
 
-linux.each([
+posix.each([
   ["native", "startTicks"],
   ["native", "bootId"],
   ["native", "imageIno"],
@@ -85,12 +86,13 @@ linux.each([
   untouched(f);
 });
 
-linux("an unregistered foreground script under the native PID remains held", async () => {
+posix("an unregistered foreground script under the native PID remains held", async () => {
   const f = await foregroundFixture({ unknown: true });
   await expect(captureRuntime(f.config, f.cli, true)).rejects.toThrow(DeploymentHeld);
   untouched(f);
 });
 
+// macOS /bin/bash 3.2 gives an interactive shell's children their own process group, so the fixture cannot build this group.
 linux("a real interactive parent shell in the native foreground group remains held", async () => {
   const f = await foregroundFixture({ parentShell: true });
   expect(f.front.foreground_processes[0]!.name).toBe("bash");
@@ -99,7 +101,7 @@ linux("a real interactive parent shell in the native foreground group remains he
   untouched(f);
 });
 
-linux.each(["foreign", "exited"] as const)("a %s script PID receipt never discounts an owned shell", async (mode) => {
+posix.each(["foreign", "exited"] as const)("a %s script PID receipt never discounts an owned shell", async (mode) => {
   const f = await foregroundFixture();
   const foreign = Bun.spawn(["/bin/bash", f.script], {
     cwd: f.root,
@@ -130,7 +132,7 @@ linux.each(["foreign", "exited"] as const)("a %s script PID receipt never discou
   }
 });
 
-linux("managed capture uses current health and desired monitors rather than old bootstrap IDs", async () => {
+posix("managed capture uses current health and desired monitors rather than old bootstrap IDs", async () => {
   const f = await foregroundFixture();
   f.writeHealth();
   f.writeBootstrap({ ...f.bootstrap, runtime: { ...f.bootstrap.runtime!, startTicks: "0" } });
@@ -138,7 +140,7 @@ linux("managed capture uses current health and desired monitors rather than old 
   untouched(f);
 });
 
-linux.each(["pid", "startTicks", "session", "startedAt", "spec"] as const)(
+posix.each(["pid", "startTicks", "session", "startedAt", "spec"] as const)(
   "managed monitor attestation holds mismatched %s without bootstrap fallback",
   async (changed) => {
     const f = await foregroundFixture();
@@ -159,7 +161,7 @@ linux.each(["pid", "startTicks", "session", "startedAt", "spec"] as const)(
   },
 );
 
-linux("attested foreground monitors preserve the busy and explicit quiesce boundaries", async () => {
+posix("attested foreground monitors preserve the busy and explicit quiesce boundaries", async () => {
   const f = await foregroundFixture();
   f.writeState({ agentStatus: "working" });
   await expect(captureRuntime(f.config, f.cli)).rejects.toThrow(DeploymentBusy);
@@ -201,7 +203,7 @@ linux("attested foreground monitors preserve the busy and explicit quiesce bound
   untouched(f);
 });
 
-linux("attested foreground monitors never clear a native approval", async () => {
+posix("attested foreground monitors never clear a native approval", async () => {
   const f = await foregroundFixture();
   f.writeState({ approvalPending: true });
   await expect(captureRuntime(f.config, f.cli)).rejects.toThrow(DeploymentHeld);

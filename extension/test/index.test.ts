@@ -3,8 +3,7 @@ import { existsSync, writeFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 
 import { paneStatePath, readPaneState, writePaneState } from "../../skills/dori-mode/scripts/src/lane-state";
-import { type FakePi, type FakeSession, load, until, useConfig } from "./fake-pi";
-import { calls } from "./fake-ulw";
+import { calls, type FakePi, type FakeSession, load, until, useConfig } from "./fake-pi";
 
 const FAKE_ULW = join(import.meta.dir, "fake-ulw.ts");
 const REAL_ULW = join(import.meta.dir, "../../ref/omp-ulw/index.ts");
@@ -480,27 +479,36 @@ describe("context reporting", () => {
 describe.skipIf(!existsSync(REAL_ULW))("with the real omp-ulw", () => {
   test("normal sessions get no ULW and /ulw sends nothing; lanes get the ULW policy", async () => {
     useConfig(REAL_ULW);
-    const normal = await load({ session: session("plain") });
-    await normal.emit("session_start");
-    await normal.command("ulw", "fix it");
+    // This dependency requires the genuine native settings scope, not FakePI's reduced context.
+    const { nativeComposition } = await import("../../test/fixtures/omp-native-host/compose.ts");
+    const dori = join(import.meta.dir, "../index.ts");
+    const normal = await nativeComposition([dori], ["base prompt"], {
+      command: { name: "ulw", args: "fix it", beforePrompt: true },
+    });
     expect(normal.userMessages).toEqual([]);
-    expect((await normal.emit("before_agent_start", agentStart)).filter(Boolean)).toEqual([]);
-    expect(normal.session.entries).toEqual([]);
+    expect(normal.firstResult).toBeUndefined();
+    expect(normal.secondResult).toBeUndefined();
+    expect(normal.first).toBeUndefined();
+    expect(normal.second).toBeUndefined();
+    expect(normal.entries).toEqual([]);
 
-    const lane = await load({ session: session("lane"), flags: { "dori-role": "lane" } });
-    await lane.emit("session_start");
-    const results = await lane.emit("before_agent_start", agentStart);
-    expect(JSON.stringify(results)).toContain("<omp-ulw-policy>");
-    await lane.command("ulw", "fix it");
+    const lane = await nativeComposition([dori], ["base prompt"], {
+      role: "lane",
+      command: { name: "ulw", args: "fix it" },
+    });
+    expect(JSON.stringify(lane.first)).toContain("<omp-ulw-policy>");
+    expect(
+      lane.entries.flatMap((entry) => (entry.type === "custom" && entry.customType === ROLE ? [entry.data] : [])),
+    ).toEqual(["lane"]);
     expect(lane.userMessages).toEqual(["ulw fix it"]);
   });
 
   test("native OMP composes Sol bookkeeping with the pinned preset and preserves excluded prompts", async () => {
     if (!process.env["DORI_TEST_OMP_ROOT"])
-      throw new Error("the real d69 fixture requires the exact native OMP host fixture; see CONTRIBUTING.md");
+      throw new Error("the real bound ULW fixture requires the exact native OMP host fixture; see CONTRIBUTING.md");
     const compat = process.env["DORI_TEST_COMPAT_ULW_ENTRY"];
     if (!compat || !isAbsolute(compat))
-      throw new Error("the real d69 fixture also requires an absolute exact explicit-override fixture entry");
+      throw new Error("the real bound ULW fixture also requires an absolute exact explicit-override fixture entry");
     // Fixture-free runs keep the existing skips; load this isolated SDK only inside the real-dependency guard.
     const { nativeComposition, SOL_MODEL } = await import("../../test/fixtures/omp-native-host/compose.ts");
     const dori = join(import.meta.dir, "../index.ts");

@@ -132,7 +132,7 @@ test.skipIf(!hcBin)(
     const all = rows(await hc("ls", "--all"));
     const left = all.find((t) => t["address"] === lane);
     expect(left === undefined || left["state"] === "finished").toBe(true);
-    expect(await dori(laneHome, "status")).toMatch(/e2e-k\s+done\s+hc/);
+    expect(await dori(laneHome, "status")).toContain("done 1 (latest e2e-k,");
   },
   60_000,
 );

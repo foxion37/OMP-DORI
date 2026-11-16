@@ -1,5 +1,5 @@
 import { afterEach } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { parseDeploymentConfig } from "../src/update/deployment.ts";
@@ -12,7 +12,7 @@ afterEach(() => {
   for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
 export function preparationFixture() {
-  const directory = mkdtempSync(join(tmpdir(), "dori-deploy-prepare-"));
+  const directory = realpathSync(mkdtempSync(join(tmpdir(), "dori-deploy-prepare-")));
   directories.push(directory);
   const remote = join(directory, "published");
   const buildHome = join(directory, "build-home");

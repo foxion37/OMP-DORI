@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { procCmdline } from "../src/update/proc.ts";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -30,7 +31,7 @@ async function forwardFixture(mode: "accepted" | "failed" | "ambiguous") {
   writeFileSync(bun, `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} "$@"\n`, { mode: 0o755 });
   writeFileSync(
     join(tools, "ps"),
-    `#!/bin/sh\nTZ=${JSON.stringify(Intl.DateTimeFormat().resolvedOptions().timeZone)} exec /usr/bin/ps "$@"\n`,
+    `#!/bin/sh\nTZ=${JSON.stringify(Intl.DateTimeFormat().resolvedOptions().timeZone)} exec ${Bun.which("ps", { PATH: "/usr/bin:/bin" })} "$@"\n`,
     { mode: 0o755 },
   );
   writeFileSync(
@@ -90,7 +91,7 @@ process.stdout.write(JSON.stringify({ result }));
     oldMonitors: native.bootstrap.running!.map(({ name, identity }) => ({
       ...identity!,
       name,
-      argv: readFileSync(`/proc/${identity!.pid}/cmdline`, "utf8").split("\0").filter(Boolean),
+      argv: procCmdline(identity!.pid).split("\0").filter(Boolean),
     })),
     monitors: native.bootstrap,
     bootstrap: true,
@@ -146,7 +147,9 @@ process.stdout.write(JSON.stringify({ result }));
   return { config, ctx, id, native, sink, run };
 }
 
-test.skipIf(process.platform !== "linux").each(["accepted", "failed", "ambiguous"] as const)(
+test
+  .skipIf(process.platform !== "linux" && process.platform !== "darwin")
+  .each(["accepted", "failed", "ambiguous"] as const)(
   "forward stop awaits its configured reporter and retains its exact notice across failures: %s",
   async (mode) => {
     const f = await forwardFixture(mode);

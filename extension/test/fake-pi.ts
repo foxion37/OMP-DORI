@@ -2,8 +2,9 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import ompDori from "../index";
 import type { CommandOptions as Command, DoriApi, DoriContext, ToolDefinition as Tool } from "../index";
+
+export const calls: string[] = [];
 
 export type Entry = {
   type: string;
@@ -61,6 +62,7 @@ export const fakePi = (options: FakeOptions): FakePi => {
     ...(options.model === undefined ? {} : { model: options.model }),
     ctx: () => ({
       cwd: tmpdir(),
+      abort: () => void calls.push("abort"),
       mode: "print",
       agent,
       ...(fake.model === undefined ? {} : { model: fake.model }),
@@ -124,6 +126,7 @@ export const fakePi = (options: FakeOptions): FakePi => {
   };
   // omp-ulw talks to these too; they are outside omp-dori's own API surface.
   Object.assign(fake.api, {
+    recordTestCall: (event: string) => void calls.push(event),
     sendUserMessage: (text: string) => void fake.userMessages.push(text),
     getAllTools: () => fake.active.map((name) => ({ name })),
   });
@@ -142,7 +145,11 @@ export const useConfig = (ompUlwPath: string): string => {
 
 export const load = async (options: FakeOptions): Promise<FakePi> => {
   const fake = fakePi(options);
-  await ompDori(fake.api);
+  // The native preparer canonicalizes Dori's optional host import; only the unit API is fake.
+  const { nativeExtensionFactory } = await import("../../test/fixtures/omp-native-host/compose.ts");
+  const factory: unknown = await nativeExtensionFactory(join(import.meta.dir, "../index.ts"));
+  if (typeof factory !== "function") throw new Error("native Dori fixture has no factory");
+  await factory(fake.api);
   return fake;
 };
 

@@ -5,15 +5,16 @@ import { DeploymentHeld, sameProcess } from "./deployment-process.ts";
 import { assertRuntimeToolchain, inspectRuntimeToolchain, prepareRuntimeToolchain } from "./deployment-toolchain.ts";
 import type { DeploymentConfig, DeploymentRecord, RuntimeIdentity, ToolchainReceipt } from "./deployment-types.ts";
 import { digest } from "./source.ts";
+import { procCmdline } from "./proc.ts";
 
 export function runtimeUsesToolchain(runtime: RuntimeIdentity, receipt: ToolchainReceipt): boolean {
   if (runtime.executableHash === receipt.ompEntryHash) return true;
   if (runtime.executableHash !== receipt.bunHash) return false;
-  const argv = readFileSync(`/proc/${runtime.pid}/cmdline`, "utf8").split("\0");
+  const argv = procCmdline(runtime.pid).split("\0");
   return argv.some((arg) => {
     if (!isAbsolute(arg)) return false;
     try {
-      return realpathSync(arg) === receipt.ompEntry;
+      return realpathSync(arg) === (receipt.nativeSource?.entry ?? receipt.ompEntry);
     } catch {
       return false;
     }

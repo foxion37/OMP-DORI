@@ -19,7 +19,7 @@ export type ReleaseManifest = {
     readonly platform: "linux";
     readonly arch: "x64";
     readonly bun: "1.4.4";
-    readonly omp: "18.18.8";
+    readonly omp: "18.18.8" | "18.20.0";
     readonly runtime: "herdr";
     readonly messenger: "discord";
   };

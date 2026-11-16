@@ -51,6 +51,8 @@ export const footer = (
         ]
       : []),
     `- Done = ${lane.done}. The lane closes only when every signal reads back live.`,
+    "- Reset coupons and credits require the user's explicit permission for each specific use and amount. Never redeem, reset, spend credits (including existing paid or promotional balances), top up or enable paid overage on your own. The brief, existing balances and the lead's approval are not user consent.",
+    "- If the authorized provider token allowance, usage quota or credit budget is exhausted, STOP model work, preserve progress and report the blocker. Wait for the user's decision. Never switch accounts/providers/models or retry to evade the limit. Propagate this rule to every subagent; it overrides goals, nudges and continue-working instructions.",
     "- Persist each milestone, blocker, question, halt and completion with the report command below. It appends reports.jsonl and prints the human [REPORT] line.",
     "- Before forwarding, verify that the lead pane runs a live agent, its input is empty, and no approval or question prompt is open (references/sessions.md). A shell, unknown status or unconfirmed check holds forwarding.",
     "- Supply kind (milestone, blocker, question, halted or done) and text (the report with evidence links) as data, such as environment variables. Never interpolate raw report text into shell source or evaluate the printed line. Record with the command below; when it includes forwarding, run that combined call only after the forwarding checks pass:",

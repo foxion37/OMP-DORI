@@ -4,7 +4,8 @@
  */
 import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { configPath } from "./config.ts";
+import { doriLaunchEnv } from "../../../../src/release/runtime.ts";
+import { configPath, type DoriConfig } from "./config.ts";
 
 /** The token file a launcher finds next to its config when DORI_SLACK_TOKEN_FILE is not set. */
 export const TOKEN_FILE_NAME = "slack-token";
@@ -200,20 +201,22 @@ export const laneTokenEnv = (env: Env, configFile: string): Record<string, strin
 };
 
 /**
- * The env launch gives a lane for its token: laneTokenEnv, plus DORI_CONFIG made absolute when the launcher's was relative,
- * since the lane runs in another directory and must find the same home (the token-file mark is checked against it). A DORI_CONFIG whose home moves when normalized (empty, `.`, `..`) names no config file and is
- * refused, rather than letting the home check move up a directory.
+ * Token paths and the selected Dori context cross the terminal server explicitly. Config paths retain links and `..`;
+ * a path whose home moves when normalized (empty, `.`, `..`) names no config file and is refused.
  */
-export const laneLaunchEnv = (env: Env, rawConfig: string): Record<string, string> => {
+export const laneLaunchEnv = (
+  env: Env,
+  rawConfig: string,
+  resolved?: Pick<DoriConfig, "stateDir" | "ompUlwPath">,
+): Record<string, string> => {
   const config = resolve(rawConfig);
   if (dirname(config) !== resolve(dirname(rawConfig)))
     throw new TokenFileError(
       `DORI_CONFIG "${rawConfig}" does not name a config file; set it to the config file's path`,
     );
-  // Only a RELATIVE DORI_CONFIG is rewritten, and only by putting the launcher's cwd in front as text (never path.join,
-  // which collapses `..` on paper): the OS then resolves it (links, `..`) exactly as the launcher's own config load did. An absolute one reaches the lane unchanged.
+  // Prefix the launcher's cwd as text: the OS must resolve links and `..` exactly as config loading did.
   const raw = env["DORI_CONFIG"];
   const relativeConfig = raw !== undefined && !isAbsolute(raw);
   const osPath = relativeConfig ? `${process.cwd()}${sep}${raw}` : (raw ?? config);
-  return { ...laneTokenEnv(env, osPath), ...(relativeConfig ? { DORI_CONFIG: osPath } : {}) };
+  return { ...doriLaunchEnv(env, osPath, resolved), ...laneTokenEnv(env, osPath) };
 };

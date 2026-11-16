@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { procChildren, procCmdline } from "../src/update/proc.ts";
 import { once } from "node:events";
 import { existsSync, readFileSync, watch, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -8,9 +9,10 @@ import { DeploymentHeld, processIdentity, sameProcess } from "../src/update/depl
 import { rollbackDeployment, waitLaunchedProcess } from "../src/update/deployment-rollback.ts";
 import { managedBashFixture } from "./update-deploy-managed-setup.ts";
 
-const linux = test.skipIf(process.platform !== "linux");
+// The kernels whose process identity deployment can bind.
+const posix = test.skipIf(process.platform !== "linux" && process.platform !== "darwin");
 
-linux.each(["forward", "rollback"] as const)(
+posix.each(["forward", "rollback"] as const)(
   "a present unattested %s launch holds instead of becoming an absent launch or a pane-run",
   async (direction) => {
     const f = await managedBashFixture({ unknown: true });
@@ -41,7 +43,7 @@ linux.each(["forward", "rollback"] as const)(
   },
 );
 
-linux.each(["status", "role"] as const)(
+posix.each(["status", "role"] as const)(
   "a matching live rollback actor with lagging %s metadata never receives a duplicate command",
   async (missing) => {
     const f = await managedBashFixture();
@@ -59,7 +61,7 @@ linux.each(["status", "role"] as const)(
   },
 );
 
-linux.each(["suspended", "background"] as const)(
+posix.each(["suspended", "background"] as const)(
   "bare-root metadata cannot hide a real %s native descendant when its role receipt lags",
   async (mode) => {
     const f = await managedBashFixture();
@@ -82,13 +84,13 @@ linux.each(["suspended", "background"] as const)(
       const status = await f.cli.exec("ps", ["-o", "stat=", "-p", String(f.runtime.pid)]);
       expect(status.code).toBe(0);
       expect(status.stdout.trim().startsWith("T")).toBe(mode === "suspended");
-      expect(readFileSync(`/proc/${rootPid}/task/${rootPid}/children`, "utf8").trim()).not.toBe("");
+      expect(procChildren(rootPid).join(" ")).not.toBe("");
       f.front.foreground_process_group_id = rootPid;
       f.front.foreground_processes = [
         {
           pid: rootPid,
           name: "bash",
-          argv: readFileSync(`/proc/${rootPid}/cmdline`, "utf8").split("\0").filter(Boolean),
+          argv: procCmdline(rootPid).split("\0").filter(Boolean),
         },
       ];
       f.writeState({ pid: f.previousRuntime!.pid });

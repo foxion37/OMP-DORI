@@ -2,15 +2,17 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { up } from "../src/cli-up.ts";
+import { harnessLaunchEnv } from "../src/harness.ts";
 import { groupId } from "../src/runtime/group.ts";
 import { World } from "./fake.ts";
 import { captureIo } from "./inbox-setup.ts";
 
 describe("dori up", () => {
-  test("herdr: the same 8 calls as before runtimes existed, and all four roles registered", async () => {
+  test("herdr: the same 8 calls carry this home's context and register all four roles", async () => {
     const w = new World();
     const d = w.deps();
     const root = d.store.root;
+    const env = Object.entries(harnessLaunchEnv(d)).map(([key, value]) => `${key}=${value}`);
     const { out } = await captureIo(async () => {
       await up(d, "/w");
       return 0;
@@ -31,7 +33,7 @@ describe("dori up", () => {
     ];
     expect(w.calls.map((c) => [c.cmd, ...c.argv])).toEqual(
       [
-        ["workspace", "create", "--label", "dori", "--cwd", "/w", "--no-focus"],
+        ["workspace", "create", "--label", "dori", "--cwd", "/w", ...env.flatMap((e) => ["--env", e]), "--no-focus"],
         ["pane", "run", "w1:p2", prompt("lead.md")],
         [
           "tab",
@@ -43,13 +45,12 @@ describe("dori up", () => {
           "--no-focus",
           "--workspace",
           "w1",
-          "--env",
-          `DORI_HOME=${root}`,
+          ...env.flatMap((e) => ["--env", e]),
         ],
         ["pane", "run", "w1:p3", prompt("duty.md")],
-        split("w1:p3", `DORI_HOME=${root}`),
+        split("w1:p3", ...env),
         ["pane", "run", "w1:p4", "dori duty --interval 60"],
-        split("w1:p4", `DORI_HOME=${root}`, "HERDR_WORKSPACE_ID=w1"),
+        split("w1:p4", ...env, "HERDR_WORKSPACE_ID=w1"),
         ["pane", "run", "w1:p5", "dori loop"],
       ].map((argv) => ["herdr", ...argv]),
     );

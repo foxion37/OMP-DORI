@@ -1,10 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { status } from "../src/cli-up.ts";
+import { dutyTick } from "../src/duty.ts";
+import { RuntimeChoiceError } from "../src/runtime/select.ts";
 import type { SessionRef } from "../src/runtime/types.ts";
+import { Store } from "../src/store.ts";
 import { World } from "./fake.ts";
 import { captureIo } from "./inbox-setup.ts";
+
+const MIN = 60_000;
 
 // A lanes/<key>.json and a roles.json exactly as a binary from before runtimes existed wrote them.
 const OLD_LANE = {
@@ -70,7 +75,119 @@ describe("records written before runtimes existed (IS-3)", () => {
     });
     const lines = out.split("\n");
     expect(lines[0]).toBe("RUNTIME herdr (from config)");
-    expect(lines[1]).toStartWith("lead=w1:p1 duty=w1:p2 ");
+    expect(lines[1]).toBe("lead=w1:p1 duty=w1:p2");
+    expect(lines[2]).toBe(`home=${d.store.root}`);
     expect(lines.find((l) => l.startsWith("old-lane"))).toMatch(/^old-lane\s+working\s+herdr\s+w1:p3\s/);
+  });
+
+  test("dori status with a long home path holding spaces and an unset runtime: each path whole on one line", async () => {
+    const { d } = oldHome();
+    // Spaces inside a path are no place to break it: either half names no directory.
+    const root = join(d.store.root, "Application Support", `${"deep home directory ".repeat(6)}end`);
+    const config = join(root, "config.json");
+    const long = {
+      ...d,
+      store: new Store(root),
+      choice: () => {
+        throw new RuntimeChoiceError(`neither herdr nor hc is on PATH: set "runtime" in ${config}`);
+      },
+    };
+    const { out } = await captureIo(async () => {
+      status(long);
+      return 0;
+    });
+    expect(Bun.stringWidth(root)).toBeGreaterThan(120);
+    // The two path lines run past 120 columns as they must; the terminal folds them, a copy of each is whole.
+    expect(out.split("\n").slice(0, 3)).toEqual([
+      `RUNTIME unset: neither herdr nor hc is on PATH: set "runtime" in ${config}`,
+      "lead=- duty=-",
+      `home=${root}`,
+    ]);
+  });
+
+  test.each([2, 3])("a legacy record with %s nudges establishes one verifiable queued escalation", async (nudges) => {
+    const { w, d } = oldHome();
+    rmSync(join(d.store.root, "lanes", "no-tab.json"));
+    const lead = w.addPane("w1:p1", "working");
+    w.addPane("w1:p3", "idle");
+    const nudge = (at: number) => ({ at, kind: "nudge" as const, text: "idle" });
+    const legacy = {
+      ...d.store.lane("old-lane")!,
+      nudges,
+      log: [nudge(10 * MIN), nudge(20 * MIN), nudge(40 * MIN)].slice(0, nudges),
+    };
+    d.store.saveLane(legacy);
+    w.clock = 90 * MIN;
+    expect(await dutyTick(d)).toEqual([{ lane: "old-lane", action: "escalated" }]);
+    expect(d.store.lane("old-lane")!.escalatedAt).toBe(w.clock);
+    expect(d.store.queued(legacy.sessionRef)).toEqual([]);
+    const leadRef = { runtime: "herdr" as const, id: "w1:p1" };
+    expect(d.store.queued(leadRef)).toEqual([
+      expect.objectContaining({ at: w.clock, from: "duty", text: expect.stringContaining("[ESCALATE old-lane]") }),
+    ]);
+    w.clock += MIN;
+    expect(await dutyTick(d)).toEqual([]);
+    expect(d.store.queued(leadRef)).toHaveLength(1);
+    lead.status = "idle";
+    expect(await dutyTick(d)).toEqual([{ pane: "w1:p1", action: "flushed" }]);
+    expect(lead.received.filter((text) => text.includes("[ESCALATE old-lane]"))).toHaveLength(1);
+    expect(d.store.queued(leadRef)).toEqual([]);
+  });
+
+  test("a legacy third nudge without a lead is not marked until one escalation can be queued", async () => {
+    const { w, d } = oldHome();
+    rmSync(join(d.store.root, "lanes", "no-tab.json"));
+    rmSync(join(d.store.root, "roles.json"));
+    const lead = w.addPane("w1:p1", "working");
+    w.addPane("w1:p3", "idle");
+    const legacy = d.store.lane("old-lane")!;
+    legacy.nudges = 3;
+    legacy.log = [10, 20, 40].map((min) => ({ at: min * MIN, kind: "nudge" as const, text: "idle" }));
+    d.store.saveLane(legacy);
+    w.clock = 90 * MIN;
+    expect(await dutyTick(d)).toEqual([expect.objectContaining({ lane: "old-lane", action: "escalate-no-lead" })]);
+    expect(d.store.lane("old-lane")!.escalatedAt).toBeUndefined();
+    expect(d.store.lane("old-lane")!.log.some((entry) => entry.kind === "escalate")).toBe(false);
+    const leadRef = { runtime: "herdr" as const, id: "w1:p1" };
+    expect(d.store.queued(leadRef)).toEqual([]);
+    d.store.setRole("lead", leadRef);
+    expect(await dutyTick(d)).toEqual([{ lane: "old-lane", action: "escalated" }]);
+    expect(d.store.lane("old-lane")!.escalatedAt).toBe(w.clock);
+    expect(d.store.queued(leadRef)).toHaveLength(1);
+    expect(await dutyTick(d)).toEqual([]);
+    expect(d.store.queued(leadRef)).toHaveLength(1);
+    lead.status = "idle";
+    await dutyTick(d);
+    expect(lead.received.filter((text) => text.includes("[ESCALATE old-lane]"))).toHaveLength(1);
+  });
+
+  // The duty loop before the progress clock saved its third nudge before telling the lead, and told nobody when no
+  // lead was registered or the delivery failed: a third nudge on record is no proof the lead heard of the stall.
+  test("a lane with three nudges from before the progress clock is escalated: no lead then, or a delivery that failed", async () => {
+    const nudge = (at: number) => ({ at, kind: "nudge" as const, text: "idle" });
+    const oldTold = (rmRoles: boolean) => {
+      const home = oldHome();
+      rmSync(join(home.d.store.root, "lanes", "no-tab.json"));
+      if (rmRoles) rmSync(join(home.d.store.root, "roles.json"));
+      const lead = home.w.addPane("w1:p1", "idle");
+      home.w.addPane("w1:p3", "idle");
+      const lane = home.d.store.lane("old-lane")!;
+      home.d.store.saveLane({ ...lane, nudges: 3, log: [nudge(10 * MIN), nudge(20 * MIN), nudge(40 * MIN)] });
+      home.w.clock = 90 * MIN;
+      return { ...home, lead };
+    };
+    const none = oldTold(true);
+    expect(await dutyTick(none.d)).toContainEqual(
+      expect.objectContaining({ lane: "old-lane", action: "escalate-no-lead" }),
+    );
+    none.d.store.setRole("lead", { runtime: "herdr", id: "w1:p1" });
+    expect(await dutyTick(none.d)).toEqual([{ lane: "old-lane", action: "escalated" }]);
+    expect(none.lead.received.at(-1)).toStartWith("[ESCALATE old-lane] no new evidence for 1h29m");
+    expect(await dutyTick(none.d)).toEqual([]);
+    // A lead was registered but the old loop's delivery failed after the third nudge was saved: escalated now, once.
+    const failed = oldTold(false);
+    expect(await dutyTick(failed.d)).toEqual([{ lane: "old-lane", action: "escalated" }]);
+    expect(await dutyTick(failed.d)).toEqual([]);
+    expect(failed.lead.received.filter((m) => m.startsWith("[ESCALATE old-lane]"))).toHaveLength(1);
   });
 });

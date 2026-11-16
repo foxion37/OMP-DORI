@@ -90,6 +90,8 @@ test("relay: handoff, successor split below the lane, registry updated, old sess
   expect(r.lines).toEqual(["RELAYED rl w9:rl -> w9:new1"]);
   const saved = (await deps.registry.read("rl")) as Lane;
   expect(saved).toMatchObject({ pane: "w9:new1", relays: 1, previousPanes: ["w9:rl"], placement: "split" });
+  const home = process.env["HOME"] ?? "";
+  const config = process.env["DORI_CONFIG"] ?? `${home}/.dori/config.json`;
   expect(world.calls.find((c) => c[2] === "split")).toEqual([
     "herdr",
     "pane",
@@ -102,6 +104,14 @@ test("relay: handoff, successor split below the lane, registry updated, old sess
     "--cwd",
     "/repo",
     "--no-focus",
+    "--env",
+    "DORI_MANAGED_STARTUP=",
+    "--env",
+    `HOME=${home}`,
+    "--env",
+    `DORI_CONFIG=${config}`,
+    "--env",
+    `DORI_HOME=${home}/.dori`,
     "--env",
     "DORI_LANE_LABEL=rl",
   ]);

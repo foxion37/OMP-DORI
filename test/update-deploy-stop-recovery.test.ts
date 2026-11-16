@@ -1,15 +1,16 @@
 import { expect, test } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { HerdrCli } from "../src/runtime/herdr/exec.ts";
+import { herdrDeploymentCli } from "../src/update/deployment-cli.ts";
 import { stopLaunchedProcess } from "../src/update/deployment-launch.ts";
 import { DeploymentHeld, processIdentity, sameProcess, underProcess } from "../src/update/deployment-process.ts";
 import { rollbackDeployment } from "../src/update/deployment-rollback.ts";
 import { managedBashFixture } from "./update-deploy-managed-setup.ts";
 
-const linux = test.skipIf(process.platform !== "linux");
+// The kernels whose process identity deployment can bind.
+const posix = test.skipIf(process.platform !== "linux" && process.platform !== "darwin");
 
-linux.each([2, 3])("startup stop recaptures after a real foreground child exits during probe %s", async (cut) => {
+posix.each([2, 3])("startup stop recaptures after a real foreground child exits during probe %s", async (cut) => {
   const f = await managedBashFixture({ transient: true });
   const expected = processIdentity(f.runtime.pid)!;
   expect(processIdentity(f.previousRuntime!.pid)).toBeUndefined();
@@ -19,7 +20,7 @@ linux.each([2, 3])("startup stop recaptures after a real foreground child exits 
   f.writeHealth({ ...f.health, presetLoaded: false });
   let observations = 0;
   let expired = false;
-  const cli = new HerdrCli(async (cmd, args) => {
+  const cli = herdrDeploymentCli(async (cmd, args) => {
     const snapshot = await f.cli.exec(cmd, args);
     if (cmd === "herdr" && args[3] === "process-info") {
       observations++;
@@ -46,12 +47,12 @@ linux.each([2, 3])("startup stop recaptures after a real foreground child exits 
   expect(readFileSync(f.signalPath, "utf8")).toBe("SIGTERM");
 });
 
-linux("an interrupted pre-signal capture never signals the owned startup", async () => {
+posix("an interrupted pre-signal capture never signals the owned startup", async () => {
   const f = await managedBashFixture();
   const expected = processIdentity(f.runtime.pid)!;
   const controller = new AbortController();
   let observations = 0;
-  const cli = new HerdrCli(async (cmd, args) => {
+  const cli = herdrDeploymentCli(async (cmd, args) => {
     const snapshot = await f.cli.exec(cmd, args);
     if (cmd === "herdr" && args[3] === "process-info" && ++observations === 3) controller.abort();
     return snapshot;
@@ -64,7 +65,7 @@ linux("an interrupted pre-signal capture never signals the owned startup", async
   expect(existsSync(f.signalPath)).toBe(false);
 });
 
-linux("rollback journals an unrecorded live startup after a real stale-child snapshot, before any signal", async () => {
+posix("rollback journals an unrecorded live startup after a real stale-child snapshot, before any signal", async () => {
   const f = await managedBashFixture({ transient: true });
   expect(processIdentity(f.previousRuntime!.pid)).toBeUndefined();
   const expected = processIdentity(f.runtime.pid)!;

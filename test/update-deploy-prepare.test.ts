@@ -8,7 +8,8 @@ import { sourceManifest } from "../src/update/source.ts";
 import { preparationFixture } from "./update-deploy-prepare-setup.ts";
 import { git } from "./update-setup.ts";
 
-const linux = test.skipIf(process.platform !== "linux");
+// The kernels whose process identity deployment can bind.
+const posix = test.skipIf(process.platform !== "linux" && process.platform !== "darwin");
 
 test("published clone provisions frozen dependencies privately and carries only the admitted opaque pin", async () => {
   const f = preparationFixture();
@@ -61,7 +62,7 @@ test("changed opaque candidate pin invalidates preparation without rewriting the
   expect(readFileSync(path, "utf8")).toContain("changed");
 });
 
-linux.each([
+posix.each([
   ["clone", "recover"],
   ["fetch", "recover"],
   ["install", "recover"],
@@ -153,41 +154,6 @@ exec ${quote(process.execPath)} "$@"`,
   } finally {
     signals.mockRestore();
     now.mockRestore();
-  }
-});
-
-test.skipIf(process.platform !== "darwin")("Darwin deployment holds before native effects", async () => {
-  const f = preparationFixture();
-  const observed = join(f.directory, "native-effect");
-  const tool = join(f.directory, "native-tool");
-  writeFileSync(tool, `#!/bin/sh\nprintf observed >> '${observed}'\nexit 75\n`, { mode: 0o700 });
-  const config = { ...f.config, bun: tool, omp: tool, herdr: tool };
-  mkdirSync(config.liveSource);
-  writeFileSync(join(config.liveSource, "owner.ts"), "export const owner = 'unchanged';\n");
-  const source = sourceManifest(config.liveSource);
-  const inode = lstatSync(config.liveSource).ino;
-  let saved: DeploymentRecord | undefined;
-  const signals = spyOn(process, "kill");
-  try {
-    const held = await deployRelease(config, f.input, undefined, (record) => {
-      saved = structuredClone(record);
-    });
-    expect(held).toMatchObject({ status: "held", step: "prepare" });
-    expect(saved).toEqual(held);
-    expect(held.retryableHold).toBeUndefined();
-    expect(held.preparedAt).toBeUndefined();
-    expect(held.stopRequestedAt).toBeUndefined();
-    expect(held.launchRequestedAt).toBeUndefined();
-    expect(held.oldRuntime).toBeUndefined();
-    expect(sourceManifest(config.liveSource)).toEqual(source);
-    expect(lstatSync(config.liveSource).ino).toBe(inode);
-    for (const path of [observed, config.restartLock, config.launcherPath, held.releasePath])
-      expect(lstatSync(path, { throwIfNoEntry: false })).toBeUndefined();
-    expect(readFileSync(config.doriConfig, "utf8")).toBe('{"owner":"unchanged"}\n');
-    expect(readFileSync(join(config.stateDir, "owner.json"), "utf8")).toBe('{"cursor":17}\n');
-    expect(signals).not.toHaveBeenCalled();
-  } finally {
-    signals.mockRestore();
   }
 });
 

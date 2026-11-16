@@ -147,7 +147,7 @@ const startLane = async (
   const label = laneLabel(draft);
   let env: Record<string, string>;
   try {
-    env = { ...laneLaunchEnv(process.env, configPath()), DORI_LANE_LABEL: label };
+    env = { ...laneLaunchEnv(process.env, configPath(), deps.config), DORI_LANE_LABEL: label };
   } catch (e) {
     throw e instanceof TokenFileError ? new LaunchError(`token file refused: ${e.message}`) : e;
   }

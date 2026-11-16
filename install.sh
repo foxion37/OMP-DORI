@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Release bootstrap. Requires an existing git, Bun 1.4.4+, OMP 18.18.8+, and herdr on Linux x64.
+# Release bootstrap. Requires git, Bun 1.4.4+, and herdr on Linux x64; provisions the release-bound OMP source.
 set -euo pipefail
 command -v bun >/dev/null || { echo "Bun 1.4.4+ is required; install it before OMP-Dori" >&2; exit 1; }
 bun run - "$@" <<'BUN'
@@ -34,10 +34,7 @@ try {
   };
   if (process.platform !== "linux" || process.arch !== "x64") fail("This release supports Linux x64 with herdr and Discord");
   if (!atLeast(Bun.version, [1, 4, 4])) fail("Bun 1.4.4+ is required");
-  for (const name of ["git", "omp", "herdr"]) if (!Bun.which(name)) fail(`${name} is required; install it before OMP-Dori`);
-  const omp = Bun.spawnSync(["omp", "--version"], { stdout: "pipe", stderr: "pipe", timeout: 10000 });
-  if (omp.exitCode !== 0 || !atLeast(omp.stdout.toString().match(/\d+\.\d+\.\d+(?:[-+][^\s]+)?/)?.[0] ?? "", [18, 18, 8]))
-    fail("OMP 18.18.8+ is required");
+  for (const name of ["git", "herdr"]) if (!Bun.which(name)) fail(`${name} is required; install it before OMP-Dori`);
   const fetchBytes = async (url, limit) => {
     const response = await fetch(url, { headers: { Accept: url.startsWith(api) ? "application/vnd.github+json" : "application/octet-stream" },
       signal: AbortSignal.timeout(120000) });

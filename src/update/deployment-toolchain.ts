@@ -1,5 +1,8 @@
 import { lstatSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
+import { assertNativeSource, provisionNativeSource, type NativeReceipt } from "../release/native.ts";
+import { assertSourceBundle, readSourceBundle } from "../release/source-bundle.ts";
+import { provisionSourceOverlay } from "../release/source-checkout.ts";
 import { saveDeploymentJson } from "./deployment-files.ts";
 import { actorEnv, command, DeploymentHeld } from "./deployment-process.ts";
 import type { DeploymentConfig, DeploymentRecord, ToolchainReceipt } from "./deployment-types.ts";
@@ -17,6 +20,20 @@ export function assertRuntimeToolchain(config: DeploymentConfig, receipt: Toolch
   const overlay = JSON.parse(readFileSync(receipt.nativeConfig, "utf8")) as unknown;
   if (JSON.stringify(overlay) !== JSON.stringify({ update: { auto: false } }))
     throw new DeploymentHeld("managed native update fence differs");
+  if (receipt.nativeSource) {
+    const observed = assertNativeSource(receipt.nativeSource.source, config.home, receipt.bun);
+    if (
+      observed.identity !== receipt.nativeSource.identity ||
+      observed.omp !== receipt.omp ||
+      JSON.stringify(observed) !== JSON.stringify(receipt.nativeSource)
+    )
+      throw new DeploymentHeld("managed bound native source receipt changed");
+  }
+  if (receipt.ompUlw) {
+    const bundle = readSourceBundle(receipt.ompUlw.source);
+    if (bundle.identity !== receipt.ompUlw.identity) throw new DeploymentHeld("managed ULW overlay identity changed");
+    assertSourceBundle(receipt.ompUlw.directory, bundle, config.home);
+  }
 }
 
 /** Query the exact private executable; an admitted prior image may predate the new-release minimum. */
@@ -25,6 +42,7 @@ export async function inspectRuntimeToolchain(
   record: DeploymentRecord,
   omp: string,
   legacy = false,
+  nativeSource?: NativeReceipt,
 ): Promise<ToolchainReceipt> {
   const nativeConfig = join(config.releaseRoot, "native-config.json");
   const existing = lstatSync(nativeConfig, { throwIfNoEntry: false });
@@ -53,6 +71,12 @@ export async function inspectRuntimeToolchain(
     ((major ?? 0) < 18 || (major === 18 && (minor ?? 0) < 18) || (major === 18 && minor === 18 && (patch ?? 0) < 8))
   )
     throw new DeploymentHeld("private native OMP 18.18.8 or newer is required");
+  if (
+    !legacy &&
+    lstatSync(join(record.releasePath, "native-omp.lock"), { throwIfNoEntry: false }) &&
+    match[1] !== "18.20.0"
+  )
+    throw new DeploymentHeld("new source bundles require native OMP 18.20.0");
   const ompEntry = realpathSync(omp);
   return {
     omp,
@@ -63,13 +87,43 @@ export async function inspectRuntimeToolchain(
     bunHash: digest(readFileSync(config.bun)),
     nativeConfig,
     nativeConfigHash: digest(readFileSync(nativeConfig)),
+    ...(nativeSource
+      ? { nativeSource }
+      : !legacy && lstatSync(join(record.releasePath, "native-omp.lock"), { throwIfNoEntry: false })
+        ? { nativeOverride: true as const }
+        : {}),
   };
 }
 
 export async function prepareRuntimeToolchain(config: DeploymentConfig, record: DeploymentRecord): Promise<void> {
+  const locked = lstatSync(join(record.releasePath, "native-omp.lock"), { throwIfNoEntry: false }) !== undefined;
+  const bundle = locked ? readSourceBundle(record.releasePath, true) : undefined;
   if (record.toolchain) {
-    if (record.toolchain.ompEntry !== realpathSync(config.omp) || record.toolchain.bun !== config.bun)
+    if (
+      record.toolchain.bun !== config.bun ||
+      (config.omp && record.toolchain.ompEntry !== realpathSync(config.omp)) ||
+      (locked && !config.omp && record.toolchain.nativeSource?.identity !== bundle?.identity) ||
+      (locked && config.omp && !record.toolchain.nativeOverride) ||
+      (locked && record.toolchain.ompUlw?.identity !== readSourceBundle(record.releasePath).identity)
+    )
       throw new DeploymentHeld("new release native toolchain differs from its configured target");
     assertRuntimeToolchain(config, record.toolchain);
-  } else record.toolchain = await inspectRuntimeToolchain(config, record, config.omp);
+    return;
+  }
+  const native =
+    locked && !config.omp ? await provisionNativeSource(record.releasePath, config.home, config.bun) : undefined;
+  const omp = native?.omp ?? config.omp;
+  if (!omp) throw new DeploymentHeld("older source protocol needs its explicit native executable");
+  record.toolchain = await inspectRuntimeToolchain(config, record, omp, false, native);
+  if (locked) {
+    const entry = await provisionSourceOverlay(record.releasePath, config.home);
+    record.toolchain = {
+      ...record.toolchain,
+      ompUlw: {
+        source: record.releasePath,
+        identity: readSourceBundle(record.releasePath).identity,
+        directory: join(entry, ".."),
+      },
+    };
+  }
 }

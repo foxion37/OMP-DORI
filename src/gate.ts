@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { agentCommand, prompt, type Deps } from "./harness.ts";
+import { agentCommand, harnessLaunchEnv, prompt, type Deps } from "./harness.ts";
 import { Refusal } from "./refusal.ts";
 import { loadHooks, substitute } from "./hooks.ts";
 import type { MergeOutcome } from "./telemetry.ts";
@@ -40,9 +40,11 @@ export async function review(
   const [cmd, ...argv] = hook
     ? substitute(hook, { ...vars, text })
     : [
+        "env",
+        ...Object.entries(harnessLaunchEnv(d)).map(([key, value]) => `${key}=${value}`),
         "sh",
         "-c",
-        `unset HERDR_PANE_ID HERDR_WORKSPACE_ID HC_TERMINAL_ID; ${agentCommand(d, "lane")} "$@"`,
+        `unset HERDR_PANE_ID HERDR_WORKSPACE_ID HC_TERMINAL_ID DORI_MANAGED_STARTUP DORI_LANE; ${agentCommand(d, "lane")} "$@"`,
         "dori-review",
         "-p",
         "--no-session",

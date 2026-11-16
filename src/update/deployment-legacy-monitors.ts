@@ -1,4 +1,4 @@
-import { readFileSync, realpathSync } from "node:fs";
+import { realpathSync } from "node:fs";
 import { basename } from "node:path";
 import { readPaneState } from "../../skills/dori-mode/scripts/src/lane-state.ts";
 import { DeploymentHeld, processIdentity, sameProcess } from "./deployment-process.ts";
@@ -11,6 +11,7 @@ import type {
   RuntimeIdentity,
 } from "./deployment-types.ts";
 import { sourceManifest } from "./source.ts";
+import { procChildren, procCmdline, procCwd } from "./proc.ts";
 
 /** Only monitor argv metadata is inspected; session/model files are neither opened nor copied. */
 export function legacyMonitorReceipts(
@@ -19,14 +20,13 @@ export function legacyMonitorReceipts(
 ): readonly MonitorProcessIdentity[] {
   const descendants: number[] = [];
   const visit = (pid: number): void => {
-    let children: string;
+    let children: number[];
     try {
-      children = readFileSync(`/proc/${pid}/task/${pid}/children`, "utf8");
+      children = procChildren(pid);
     } catch {
       return;
     }
-    for (const word of children.trim().split(/\s+/).filter(Boolean)) {
-      const child = Number(word);
+    for (const child of children) {
       if (descendants.includes(child)) continue;
       descendants.push(child);
       visit(child);
@@ -40,7 +40,7 @@ export function legacyMonitorReceipts(
       const identity = processIdentity(pid);
       if (!identity || basename(identity.executable) !== basename(old.executable)) return [];
       try {
-        const argv = readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0").filter(Boolean);
+        const argv = procCmdline(pid).split("\0").filter(Boolean);
         if (
           argv.length !== old.argv.length ||
           argv.some((arg, index) =>
@@ -106,7 +106,7 @@ function captureLegacyRollbackForeground(
     !state.sessionFile ||
     state.sessionFile !== record.oldRuntime.sessionFile ||
     state.cwd !== record.oldRuntime.cwd ||
-    realpathSync(`/proc/${expected.pid}/cwd`) !== realpathSync(record.oldRuntime.cwd) ||
+    realpathSync(procCwd(expected.pid)) !== realpathSync(record.oldRuntime.cwd) ||
     !Number.isFinite(Date.parse(state.startedAt)) ||
     Date.parse(state.startedAt) < Date.parse(since)
   )
@@ -122,7 +122,7 @@ function captureLegacyRollbackForeground(
       return (
         !spec ||
         monitor.argv.some((arg, index) => arg !== old.argv[index]) ||
-        realpathSync(`/proc/${monitor.pid}/cwd`) !== realpathSync(spec.cwd) ||
+        realpathSync(procCwd(monitor.pid)) !== realpathSync(spec.cwd) ||
         !sameProcess(monitor)
       );
     }) ||

@@ -7,6 +7,15 @@ export type LaneStatus = "working" | "waiting" | "ready" | "done" | "lost";
  * beside it (the ref's id and container) so an older binary still reads the file. `migratedFrom`: the sessions it ran in
  * before a `dori migrate`. `migration`: a handover is in progress, and the duty loop leaves the record alone.
  * `sessionPath`: the agent's own session file, when its command records one; `dori migrate --resume` needs it.
+ * `progressAt`: the last time the lane made progress (start, a report with new evidence, READY); the duty loop nudges and
+ * escalates on it, and a record from before it existed falls back to its last start, report or READY. `lastEvidence`:
+ * the evidence that last moved it. `evidenceSeen`: links that already counted once. `evidenceMtimes`: each file that
+ * counted, by absolute path, with the modification time it counted with. `escalatedAt`: when the lead was last told the
+ * lane made no progress; one escalation per stall. `lastActivityAt`: the last sign of life (any report, a working pane).
+ * `waitingFor`/`waitingSince`: what a waiting lane said it waits on (`report --status waiting --for`) and when it started
+ * waiting; a waiting lane runs on the same clock, and its nudges and escalation name them.
+ * `noticeId`: this lane incarnation's persisted random identity. `progressEpoch`: its counter, advanced by new evidence
+ * and READY independently of wall time, so notice retries reuse an id and a new epoch or reused lane key gets a new one.
  */
 export type Lane = {
   key: string;
@@ -21,9 +30,18 @@ export type Lane = {
   status: LaneStatus;
   createdAt: number;
   lastActivityAt: number;
+  progressAt?: number;
+  noticeId?: string;
+  progressEpoch?: number;
+  lastEvidence?: { ref: string; at: number };
+  evidenceSeen?: string[];
+  evidenceMtimes?: Record<string, number>;
+  escalatedAt?: number;
+  waitingFor?: string;
+  waitingSince?: number;
   nudges: number;
   final?: { text: string; evidence: string[]; at: number };
-  log: { at: number; kind: "start" | "report" | "ready" | "nudge" | "done" | "lost"; text: string }[];
+  log: { at: number; kind: "start" | "report" | "ready" | "nudge" | "escalate" | "done" | "lost"; text: string }[];
 };
 
 /** The sessions `dori up` opens; roles.json maps each to a ref string (a bare herdr pane id, or `hc:t7`). */
@@ -47,7 +65,8 @@ export type DeliveryAttempt = {
 /** A flush lock from another host (or an unreadable one) older than this is taken over; on this host only a dead pid frees it (#108). */
 export const INBOX_LOCK_STALE_MS = 60_000;
 
-export type QueuedMessage = { at: number; from: string; text: string; attempt?: DeliveryAttempt };
+/** `id`: a duty notice's fixed incarnation/epoch name; one id is queued for a session only once. */
+export type QueuedMessage = { at: number; from: string; text: string; id?: string; attempt?: DeliveryAttempt };
 
 export type ReviewReceipt = {
   pr: string;

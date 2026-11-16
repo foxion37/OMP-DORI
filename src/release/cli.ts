@@ -100,17 +100,18 @@ export async function runConsumerUpdate(argv: string[]): Promise<number> {
       return 0;
     }
     preflightInstallation(paths);
+    const bundle =
+      command === "install"
+        ? await acquireBundle({
+            ...(args.values.version ? { version: args.values.version } : {}),
+            ...(args.values.from ? { from: args.values.from } : {}),
+          })
+        : undefined;
+    if ((bundle?.manifest ?? before?.previous)?.requirements.omp === "18.18.8") prerequisites(true);
     const after =
       command === "rollback"
         ? await rollbackRelease(paths, before, args.values.version)
-        : await installBundle(
-            paths,
-            await acquireBundle({
-              ...(args.values.version ? { version: args.values.version } : {}),
-              ...(args.values.from ? { from: args.values.from } : {}),
-            }),
-            before,
-          );
+        : await installBundle(paths, bundle!, before);
     console.log(
       JSON.stringify(
         {

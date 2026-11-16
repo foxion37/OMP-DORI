@@ -1,7 +1,9 @@
-import { lstatSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync } from "node:fs";
+import { lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import type { ConsumerPaths } from "./files.ts";
-import { owned, readJson, realDirectory, regularFile, saveJson } from "./files.ts";
+import { consumerPaths, owned, readJson, realDirectory, regularFile, saveJson } from "./files.ts";
+import { assertSourceBundle, readSourceBundle } from "./source-bundle.ts";
+import { checkoutSourceBundle } from "./source-checkout.ts";
 import type { ReleaseManifest } from "./types.ts";
 
 function atLeast(observed: string, minimum: readonly number[]): boolean {
@@ -13,16 +15,36 @@ function atLeast(observed: string, minimum: readonly number[]): boolean {
   return true;
 }
 
-export function prerequisites(): void {
+export function prerequisites(legacyNative = false): void {
   if (process.platform !== "linux" || process.arch !== "x64")
     throw new Error("This release supports Linux x64 with herdr and Discord");
   if (!atLeast(Bun.version, [1, 4, 4])) throw new Error("Bun 1.4.4+ is required; install it before OMP-Dori");
-  for (const name of ["git", "omp", "herdr"]) {
+  for (const name of ["git", "herdr"]) {
     if (!Bun.which(name)) throw new Error(`${name} is required; install it before OMP-Dori`);
   }
-  const omp = Bun.spawnSync(["omp", "--version"], { stdout: "pipe", stderr: "pipe", timeout: 10_000 });
-  const version = omp.stdout.toString().match(/\d+\.\d+\.\d+(?:[-+][^\s]+)?/)?.[0] ?? "";
-  if (omp.exitCode !== 0 || !atLeast(version, [18, 18, 8])) throw new Error("OMP 18.18.8+ is required");
+  if (legacyNative) {
+    const executable = Bun.which("omp");
+    if (!executable) throw new Error("Older release protocol requires an independently installed OMP 18.18.8+");
+    const paths = consumerPaths();
+    const managed = join(paths.dori, "bin/omp");
+    if (lstatSync(managed, { throwIfNoEntry: false })) {
+      const target = realpathSync(managed);
+      const config = regularFile(paths.config) ? readJson(paths.config) : undefined;
+      const command =
+        config && typeof config === "object" && "agentCommand" in config && Array.isArray(config.agentCommand)
+          ? config.agentCommand[0]
+          : undefined;
+      const configured = typeof command === "string" ? Bun.which(command) : undefined;
+      if (realpathSync(executable) === target || (configured && realpathSync(configured) === target))
+        throw new Error(
+          "Older release protocol requires an independently installed OMP 18.18.8+; managed omp is removed during activation",
+        );
+    }
+    const omp = Bun.spawnSync([executable, "--version"], { stdout: "pipe", stderr: "pipe", timeout: 10_000 });
+    const version = omp.stdout.toString().match(/\d+\.\d+\.\d+(?:[-+][^\s]+)?/)?.[0] ?? "";
+    if (omp.exitCode !== 0 || !atLeast(version, [18, 18, 8]))
+      throw new Error("Older release protocol requires OMP 18.18.8+");
+  }
 }
 
 async function git(args: readonly string[], cwd: string, home: string): Promise<string> {
@@ -68,11 +90,18 @@ async function git(args: readonly string[], cwd: string, home: string): Promise<
 }
 
 /** Existing dependency checkouts are never reset, fetched into, or otherwise modified. */
-export async function provisionDependency(paths: ConsumerPaths, manifest: ReleaseManifest): Promise<string> {
+export async function provisionDependency(
+  paths: ConsumerPaths,
+  manifest: ReleaseManifest,
+  source?: string,
+): Promise<string> {
   const { commit, repository } = manifest.ompUlw;
-  const dependency = join(paths.dependencies, `omp-ulw-${commit}`);
+  const bundle = manifest.requirements.omp === "18.20.0" ? readSourceBundle(source!, false) : undefined;
+  if (bundle && (bundle.lock.commit !== commit || bundle.lock.repository !== repository))
+    throw new Error("Release overlay differs from its upstream dependency pin");
+  const dependency = join(paths.dependencies, `omp-ulw-${commit}${bundle ? `-${bundle.identity}` : ""}`);
   const receipt = `${dependency}.json`;
-  const expected = { version: 1, repository, commit };
+  const expected = { version: 1, repository, commit, ...(bundle ? { identity: bundle.identity } : {}) };
   const verify = async () => {
     realDirectory(dependency);
     owned(dependency);
@@ -81,7 +110,10 @@ export async function provisionDependency(paths: ConsumerPaths, manifest: Releas
       throw new Error("Pinned dependency ownership receipt differs; existing checkout left untouched");
     if ((await git(["rev-parse", "HEAD"], dependency, paths.staging)) !== commit)
       throw new Error("Pinned dependency HEAD differs; existing checkout left untouched");
-    if ((await git(["status", "--porcelain", "--untracked-files=all", "--ignored"], dependency, paths.staging)) !== "")
+    if (bundle) assertSourceBundle(dependency, bundle, paths.home);
+    else if (
+      (await git(["status", "--porcelain", "--untracked-files=all", "--ignored"], dependency, paths.staging)) !== ""
+    )
       throw new Error("Pinned dependency checkout changed; existing files left untouched");
     if (!regularFile(join(dependency, "index.ts"))) throw new Error("Pinned dependency has no real index.ts");
   };
@@ -92,12 +124,15 @@ export async function provisionDependency(paths: ConsumerPaths, manifest: Releas
   const stage = mkdtempSync(join(paths.staging, "dependency-"));
   const checkout = join(stage, "checkout");
   try {
-    mkdirSync(checkout, { mode: 0o700 });
-    await git(["init", "--quiet", checkout], stage, stage);
-    await git(["fetch", "--quiet", "--depth=1", "--no-tags", "--", repository, commit], checkout, stage);
-    await git(["-c", "advice.detachedHead=false", "checkout", "--quiet", "--detach", commit], checkout, stage);
-    if ((await git(["rev-parse", "HEAD"], checkout, stage)) !== commit)
-      throw new Error("Fetched public dependency does not match its exact lock SHA");
+    if (bundle) await checkoutSourceBundle(checkout, bundle, stage);
+    else {
+      mkdirSync(checkout, { mode: 0o700 });
+      await git(["init", "--quiet", checkout], stage, stage);
+      await git(["fetch", "--quiet", "--depth=1", "--no-tags", "--", repository, commit], checkout, stage);
+      await git(["-c", "advice.detachedHead=false", "checkout", "--quiet", "--detach", commit], checkout, stage);
+      if ((await git(["rev-parse", "HEAD"], checkout, stage)) !== commit)
+        throw new Error("Fetched public dependency does not match its exact lock SHA");
+    }
     if (!regularFile(join(checkout, "index.ts"))) throw new Error("Fetched dependency has no real index.ts");
     if (regularFile(receipt) && JSON.stringify(readJson(receipt)) !== JSON.stringify(expected))
       throw new Error("Pinned dependency receipt collision");
@@ -113,4 +148,10 @@ export async function provisionDependency(paths: ConsumerPaths, manifest: Releas
 export function assertLock(source: string, manifest: ReleaseManifest): void {
   if (readFileSync(join(source, "omp-ulw.lock"), "utf8").trim() !== manifest.ompUlw.commit)
     throw new Error("Release omp-ulw.lock differs from its declared public pin");
+  if (manifest.requirements.omp === "18.20.0") {
+    const overlay = readSourceBundle(source);
+    const native = readSourceBundle(source, true);
+    if (overlay.lock.commit !== manifest.ompUlw.commit || native.lock.nativeVersion !== manifest.requirements.omp)
+      throw new Error("Release source bundle differs from its declared native or ULW identity");
+  }
 }

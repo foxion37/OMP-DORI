@@ -115,6 +115,7 @@ test("the OMP extension and explicit ULW path install without replacing existing
     defaultModel: "provider/custom",
     hooks: { threadReply: ["fixture"] },
     ompUlwPath: "",
+    agentCommand: [join(home, ".dori/bin/omp"), "--dori-role", "lane", "--model", "{model}", "{prompt}"],
   });
 });
 

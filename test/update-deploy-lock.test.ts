@@ -9,9 +9,10 @@ import type { DeploymentRecord } from "../src/update/deployment-types.ts";
 import { sourceManifest } from "../src/update/source.ts";
 import { fixture } from "./update-deploy-setup.ts";
 
-const linux = test.skipIf(process.platform !== "linux");
+// The kernels whose process identity deployment can bind.
+const posix = test.skipIf(process.platform !== "linux" && process.platform !== "darwin");
 
-linux("shared restart lock waits for a live holder and only recovers a mismatched start identity", async () => {
+posix("shared restart lock waits for a live holder and only recovers a mismatched start identity", async () => {
   const { config } = fixture();
   const release = acquireRestartLock(config);
   expect(() => acquireRestartLock(config)).toThrow("restart lock is held");
@@ -30,7 +31,7 @@ linux("shared restart lock waits for a live holder and only recovers a mismatche
   recovered();
 });
 
-linux.each(["wait", "acquire-race"])(
+posix.each(["wait", "acquire-race"])(
   "pre-stop restart lock %s retries within one fixed window without touching its live owner",
   async (mode) => {
     const { root, config } = fixture();

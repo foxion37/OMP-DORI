@@ -64,6 +64,22 @@ describe("create / start / createGroup", () => {
     ]);
   });
 
+  test("DORI_HC_SPACE adds the herdr.space label that opts the terminal into that Herdr app space", async () => {
+    const { fake, rt } = rig({}, { ...SH, DORI_HC_SPACE: "sp0a1b" });
+    await rt.create(lane);
+    const run = fake.calls[1]!;
+    expect(run.slice(run.indexOf("dori.lane=Lane K") + 1, run.indexOf("--name"))).toEqual([
+      "--label",
+      "herdr.space=sp0a1b",
+    ]);
+  });
+
+  test("an invalid DORI_HC_SPACE runs nothing", async () => {
+    const { fake, rt } = rig({}, { ...SH, DORI_HC_SPACE: "sp x" });
+    await expect(rt.create(lane)).rejects.toThrow("Herdr space id");
+    expect(fake.calls.filter((c) => c[0] === "run")).toEqual([]);
+  });
+
   test("start sends the command into the shell with no status gate", async () => {
     const { fake, rt } = rig({ t1: terminal({ status: null, reported: false }) });
     await rt.start(T1, "omo --x 'a b'");

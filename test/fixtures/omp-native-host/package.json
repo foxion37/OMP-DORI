@@ -3,6 +3,6 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@oh-my-pi/pi-coding-agent": "18.18.8"
+    "@oh-my-pi/pi-coding-agent": "18.20.0"
   }
 }

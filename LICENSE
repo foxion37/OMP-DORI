@@ -1,4 +1,21 @@
-# License
+# omp-dori licensing
+
+This is [vntrevx/omp-dori](https://github.com/vntrevx/omp-dori), a modified OMP integration of
+dori-superagent, maintained by [vntrevx](https://github.com/vntrevx). Its source combines separately
+licensed work; the MIT notice does not apply to the whole repository.
+
+## Scope and attribution
+
+- dori-superagent code and its derived changes retain Sustainable Use License 1.0 below.
+- The pre-existing OMP integration retains the MIT terms and copyright notices in
+  [LICENSE.omp-dori](LICENSE.omp-dori), including the notices for YeonGyu Kim, betive37 and
+  subsequent maintenance of that MIT-covered material.
+- oh-my-pi, omp-ulw and other third-party components retain their own licenses. Linking a project
+  or pinning its revision does not change its license.
+- [NOTICE](NOTICE) identifies the imported revisions, the modified-copy status and this fork's
+  maintenance. [CONTRIBUTING.md](CONTRIBUTING.md) explains how changes enter this repository.
+
+## Inherited license terms
 
 Portions of this software are licensed as follows:
 

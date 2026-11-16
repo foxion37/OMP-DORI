@@ -3,25 +3,24 @@ import { existsSync, mkdirSync, readFileSync, readlinkSync, symlinkSync, writeFi
 import { join } from "node:path";
 import { git, withUlwRemote } from "./install-setup.ts";
 
-test("by default omp-ulw follows its latest main, not the lock", () => {
-  // Given an omp-ulw remote whose main is one commit past the lock.
-  const { home, commit, config, ulwHead, install } = withUlwRemote();
-  const latest = commit("u2");
-  // When the source installer runs; then the checkout is at main, linked as an OMP extension and not imported by omp-dori.
+test("the default source dependency uses the bound upstream and applies its reviewed overlay", () => {
+  const { home, first, commit, config, ulwHead, install } = withUlwRemote();
+  commit("u2");
   expect(install().code).toBe(0);
-  expect(ulwHead()).toBe(latest);
+  expect(ulwHead()).toBe(first);
+  const selected = join(home, ".dori/omp-ulw/index.ts");
+  expect(readFileSync(selected, "utf8")).toContain("export const reviewedOverlay = true");
   expect(readlinkSync(join(home, "extensions/omp-ulw"))).toBe(join(home, ".dori/omp-ulw"));
   expect(config().ompUlwPath).toBe("");
 });
 
-test("a later install moves omp-ulw to the newer main", () => {
-  // Given an installed omp-ulw and a newer omp-ulw commit.
-  const { commit, ulwHead, install } = withUlwRemote();
+test("reinstall preserves the bound overlay instead of following a newer unreviewed main", () => {
+  const { home, first, commit, ulwHead, install } = withUlwRemote();
   expect(install().code).toBe(0);
-  const newer = commit("u2");
-  // When the source installer runs again; then omp-ulw is at the newer commit.
+  commit("u2");
   expect(install().code).toBe(0);
-  expect(ulwHead()).toBe(newer);
+  expect(ulwHead()).toBe(first);
+  expect(readFileSync(join(home, ".dori/omp-ulw/index.ts"), "utf8")).toContain("reviewedOverlay");
 });
 
 test("OMP_ULW_REF=lock keeps the revision in omp-ulw.lock", () => {
@@ -33,15 +32,11 @@ test("OMP_ULW_REF=lock keeps the revision in omp-ulw.lock", () => {
   expect(ulwHead()).toBe(first);
 });
 
-test("an OMP older than omp-ulw main needs gets the lock revision unless OMP_ULW_REF says otherwise", () => {
-  // Given an omp-ulw remote whose main is past the lock, and OMP 18.18.9.
+test("an external native override does not silently switch the locked default to main", () => {
   const { first, commit, ulwHead, install } = withUlwRemote();
   const latest = commit("u2");
-  // When the source installer runs without OMP_ULW_REF; then omp-ulw stays at the lock and the reason is printed.
-  const r = install({ INSTALL_TEST_OMP_VERSION: "18.18.9" });
-  expect(r.code).toBe(0);
+  expect(install({ INSTALL_TEST_OMP_VERSION: "18.18.9" }).code).toBe(0);
   expect(ulwHead()).toBe(first);
-  // And an explicit OMP_ULW_REF=main is followed on that OMP.
   expect(install({ INSTALL_TEST_OMP_VERSION: "18.18.9", OMP_ULW_REF: "main" }).code).toBe(0);
   expect(ulwHead()).toBe(latest);
 });
@@ -84,11 +79,13 @@ test("a config that points ompUlwPath at its own checkout keeps that checkout, n
   expect(existsSync(join(home, ".dori/omp-ulw"))).toBe(false);
 });
 
-test("a standalone omp-ulw added after an install replaces the installer's own link", () => {
+test.each(["lock", "main"])("a standalone extension replaces only the installer's owned %s link", (ref) => {
   // Given an install that linked its omp-ulw checkout, and a standalone omp-ulw added later.
   const { home, install } = withUlwRemote();
-  expect(install().code).toBe(0);
-  expect(readlinkSync(join(home, "extensions/omp-ulw"))).toBe(join(home, ".dori/omp-ulw"));
+  expect(install({ OMP_ULW_REF: ref }).code).toBe(0);
+  expect(readlinkSync(join(home, "extensions/omp-ulw"))).toBe(
+    join(home, ref === "lock" ? ".dori/omp-ulw" : ".dori/omp-ulw-custom"),
+  );
   ulwCheckout(join(home, "extensions/omp-ulw-main"));
   // When the source installer runs again; then the standalone is used and the earlier link is gone, so omp-ulw loads once.
   const r = install();
@@ -106,16 +103,16 @@ test.each(["branch", "tag", "commit"])("OMP_ULW_REF selects a custom %s from OMP
   expect(ulwHead()).toBe(first);
 });
 
-test("OMP_ULW_REPO selects a new fork for an existing installer-managed checkout", () => {
+test("an explicit main profile can select a new fork for its separate custom checkout", () => {
   const { root, remote, ulwHead, install } = withUlwRemote();
-  expect(install().code).toBe(0);
+  expect(install({ OMP_ULW_REF: "main" }).code).toBe(0);
   const fork = join(root, "ulw-fork");
   git(root, "clone", "-q", remote, fork);
   writeFileSync(join(fork, "fork.txt"), "fork revision\n");
   git(fork, "add", ".");
   git(fork, "commit", "-qm", "fork");
   const selected = git(fork, "rev-parse", "HEAD");
-  expect(install({ OMP_ULW_REPO: fork }).code).toBe(0);
+  expect(install({ OMP_ULW_REPO: fork, OMP_ULW_REF: "main" }).code).toBe(0);
   expect(ulwHead()).toBe(selected);
 });
 
@@ -167,9 +164,24 @@ test("a side custom checkout survives clearing the import path and later reinsta
   writeFileSync(config, JSON.stringify({ ompUlwPath: join(own, "index.ts"), defaultModel: "fixture/preserved" }));
   expect(install({ DORI_INSTALL_MODE: "side" }).code).toBe(0);
   expect(readlinkSync(join(side, ".omp-dori-ulw"))).toBe(own);
-  expect(JSON.parse(readFileSync(config, "utf8"))).toEqual({ ompUlwPath: "", defaultModel: "fixture/preserved" });
+  expect(JSON.parse(readFileSync(config, "utf8"))).toEqual({
+    ompUlwPath: "",
+    defaultModel: "fixture/preserved",
+    agentCommand: [join(side, "bin/omp"), "--dori-role", "lane", "--model", "{model}", "{prompt}"],
+  });
   expect(install().code).toBe(0);
   expect(readlinkSync(join(side, ".omp-dori-ulw"))).toBe(own);
   expect(existsSync(join(side, "omp-ulw"))).toBe(false);
   expect(existsSync(join(home, "extensions"))).toBe(false);
+});
+
+test("a modified bound source dependency holds reinstall and retains the owner's edit", () => {
+  const { home, env, install } = withUlwRemote();
+  expect(install().code).toBe(0);
+  const entry = join(home, ".dori/omp-ulw/index.ts");
+  writeFileSync(entry, "owner edit\n");
+  expect(install().code).not.toBe(0);
+  expect(readFileSync(entry, "utf8")).toBe("owner edit\n");
+  const launch = Bun.spawnSync([join(home, ".dori/bin/omp"), "--version"], { env: env() });
+  expect(launch.exitCode).not.toBe(0);
 });

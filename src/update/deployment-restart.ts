@@ -4,6 +4,7 @@ import { captureStartedMonitors } from "./deployment-handoff.ts";
 import { observeDeploymentHealth, waitDeploymentHealth } from "./deployment-health.ts";
 import { launchRuntime } from "./deployment-launch.ts";
 import { nativeCli, stopRecordedMonitors, stopRuntime } from "./deployment-native.ts";
+import { holdPendingNativeUiExit } from "./deployment-native-ui.ts";
 import { acquireRestartLock, DeploymentBusy, DeploymentHeld } from "./deployment-process.ts";
 import {
   deferRestartIntent,
@@ -101,15 +102,22 @@ export async function restartDeployment(config: DeploymentConfig, signal?: Abort
   } catch (error) {
     if (!record) throw error;
     record.error = error instanceof DeploymentHeld ? error.message : "managed restart failed";
+    if (holdPendingNativeUiExit(record)) {
+      persist(record);
+      return record;
+    }
     if (!completed && record.stopRequestedAt) {
       try {
         const restored = await rollbackDeployment(config, record, persist);
         saveActiveDeployment(config, restored, true);
         finishRestartIntent(config, restored);
         return restored;
-      } catch {
+      } catch (rollbackError) {
         record.status = "failed";
-        record.error = "managed restart did not restore verified service";
+        record.rollbackError =
+          rollbackError instanceof DeploymentHeld
+            ? rollbackError.message
+            : "managed restart did not restore verified service";
       }
     } else record.status = "held";
     persist(record);

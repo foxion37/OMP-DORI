@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { chmodSync, copyFileSync, lstatSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { UpdateError } from "./config.ts";
+import { doriPin } from "./source-pin.ts";
 import type { SourceEntry, SourceManifest, UpdateInputs, UpdateJob } from "./types.ts";
 
 export const digest = (value: string | Uint8Array): string => createHash("sha256").update(value).digest("hex");
@@ -179,13 +180,9 @@ export function assertSource(job: UpdateJob): void {
   }
 }
 
-const doriPin = (manifest: SourceManifest): readonly SourceEntry[] =>
-  manifest.files.filter((file) => file.path === "omp-ulw.lock" || file.path.startsWith(`${ULW_LIBRARY}/`));
-
 const sameDoriPin = (local: SourceManifest, candidate: SourceManifest): boolean =>
   local.ulwPresent === candidate.ulwPresent && JSON.stringify(doriPin(local)) === JSON.stringify(doriPin(candidate));
-
-/** Carry only the frozen local pin, never an old-source overlay or a library fetch/update. */
+/** Carry only frozen source-bundle payloads and the local pin, never an old-source overlay or library fetch. */
 export function carryDoriPin(local: string, candidate: string, expected: SourceManifest): void {
   const incoming = sourceManifest(candidate);
   const library = (manifest: SourceManifest): readonly SourceEntry[] =>
@@ -210,7 +207,7 @@ export function carryDoriPin(local: string, candidate: string, expected: SourceM
   }
 }
 
-/** The ULW lock/library is a frozen local pin; a Dori-only port must carry it over byte for byte. */
+/** Source-bundle payloads and the ULW library are frozen local pins, carried byte for byte by a Dori-only port. */
 export function assertDoriScope(inputs: UpdateInputs, candidate: SourceManifest): void {
   if (!sameDoriPin(inputs.local, candidate)) {
     throw new UpdateError("Dori-only update changed the frozen ULW lock/library");

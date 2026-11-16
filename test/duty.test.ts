@@ -2,12 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { main } from "../src/cli.ts";
 import { dutyTick } from "../src/duty.ts";
 import { send } from "../src/inbox.ts";
-import { report, startLane } from "../src/lanes.ts";
+import { startLane } from "../src/lanes.ts";
 import { setup } from "./harness-setup.ts";
 import { href } from "./fake.ts";
 
 describe("duty loop", () => {
-  test("nudges an idle lane at 10 and 20 minutes, escalates at 40, and ignores WAITING lanes", async () => {
+  test("nudges a quiet lane at 10 and 20 minutes and escalates once at 40", async () => {
     const { w, d, lead, brief } = setup();
     const lane = await startLane(d, "quiet", brief, { group: "w1" });
     const pane = w.panes.get(lane.paneId)!;
@@ -18,18 +18,12 @@ describe("duty loop", () => {
     };
     expect(await at(5)).toEqual([]);
     expect(await at(10)).toContainEqual({ lane: "quiet", action: "nudge-1" });
-    expect(pane.received.at(-1)).toContain("idle for 10 minutes");
+    expect(pane.received.at(-1)).toContain("quiet for 10 minutes");
     expect(await at(15)).toEqual([]);
     expect(await at(20)).toContainEqual({ lane: "quiet", action: "nudge-2" });
     expect(await at(40)).toContainEqual({ lane: "quiet", action: "escalated" });
     expect(lead.received.at(-1)).toContain("[ESCALATE quiet]");
     expect(await at(90)).toEqual([]);
-
-    const waiting = await startLane(d, "blocked-on-ci", brief, { group: "w1" });
-    w.panes.get(waiting.paneId)!.status = "idle";
-    await report(d, "blocked-on-ci", "WAITING: CI", "waiting");
-    w.clock += 60 * 60_000;
-    expect((await dutyTick(d)).filter((e) => e.lane === "blocked-on-ci")).toEqual([]);
   });
 
   test("a failing inbox flush on one pane does not stop the loop for the other panes", async () => {
@@ -75,7 +69,7 @@ describe("duty loop", () => {
       detail: expect.stringContaining("stuck exploded"),
     });
     expect(events).toContainEqual({ lane: "fine-lane", action: "nudge-1" });
-    expect(w.panes.get(fine.paneId)!.received.at(-1)).toContain("idle for 10 minutes");
+    expect(w.panes.get(fine.paneId)!.received.at(-1)).toContain("quiet for 10 minutes");
   });
 
   test("a LOST notice whose Enter failed once still reaches the lead on the next tick, exactly once", async () => {
@@ -133,7 +127,7 @@ describe("duty loop", () => {
     expect(await send(d, "lead", "held note", "cli")).toBe("QUEUED");
     lead.status = "idle";
     lead.received.length = 0;
-    w.clock = lane.createdAt + 40 * 60_000;
+    w.clock = lane.createdAt + 30 * 60_000;
     const lines: string[] = [];
     const log = console.log;
     console.log = (...a: unknown[]) => void lines.push(a.join(" "));

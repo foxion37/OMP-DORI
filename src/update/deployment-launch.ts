@@ -1,16 +1,23 @@
-import { readFileSync, realpathSync } from "node:fs";
+import { realpathSync } from "node:fs";
+import { isAbsolute } from "node:path";
 import { readPaneState } from "../../skills/dori-mode/scripts/src/lane-state.ts";
-import type { HerdrCli } from "../runtime/herdr/exec.ts";
-import { foreground } from "../runtime/herdr/probe.ts";
-import { start } from "../runtime/herdr/sessions.ts";
+import type { DeploymentCli } from "./deployment-cli.ts";
 import { completedLegacyRollbackForeground, legacyRollbackForeground } from "./deployment-legacy-monitors.ts";
 import { captureRuntime, requireShell } from "./deployment-native.ts";
 import { runtimeUsesToolchain } from "./deployment-prior.ts";
-import { actorEnv, DeploymentHeld, processIdentity, sameProcess, underProcess } from "./deployment-process.ts";
+import {
+  actorEnv,
+  DeploymentHeld,
+  managedOmpCommand,
+  processIdentity,
+  sameProcess,
+  underProcess,
+} from "./deployment-process.ts";
 import { bareRootShell } from "./deployment-shell.ts";
 import { terminateBoundProcess } from "./deployment-signal.ts";
 import { assertRuntimeToolchain } from "./deployment-toolchain.ts";
 import type { DeploymentConfig, DeploymentRecord, ProcessIdentity } from "./deployment-types.ts";
+import { procCmdline } from "./proc.ts";
 
 /** A matching live launch remains present while its foreground receipts converge. */
 export class LaunchedProcessHeld extends DeploymentHeld {
@@ -25,7 +32,7 @@ export class LaunchedProcessHeld extends DeploymentHeld {
 /** Same session file, same pane and role. Explicit environment replaces ambient tokens/sudo and leaves policy in place. */
 export async function launchRuntime(
   config: DeploymentConfig,
-  cli: HerdrCli,
+  cli: DeploymentCli,
   record: DeploymentRecord,
   bootstrap = false,
   prior = false,
@@ -34,6 +41,7 @@ export async function launchRuntime(
   const toolchain = prior ? record.oldToolchain : record.toolchain;
   if (!previous || !toolchain) throw new DeploymentHeld("native launch lacks its identity/toolchain journal");
   assertRuntimeToolchain(config, toolchain);
+  const command = managedOmpCommand(toolchain, prior ? record.oldSource : record.releasePath);
   await requireShell(config, cli);
   const quote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
   const env = { ...actorEnv(config, toolchain), DORI_MANAGED_STARTUP: "1" };
@@ -41,9 +49,7 @@ export async function launchRuntime(
     "/usr/bin/env",
     "-i",
     ...Object.entries(env).map(([key, value]) => `${key}=${value}`),
-    toolchain.omp,
-    "--config",
-    toolchain.nativeConfig,
+    ...command,
     `--resume=${previous.sessionFile}`,
     "--dori-role",
     "dori",
@@ -51,13 +57,13 @@ export async function launchRuntime(
     config.model,
     ...(bootstrap && config.monitorBootstrapFile ? [`--dori-monitor-bootstrap=${config.monitorBootstrapFile}`] : []),
   ];
-  await start(cli, config.pane, `cd ${quote(previous.cwd)} && ${argv.map(quote).join(" ")}`);
+  await cli.start(config.pane, `cd ${quote(previous.cwd)} && ${argv.map(quote).join(" ")}`);
 }
 
 /** Binds a failed startup even when extension initialization never wrote its role receipt. */
 export async function launchedProcess(
   config: DeploymentConfig,
-  cli: HerdrCli,
+  cli: DeploymentCli,
   record: DeploymentRecord,
   since: string,
   prior = false,
@@ -65,7 +71,7 @@ export async function launchedProcess(
   const previous = record.oldRuntime;
   const toolchain = prior ? record.oldToolchain : record.toolchain;
   if (!previous || !toolchain) throw new DeploymentHeld("native startup lacks its identity/toolchain journal");
-  const front = await foreground(cli, config.pane, "deployment held");
+  const front = await cli.foreground(config.pane, "deployment held");
   const legacyRollback = prior && record.bootstrap === true && record.rollbackLaunchRequestedAt === since;
   const matches = (front.processes ?? []).flatMap((entry) => {
     if (!entry.pid || !front.rootPid || !underProcess(entry.pid, front.rootPid)) return [];
@@ -75,7 +81,7 @@ export async function launchedProcess(
       (identity.executable !== toolchain.ompEntry && identity.executable !== realpathSync(toolchain.bun))
     )
       return [];
-    const argv = readFileSync(`/proc/${entry.pid}/cmdline`, "utf8").split("\0");
+    const argv = procCmdline(entry.pid).split("\0");
     if (
       !argv.includes(`--resume=${previous.sessionFile}`) ||
       !argv.includes("--dori-role") ||
@@ -86,7 +92,18 @@ export async function launchedProcess(
       !argv.includes(toolchain.nativeConfig) ||
       (identity.executable !== toolchain.ompEntry &&
         !argv.includes(toolchain.omp) &&
-        !argv.includes(toolchain.ompEntry))
+        !argv.includes(toolchain.ompEntry) &&
+        !(
+          toolchain.nativeSource &&
+          argv.some((arg) => {
+            if (!isAbsolute(arg)) return false;
+            try {
+              return realpathSync(arg) === toolchain.nativeSource?.entry;
+            } catch {
+              return false;
+            }
+          })
+        ))
     )
       return [];
     return [identity];
@@ -136,7 +153,7 @@ export async function launchedProcess(
 
 export async function stopLaunchedProcess(
   config: DeploymentConfig,
-  cli: HerdrCli,
+  cli: DeploymentCli,
   record: DeploymentRecord,
   since: string,
   expected: ProcessIdentity,

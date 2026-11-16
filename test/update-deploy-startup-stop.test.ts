@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { procCmdline } from "../src/update/proc.ts";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -14,9 +15,10 @@ import { digest } from "../src/update/source.ts";
 import { foregroundCli } from "./update-deploy-foreground-cli.ts";
 import { deploymentConfig } from "./update-deploy-setup.ts";
 
-const linux = test.skipIf(process.platform !== "linux");
+// The kernels whose process identity deployment can bind.
+const posix = test.skipIf(process.platform !== "linux" && process.platform !== "darwin");
 
-linux("an owned no-shell bad startup stops before any role or health writer exists", async () => {
+posix("an owned no-shell bad startup stops before any role or health writer exists", async () => {
   const root = mkdtempSync(join(tmpdir(), "dori-uninitialized-"));
   const config = { ...deploymentConfig(root), omp: join(root, "omp"), bun: process.execPath, stopTimeoutMs: 2_000 };
   ownReleaseRoot(config);
@@ -104,7 +106,7 @@ await Bun.stdin.text();
             {
               pid: foregroundPid,
               name: live ? "bun" : "bash",
-              argv: readFileSync(`/proc/${foregroundPid}/cmdline`, "utf8").split("\0").filter(Boolean),
+              argv: procCmdline(foregroundPid).split("\0").filter(Boolean),
             },
           ],
         },

@@ -7,7 +7,8 @@ import { processIdentity, sameProcess } from "../src/update/deployment-process.t
 import { stopRecordedMonitors } from "../src/update/deployment-native.ts";
 import { fixture } from "./update-deploy-setup.ts";
 
-const linux = test.skipIf(process.platform !== "linux");
+// The kernels whose process identity deployment can bind.
+const posix = test.skipIf(process.platform !== "linux" && process.platform !== "darwin");
 
 test("legacy source survives its inode-preserving rename, stable switch and exact rollback", () => {
   const { root, config } = fixture();
@@ -85,7 +86,7 @@ test("parser and config identity remain stable when the source becomes a symlink
   expect(() => parseDeploymentConfig({ ...config, stopTimeoutMs: null }, root)).toThrow();
 });
 
-linux("monitor cleanup never signals a reused PID receipt", async () => {
+posix("monitor cleanup never signals a reused PID receipt", async () => {
   const { config } = fixture();
   // Linux PID/start identity needs a real child; its keepalive timer duration is never awaited.
   const child = Bun.spawn([process.execPath, "-e", "setInterval(() => {}, 1000)"], {

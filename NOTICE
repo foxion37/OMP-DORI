@@ -1,4 +1,12 @@
-Modified copy notice
+omp-dori - modified copy and attribution
+
+Project: https://github.com/vntrevx/omp-dori
+Fork maintainer: vntrevx (https://github.com/vntrevx)
+
+This fork combines messenger-facing ownership from dori-superagent, the
+oh-my-pi coding-agent runtime, and the outcome-driven workflow of omp-ulw.
+Maintenance and integration by this fork do not replace the original
+authors' credit or the license attached to each source origin.
 
 This is a modified copy of sisyphuslabs/dori-superagent, based on upstream
 97d807b9037cb050a72129659cf6306d8055010d (2026-11-11 source snapshot).
@@ -17,8 +25,24 @@ does not relabel current upstream code as MIT.
 The pre-existing omp-dori material incorporated from the local source,
 including its extension and OMP integration changes, retains its original
 copyright and permission notice in LICENSE.omp-dori. Third-party components
-retain their original licenses. omp-ulw is not vendored or relicensed; its
-source revision remains pinned by omp-ulw.lock.
+retain their original licenses.
+
+This source distribution includes modified-copy patch excerpts for oh-my-pi
+(https://github.com/can1357/oh-my-pi), based on
+c308970263ae13744ea15ab67302e3dac840e266 / 18.20.0, and omp-ulw
+(https://github.com/dbc-hbin/omp-ulw), based on
+b2159b77fe3acbf9a8c6482f80dc5d4069fda881. native-omp.lock/native-omp.patch
+and omp-ulw.overlay.lock/omp-ulw.patch bind those upstream bases, patch
+digests and resulting source identities. omp-ulw.lock retains its upstream
+repository/commit meaning. The repositories and gitlinks are not replaced
+by a vendored union or an external fork dependency.
+
+Original authors and upstream copyright/license notices remain applicable
+to those excerpts and fetched source. The default runtime reuses the
+official version-matched MIT-licensed @oh-my-pi/pi-natives addon; its
+compatibility stamp is not proof of a rebuilt binary or the source delta.
+No private policy, provider settings, credentials or QA workspace content
+is part of these source payloads.
 
 Installation and runtime activation are separate operator actions. Installing
 this copy does not replace a running Dori or activate another harness.

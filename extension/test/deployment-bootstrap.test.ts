@@ -6,7 +6,8 @@ import { processIdentity } from "../../src/update/deployment-process.ts";
 import type { RuntimeHealth } from "../../src/update/deployment-types.ts";
 import { type FakePi, load, until, useConfig } from "./fake-pi.ts";
 
-const linux = test.skipIf(process.platform !== "linux");
+// The kernels whose process identity deployment can bind.
+const posix = test.skipIf(process.platform !== "linux" && process.platform !== "darwin");
 
 const previousPane = process.env.HERDR_PANE_ID;
 const previousTerminal = process.env.HC_TERMINAL_ID;
@@ -45,7 +46,7 @@ const alive = (pid: number): boolean => {
   }
 };
 
-linux(
+posix(
   "trusted first handoff replaces legacy specifications, observes real monitor identities and resumes without the file",
   async () => {
     const f = fixture();
@@ -117,7 +118,7 @@ test("ordinary bootstrap replaces legacy monitors and restores real children wit
   const health = JSON.parse(readFileSync(f.healthPath, "utf8")) as RuntimeHealth;
   expect(health).toMatchObject({ role: "dori", paneId: "w1:p7", pid: process.pid, sessionId: session.id });
   expect(health.presetLoaded).toBe(true);
-  if (process.platform === "darwin") expect(health.monitors).toEqual([]);
+  expect(health.monitors.map(({ name, pid }) => [name, pid])).toEqual([[f.monitor.name, oldPid]]);
   await first.emit("session_shutdown");
   await until(() => !alive(oldPid));
   unlinkSync(f.bootstrap);

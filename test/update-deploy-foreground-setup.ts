@@ -1,22 +1,23 @@
 import { afterEach } from "bun:test";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import type { Writable } from "node:stream";
 import { type PaneState, writePaneState } from "../skills/dori-mode/scripts/src/lane-state.ts";
 import { processIdentity } from "../src/update/deployment-process.ts";
+import { procChildren, procCmdline, procStat } from "../src/update/proc.ts";
 import type { MonitorSet, RuntimeHealth, RuntimeIdentity } from "../src/update/deployment-types.ts";
 import { foregroundCli } from "./update-deploy-foreground-cli.ts";
+import { processName } from "./proc-name.ts";
 import { deploymentConfig } from "./update-deploy-setup.ts";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
-
 /** Real exec-launched native group and script children; herdr supplies only their observed metadata. */
 export async function foregroundFixture(
   options: {
@@ -130,7 +131,7 @@ await stopChildren();
   const previousMonitors = previous?.observed.monitors.slice(0, specs.length).map((pid, index) => ({
     ...processIdentity(pid)!,
     name: specs[index]!.name,
-    argv: readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0").filter(Boolean),
+    argv: procCmdline(pid).split("\0").filter(Boolean),
   }));
   if (previous) {
     (previous.child.stdio[3] as Writable).end();
@@ -200,18 +201,15 @@ await stopChildren();
   };
   const pids = [...(options.parentShell ? [child.pid!] : []), runtime.pid, ...observed.monitors];
   if (options.subshell) {
-    const nested = readFileSync(`/proc/${observed.monitors[0]}/task/${observed.monitors[0]}/children`, "utf8");
-    pids.push(...nested.trim().split(/\s+/).map(Number));
+    pids.push(...procChildren(observed.monitors[0]!));
   }
   const front = {
     shell_pid: options.parentShell || options.paneShell ? child.pid! : process.pid,
-    foreground_process_group_id: Number(
-      readFileSync(`/proc/${runtime.pid}/stat`, "utf8").split(") ")[1]!.split(" ")[2],
-    ) as number | undefined,
+    foreground_process_group_id: procStat(runtime.pid).pgid as number | undefined,
     foreground_processes: pids.map((pid) => ({
       pid: pid as number | undefined,
-      name: readFileSync(`/proc/${pid}/comm`, "utf8").trim(),
-      argv: readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0").filter(Boolean),
+      name: processName(pid),
+      argv: procCmdline(pid).split("\0").filter(Boolean),
     })),
   };
   const observe = () => {
@@ -221,7 +219,7 @@ await stopChildren();
         {
           pid: child.pid!,
           name: "bash",
-          argv: readFileSync(`/proc/${child.pid}/cmdline`, "utf8").split("\0").filter(Boolean),
+          argv: procCmdline(child.pid!).split("\0").filter(Boolean),
         },
       ];
     }
@@ -246,5 +244,6 @@ await stopChildren();
     writeHealth,
     observe,
     sendLine: (line: string) => child.stdin!.write(`${line}\n`),
+    closeNativeInput: () => (child.stdio[3] as Writable).end(),
   };
 }

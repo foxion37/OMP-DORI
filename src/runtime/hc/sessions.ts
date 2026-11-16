@@ -5,6 +5,7 @@ import { statusWord } from "./probe.ts";
 
 const NAME_MAX = 32;
 const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const SPACE_ID = /^[A-Za-z0-9._-]+$/;
 export const RM_RETRIES = 5;
 export const RM_RETRY_MS = 200;
 
@@ -40,15 +41,21 @@ async function liveNames(exec: Exec): Promise<Set<string>> {
   return names;
 }
 
-/** The `hc run` argv for a spec: labels for grouping, the env through the `env` utility (one argv element per K=V). */
-export function createArgv(spec: CreateSpec, shell: string, name: string | undefined): string[] {
+/**
+ * The `hc run` argv for a spec: labels for grouping, the env through the `env` utility (one argv element per K=V).
+ * `space`: a Herdr app space id; its `herdr.space` label opts the terminal into that space (hc hides unlabeled ones).
+ */
+export function createArgv(spec: CreateSpec, shell: string, name: string | undefined, space?: string): string[] {
   for (const key of Object.keys(spec.env))
     if (!ENV_KEY.test(key)) throw new Error(`env key ${JSON.stringify(key)} is not a shell variable name`);
+  if (space !== undefined && !SPACE_ID.test(space))
+    throw new Error(`Herdr space id ${JSON.stringify(space)} is invalid`);
   const labels = [
     `dori.group=${spec.group ?? "dori"}`,
     `dori.role=${spec.role}`,
     `dori.name=${spec.name}`,
     ...(spec.role === "lane" ? [`dori.lane=${spec.name}`] : []),
+    ...(space === undefined ? [] : [`herdr.space=${space}`]),
   ];
   return [
     "run",
@@ -71,15 +78,15 @@ export function createArgv(spec: CreateSpec, shell: string, name: string | undef
  * path). The slug name is used only when no live terminal holds it; a name taken in between is retried without one.
  * Identity is the address plus labels, never the name.
  */
-export async function create(exec: Exec, spec: CreateSpec, shell: string): Promise<SessionRef> {
+export async function create(exec: Exec, spec: CreateSpec, shell: string, space?: string): Promise<SessionRef> {
   const slug = slugName(spec.name);
   const name = slug !== undefined && !(await liveNames(exec)).has(slug) ? slug : undefined;
   let result: Record<string, unknown>;
   try {
-    result = await hcCall(exec, createArgv(spec, shell, name));
+    result = await hcCall(exec, createArgv(spec, shell, name, space));
   } catch (e) {
     if (name === undefined || !isKind(e, "name_taken")) throw e;
-    result = await hcCall(exec, createArgv(spec, shell, undefined));
+    result = await hcCall(exec, createArgv(spec, shell, undefined, space));
   }
   const id = str(result["address"]);
   if (id === undefined) throw new Error("hc run did not return an address");

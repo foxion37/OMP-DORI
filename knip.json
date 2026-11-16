@@ -4,14 +4,12 @@
     ".": {
       "entry": [
         "scripts/update-supervisor.ts",
+        "scripts/source-dependencies.ts",
         "scripts/bench-discord-intake.ts",
         "src/update/deployment-launcher.ts",
         "skills/dori-mode/scripts/src/cli.ts",
         "src/update/reviewer-guard.ts",
         "src/update/worker-guard.ts",
-        "extension/index.ts",
-        "extension/test/**/*.test.ts",
-        "extension/test/fake-ulw.ts",
         "test/**/*.test.ts",
         "skills/dori-mode/scripts/test/**/*.test.ts",
         "skills/dori-mode/scripts/test/record-gateway.ts",
@@ -23,10 +21,13 @@
         "src/**/*.ts",
         "scripts/**/*.ts",
         "test/**/*.ts",
-        "extension/**/*.ts",
         "skills/dori-mode/scripts/src/**/*.ts",
         "skills/dori-mode/scripts/test/**/*.ts"
       ]
+    },
+    "extension": {
+      "entry": ["index.ts", "test/**/*.test.ts", "test/fake-ulw.ts"],
+      "project": ["**/*.ts"]
     },
     "test/fixtures/omp-native-host": {
       "entry": ["compose.ts"],

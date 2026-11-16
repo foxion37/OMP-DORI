@@ -22,6 +22,7 @@ import type {
   RuntimeIdentity,
 } from "./deployment-types.ts";
 import { digest, sourceManifest } from "./source.ts";
+import { procCmdline } from "./proc.ts";
 
 export function prepareLauncher(config: DeploymentConfig, record: DeploymentRecord): string {
   const manifest = sourceManifest(record.releasePath);
@@ -115,7 +116,7 @@ export function captureStartedMonitors(
       !underProcess(monitor.pid, root.pid)
     )
       throw new DeploymentHeld("started monitor ownership differs");
-    const argv = readFileSync(`/proc/${monitor.pid}/cmdline`, "utf8").split("\0").filter(Boolean);
+    const argv = procCmdline(monitor.pid).split("\0").filter(Boolean);
     return { ...identity, name: monitor.name, argv };
   });
 }

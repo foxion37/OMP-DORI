@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { procCmdline } from "../src/update/proc.ts";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { readActiveDeployment, saveActiveDeployment } from "../src/update/deployment-active.ts";
@@ -11,9 +12,10 @@ import { DeploymentHeld, processIdentity, sameProcess } from "../src/update/depl
 import { rollbackDeployment } from "../src/update/deployment-rollback.ts";
 import { rollbackFixture } from "./update-deploy-legacy-setup.ts";
 
-const linux = test.skipIf(process.platform !== "linux");
+// The kernels whose process identity deployment can bind.
+const posix = test.skipIf(process.platform !== "linux" && process.platform !== "darwin");
 
-linux(
+posix(
   "controller-owned Bash rollback verifies legacy health and persists healthy rollback and active receipts",
   async () => {
     const f = await rollbackFixture();
@@ -72,7 +74,7 @@ linux(
   },
 );
 
-linux.each(["unregistered", "foreign", "interactive"] as const)(
+posix.each(["unregistered", "foreign", "interactive"] as const)(
   "legacy rollback keeps a real %s foreground shell held",
   async (mode) => {
     const f = await rollbackFixture({ unknown: mode === "unregistered", parentShell: mode === "interactive" });
@@ -93,7 +95,7 @@ linux.each(["unregistered", "foreign", "interactive"] as const)(
         f.front.foreground_processes.push({
           pid: foreign.pid,
           name: "bash",
-          argv: readFileSync(`/proc/${foreign.pid}/cmdline`, "utf8").split("\0").filter(Boolean),
+          argv: procCmdline(foreign.pid).split("\0").filter(Boolean),
         });
       }
       await expect(launchedProcess(f.config, f.cli, f.record, f.launchRequestedAt, true)).rejects.toThrow(
@@ -116,7 +118,7 @@ linux.each(["unregistered", "foreign", "interactive"] as const)(
   },
 );
 
-linux.each([
+posix.each([
   "missing",
   "pid",
   "startTicks",
@@ -172,7 +174,7 @@ linux.each([
   expect(existsSync(f.signalPath)).toBe(false);
 });
 
-linux.each(["startTicks", "bootId", "imageDev", "imageIno"] as const)(
+posix.each(["startTicks", "bootId", "imageDev", "imageIno"] as const)(
   "legacy rollback never reuses a stale shell %s receipt",
   async (field) => {
     const f = await rollbackFixture();
@@ -190,7 +192,7 @@ linux.each(["startTicks", "bootId", "imageDev", "imageIno"] as const)(
   },
 );
 
-linux.each([
+posix.each([
   "status",
   "step",
   "healthy-at",

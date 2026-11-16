@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
+import { procCmdline } from "../src/update/proc.ts";
 import { once } from "node:events";
 import { appendFileSync, existsSync, readFileSync, watch, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { probe } from "../src/runtime/herdr/probe.ts";
 import { readActiveDeployment } from "../src/update/deployment-active.ts";
 import { captureStartedMonitors } from "../src/update/deployment-handoff.ts";
 import { observeDeploymentHealth } from "../src/update/deployment-health.ts";
@@ -14,11 +14,12 @@ import { waitLaunchedProcess } from "../src/update/deployment-rollback.ts";
 import { foregroundCli } from "./update-deploy-foreground-cli.ts";
 import { managedBashFixture } from "./update-deploy-managed-setup.ts";
 
-const linux = test.skipIf(process.platform !== "linux");
+// The kernels whose process identity deployment can bind.
+const posix = test.skipIf(process.platform !== "linux" && process.platform !== "darwin");
 
-linux("a managed Bash launch journals its real actor, verifies health and becomes active", async () => {
+posix("a managed Bash launch journals its real actor, verifies health and becomes active", async () => {
   const f = await managedBashFixture();
-  expect((await probe(f.cli, f.config.pane, false, "held", f.config.stateDir)).shellInFront).toBe(true);
+  expect((await f.cli.probe(f.config.pane, "held", f.config.stateDir)).shellInFront).toBe(true);
   const healthy = await restartDeployment(f.config);
   expect(healthy).toMatchObject({
     status: "healthy",
@@ -39,7 +40,7 @@ linux("a managed Bash launch journals its real actor, verifies health and become
   expect(existsSync(f.signalPath)).toBe(false);
 });
 
-linux("a prior managed Bash actor resumes rollback with managed health and an active receipt", async () => {
+posix("a prior managed Bash actor resumes rollback with managed health and an active receipt", async () => {
   const f = await managedBashFixture();
   f.record.step = "rollback";
   f.record.rollbackRequestedAt = f.launchRequestedAt;
@@ -62,7 +63,7 @@ linux("a prior managed Bash actor resumes rollback with managed health and an ac
   expect(existsSync(f.signalPath)).toBe(false);
 });
 
-linux("a failed managed Bash health check still permits an owned idle startup to stop", async () => {
+posix("a failed managed Bash health check still permits an owned idle startup to stop", async () => {
   const f = await managedBashFixture();
   const expected = await waitLaunchedProcess(f.config, f.record, f.launchRequestedAt);
   expect(expected).toEqual(processIdentity(f.runtime.pid));
@@ -80,7 +81,7 @@ linux("a failed managed Bash health check still permits an owned idle startup to
   await requireShell(f.config, f.cli);
 });
 
-linux("launchRuntime executes once through a positively bare root Bash prompt", async () => {
+posix("launchRuntime executes once through a positively bare root Bash prompt", async () => {
   const f = await managedBashFixture();
   const expected = await launchedProcess(f.config, f.cli, f.record, f.launchRequestedAt);
   await stopLaunchedProcess(f.config, f.cli, f.record, f.launchRequestedAt, expected!);
@@ -101,7 +102,7 @@ linux("launchRuntime executes once through a positively bare root Bash prompt", 
   }
 });
 
-linux.each([
+posix.each([
   "unknown",
   "subshell",
   "interactive",
@@ -131,7 +132,7 @@ linux.each([
       f.front.foreground_processes.push({
         pid: foreign.pid,
         name: "bash",
-        argv: readFileSync(`/proc/${foreign.pid}/cmdline`, "utf8").split("\0").filter(Boolean),
+        argv: procCmdline(foreign.pid).split("\0").filter(Boolean),
       });
     }
     if (mode === "stale") f.writeHealth({ ...f.health, pid: f.previousRuntime!.pid });

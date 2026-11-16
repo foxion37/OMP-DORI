@@ -20,12 +20,10 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.4.4
-      - name: Check out pinned omp-ulw test fixture
+      - name: Prepare bound omp-ulw test fixture
         run: |
-          pin="$(tr -d '[:space:]' < omp-ulw.lock)"
-          git clone --quiet https://github.com/dbc-hbin/omp-ulw.git ref/omp-ulw
-          git -C ref/omp-ulw -c advice.detachedHead=false checkout --quiet "$pin"
-          test "$(git -C ref/omp-ulw rev-parse HEAD)" = "$pin"
+          mkdir -p "$RUNNER_TEMP/omp-dori-ci-home"
+          bun scripts/source-dependencies.ts ulw "$GITHUB_WORKSPACE" "$RUNNER_TEMP/omp-dori-ci-home" "$GITHUB_WORKSPACE/ref/omp-ulw"
       - name: Check out exact explicit-override compatibility fixture
         run: |
           pin=cbfe5ee72e5b2783af01616e7f4d3da5e3f9180d
@@ -41,7 +39,7 @@ jobs:
       - name: Bind exact native OMP test host
         run: |
           host="$GITHUB_WORKSPACE/test/fixtures/omp-native-host/node_modules/@oh-my-pi/pi-coding-agent"
-          bun -e 'const p = await Bun.file(process.argv[1] + "/package.json").json(); if (p.version !== "18.18.8") throw new Error("unexpected native OMP fixture version: " + p.version)' "$host"
+          bun -e 'const p = await Bun.file(process.argv[1] + "/package.json").json(); if (p.version !== "18.20.0") throw new Error("unexpected native OMP fixture version: " + p.version)' "$host"
           printf 'DORI_TEST_OMP_ROOT=%s\n' "$host" >> "$GITHUB_ENV"
       - run: bun install --frozen-lockfile
       - run: bun install --frozen-lockfile
@@ -55,12 +53,10 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.4.4
-      - name: Check out pinned omp-ulw test fixture
+      - name: Prepare bound omp-ulw test fixture
         run: |
-          pin="$(tr -d '[:space:]' < omp-ulw.lock)"
-          git clone --quiet https://github.com/dbc-hbin/omp-ulw.git ref/omp-ulw
-          git -C ref/omp-ulw -c advice.detachedHead=false checkout --quiet "$pin"
-          test "$(git -C ref/omp-ulw rev-parse HEAD)" = "$pin"
+          mkdir -p "$RUNNER_TEMP/omp-dori-ci-home"
+          bun scripts/source-dependencies.ts ulw "$GITHUB_WORKSPACE" "$RUNNER_TEMP/omp-dori-ci-home" "$GITHUB_WORKSPACE/ref/omp-ulw"
       - name: Check out exact explicit-override compatibility fixture
         run: |
           pin=cbfe5ee72e5b2783af01616e7f4d3da5e3f9180d
@@ -76,7 +72,7 @@ jobs:
       - name: Bind exact native OMP test host
         run: |
           host="$GITHUB_WORKSPACE/test/fixtures/omp-native-host/node_modules/@oh-my-pi/pi-coding-agent"
-          bun -e 'const p = await Bun.file(process.argv[1] + "/package.json").json(); if (p.version !== "18.18.8") throw new Error("unexpected native OMP fixture version: " + p.version)' "$host"
+          bun -e 'const p = await Bun.file(process.argv[1] + "/package.json").json(); if (p.version !== "18.20.0") throw new Error("unexpected native OMP fixture version: " + p.version)' "$host"
           printf 'DORI_TEST_OMP_ROOT=%s\n' "$host" >> "$GITHUB_ENV"
       - run: bun install --frozen-lockfile
       - run: bun install --frozen-lockfile
@@ -122,3 +118,5 @@ jobs:
         run: |
           test -f test/e2e-hc.test.ts
           bun test test/e2e-hc.test.ts
+          test -f test/e2e-hc-deploy.test.ts
+          bun test test/e2e-hc-deploy.test.ts

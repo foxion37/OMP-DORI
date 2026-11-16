@@ -3,6 +3,7 @@ import { appendFileSync, existsSync, writeFileSync } from "node:fs";
 import { dutyTick } from "../src/duty.ts";
 import { flushInbox } from "../src/inbox.ts";
 import { inboxList, releaseHeld } from "../src/inbox-held.ts";
+import { doneIds } from "../src/inbox-files.ts";
 import type { SessionRef } from "../src/runtime/types.ts";
 import { terminal } from "./fake-hc.ts";
 import { World, href } from "./fake.ts";
@@ -49,6 +50,59 @@ describe("a forwarded inbox (.forward marker)", () => {
     expect(await flushInbox(d, NEW)).toBe("queued");
     expect(d.store.queued(NEW).map((x) => x.text)).toEqual(["first", "second"]);
     expect(existsSync(`${old}.merging`)).toBe(false);
+  });
+
+  test("an old-path entry whose id was recorded as delivered is not merged; the id moves with the merge", async () => {
+    const { w, d, old, oldWriter } = setup();
+    // A pass that recorded the notice as delivered was stopped before it rewrote the old queue.
+    oldWriter({ ...m("[LOST k] gone", 1), id: "lost:k:1" } as ReturnType<typeof m>);
+    oldWriter(m("still due", 2));
+    writeFileSync(`${old}.ids`, "lost:k:1\n");
+    expect(await flushInbox(d, NEW)).toBe("delivered");
+    expect(w.hc.sent.map((x) => x.text)).toEqual(["still due"]);
+    expect(d.store.enqueueOnce(NEW, { at: 3, from: "duty", text: "[LOST k] gone", id: "lost:k:1" })).toBe(false);
+  });
+
+  test("same-tuple notices with distinct ids settle only the eligible id and never replay it", async () => {
+    const { w, d, oldWriter } = setup();
+    const msg = { at: 1, from: "duty", text: "[LOST k] gone" };
+    const held = {
+      ...msg,
+      id: "lost:k:first",
+      attempt: { at: 2, state: "ambiguous" as const, detail: "timeout" },
+    };
+    const delivered = { ...msg, id: "lost:k:second" };
+    d.store.saveInbox(NEW, [held]);
+    oldWriter(delivered);
+    expect(await flushInbox(d, NEW)).toBe("delivered");
+    expect(w.hc.sent.map((x) => x.text)).toEqual([msg.text]);
+    expect(d.store.queued(NEW)).toEqual([held]);
+    expect(doneIds(d.store.inboxPath(NEW))).toEqual(new Set([delivered.id]));
+    expect(d.store.enqueueOnce(NEW, delivered)).toBe(false);
+    // A stopped old writer leaves the delivered copy to be merged again.
+    oldWriter(delivered);
+    expect(await flushInbox(d, OLD)).toBe("held");
+    expect(await flushInbox(d, NEW)).toBe("held");
+    expect(d.store.queued(NEW)).toEqual([held]);
+    expect(doneIds(d.store.inboxPath(NEW))).toEqual(new Set([delivered.id]));
+    expect(w.hc.sent.map((x) => x.text)).toEqual([msg.text]);
+  });
+
+  test("legacy tuple settlement leaves an identified held notice with the same tuple untouched", async () => {
+    const { w, d, oldWriter } = setup();
+    const legacy = m("same legacy tuple");
+    const held = {
+      ...legacy,
+      id: "held:identified",
+      attempt: { at: 2, state: "ambiguous" as const, detail: "timeout" },
+    };
+    d.store.saveInbox(NEW, [held]);
+    oldWriter(legacy);
+    expect(await flushInbox(d, NEW)).toBe("delivered");
+    expect(d.store.queued(NEW)).toEqual([held]);
+    expect(doneIds(d.store.inboxPath(NEW))).toEqual(new Set());
+    expect(await flushInbox(d, NEW)).toBe("held");
+    expect(w.hc.sent.map((x) => x.text)).toEqual([legacy.text]);
   });
 
   test("inbox list <old ref> shows the moved entries plus those still at the old path, merged once", () => {

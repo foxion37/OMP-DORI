@@ -15,13 +15,28 @@ import { dirname, join } from "node:path";
 import { gzipSync } from "node:zlib";
 import type { VerifiedBundle } from "../src/release/bundle.ts";
 import { readArchive } from "../src/release/archive.ts";
-import { consumerPaths, initialize, saveJson } from "../src/release/files.ts";
+import { type ConsumerPaths, consumerPaths, initialize, saveJson } from "../src/release/files.ts";
 import { validateReleaseManifest } from "../src/release/manifest.ts";
 import type { ReleaseManifest } from "../src/release/types.ts";
 import { digest, sourceManifest } from "../src/update/source.ts";
 
 const roots: string[] = [];
+const environmentKeys = [
+  "HOME",
+  "DORI_HOME",
+  "DORI_CONFIG",
+  "DORI_STATE_DIR",
+  "DORI_AGENT_CMD",
+  "DORI_AGENT_ARGV",
+  "DORI_OMP_ULW_PATH",
+];
+const environment = new Map<string, string | undefined>();
 afterEach(() => {
+  for (const [key, value] of environment) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+  environment.clear();
   for (const root of roots.splice(0)) {
     const writable = (path: string) => {
       chmodSync(path, 0o700);
@@ -89,10 +104,28 @@ function git(cwd: string, ...args: string[]): string {
   return result.stdout.toString().trim();
 }
 
-export function fixture() {
+export type ConsumerFixture = {
+  readonly root: string;
+  readonly paths: ConsumerPaths;
+  readonly pin: string;
+  readonly ownedDependency: string;
+  readonly release: (payload: string) => { bundle: VerifiedBundle; bytes: Buffer; entries: TarEntry[]; dist: string };
+};
+
+export function fixture(): ConsumerFixture {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "dori-consumer-")));
   roots.push(root);
   const paths = consumerPaths(join(root, "home"));
+  for (const key of environmentKeys) {
+    if (!environment.has(key)) environment.set(key, process.env[key]);
+  }
+  process.env["HOME"] = paths.home;
+  process.env["DORI_HOME"] = paths.dori;
+  process.env["DORI_CONFIG"] = paths.config;
+  process.env["DORI_STATE_DIR"] = join(paths.dori, "state");
+  delete process.env["DORI_AGENT_CMD"];
+  delete process.env["DORI_AGENT_ARGV"];
+  delete process.env["DORI_OMP_ULW_PATH"];
   initialize(paths);
   const dependency = join(root, "public-dependency-fixture");
   mkdirSync(dependency, { mode: 0o700 });

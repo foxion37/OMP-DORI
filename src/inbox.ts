@@ -149,13 +149,20 @@ async function flushLocked(d: Deps, ref: SessionRef): Promise<"delivered" | "que
 /** Re-reads the inbox and drops the batch (delivered) or marks it with the failed attempt; messages queued meanwhile stay. */
 function settleInbox(d: Deps, ref: SessionRef, batch: readonly QueuedMessage[], attempt?: DeliveryAttempt): void {
   const left = [...batch];
+  const gone: QueuedMessage[] = [];
   const rest = d.store.queued(ref).flatMap((m) => {
-    const i = left.findIndex((b) => b.at === m.at && b.from === m.from && b.text === m.text);
+    const i = left.findIndex((b) =>
+      b.id !== undefined || m.id !== undefined
+        ? b.id === m.id
+        : b.at === m.at && b.from === m.from && b.text === m.text,
+    );
     if (i < 0) return [m];
     left.splice(i, 1);
-    return attempt ? [{ ...m, attempt }] : [];
+    if (attempt) return [{ ...m, attempt }];
+    gone.push(m);
+    return [];
   });
-  d.store.saveInbox(ref, rest);
+  d.store.saveInbox(ref, rest, gone);
 }
 
 const NOTICE_FROM = "dori-delivery";

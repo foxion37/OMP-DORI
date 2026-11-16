@@ -1,4 +1,4 @@
-import type { HerdrCli } from "../runtime/herdr/exec.ts";
+import type { DeploymentCli } from "./deployment-cli.ts";
 import { restorePointer } from "./deployment-files.ts";
 import { captureStartedMonitors } from "./deployment-handoff.ts";
 import { observeDeploymentHealth, waitDeploymentHealth } from "./deployment-health.ts";
@@ -12,7 +12,7 @@ export async function waitLaunchedProcess(
   record: DeploymentRecord,
   since: string,
   prior = false,
-  options: { cli?: HerdrCli; timeoutMs?: number; signal?: AbortSignal } = {},
+  options: { cli?: DeploymentCli; timeoutMs?: number; signal?: AbortSignal } = {},
 ): Promise<ProcessIdentity | undefined> {
   if (!record.oldRuntime) throw new DeploymentHeld("launch has no previous native identity");
   const cli = options.cli ?? nativeCli(config, options.signal);

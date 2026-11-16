@@ -1,6 +1,6 @@
 import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
-import type { HerdrCli } from "../runtime/herdr/exec.ts";
+import type { DeploymentCli } from "./deployment-cli.ts";
 import { launchedProcess } from "./deployment-launch.ts";
 import {
   type LegacyRollbackForeground,
@@ -19,7 +19,7 @@ import { digest, sourceManifest } from "./source.ts";
 
 export async function observeDeploymentHealth(
   config: DeploymentConfig,
-  cli: HerdrCli,
+  cli: DeploymentCli,
   record: DeploymentRecord,
   source: string,
   since: string,
@@ -124,7 +124,7 @@ export async function observeDeploymentHealth(
 
 export async function waitDeploymentHealth(
   config: DeploymentConfig,
-  cli: HerdrCli,
+  cli: DeploymentCli,
   record: DeploymentRecord,
   source: string,
   since: string,

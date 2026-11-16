@@ -206,7 +206,7 @@ test("an absolute DORI_CONFIG reaches the lane unchanged, so a link in it resolv
   mkdirSync(home, { recursive: true });
   const raw = `${home}/sub/../config.json`;
   const create = (await launchArgv(home, "abs-lane", raw)).find((c) => c[0] === "hc" && c.includes("--bg")) ?? [];
-  expect(create.some((arg) => arg.startsWith("DORI_CONFIG="))).toBe(false);
+  expect(create).toContain(`DORI_CONFIG=${raw}`);
 });
 
 test("a relative DORI_CONFIG with '..' keeps it, so the OS follows a link in it for the lane as it did for the launcher", async () => {

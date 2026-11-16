@@ -64,7 +64,7 @@ describe("lifecycle hooks", () => {
     const { w, d, brief } = setup();
     await startLane(d, "lane-k", brief, { group: "w1" });
     config(d, { hooks: { onReport: ["my-hook", "report", "{key}", "{text}"] } });
-    await report(d, "lane-k", "half way $(there)", "waiting");
+    await report(d, "lane-k", "half way $(there)", { status: "waiting" });
     await hooksSettled();
     expect(hookCalls(w, "my-hook")).toEqual([["my-hook", "report", "lane-k", "half way $(there)"]]);
     expect(d.store.lane("lane-k")!.status).toBe("waiting");

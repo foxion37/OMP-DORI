@@ -5,6 +5,7 @@ import type { DeploymentConfig, DeploymentInput, DeploymentRecord } from "./depl
 import { assertSourceAdmission, digest, sameManifest, sourceManifest } from "./source.ts";
 
 import { hasControl } from "./config.ts";
+import { prepareRuntimeToolchain } from "./deployment-toolchain.ts";
 
 const SHA = /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/;
 const PUBLIC = (path: string): boolean => path !== "ref/omp-ulw" && !path.startsWith("ref/omp-ulw/");
@@ -68,7 +69,13 @@ export async function prepareRelease(
     DO_NOT_TRACK: "1",
   };
   const git = (argv: readonly string[], cwd = record.releasePath): Promise<string> =>
-    command([...SAFE_GIT, ...argv], cwd, env, 300_000, signal);
+    command(
+      ["/bin/sh", "-c", 'umask 077; exec "$@"', "dori-managed-git", ...SAFE_GIT, ...argv],
+      cwd,
+      env,
+      300_000,
+      signal,
+    );
   const release = lstatSync(record.releasePath, { throwIfNoEntry: false });
   if (!release)
     await git(["clone", "--no-local", "--no-hardlinks", "--no-checkout", "--", input.remote, record.releasePath], home);
@@ -110,7 +117,11 @@ export async function prepareRelease(
   if (candidate.ulwPresent) mkdirSync(join(record.releasePath, "ref/omp-ulw"), { recursive: true, mode: 0o700 });
   if (!sameManifest(sourceManifest(record.releasePath), candidate))
     throw new DeploymentHeld("release lost the frozen opaque pin");
-  if (record.preparedAt) return;
+  if (record.preparedAt) {
+    if (lstatSync(join(record.releasePath, "native-omp.lock"), { throwIfNoEntry: false }))
+      await prepareRuntimeToolchain(config, record);
+    return;
+  }
   const version = await command([config.bun, "--version"], home, env, 10_000, signal);
   const numbers = /^(\d+)\.(\d+)\.(\d+)/.exec(version)?.slice(1).map(Number);
   if (
@@ -126,13 +137,25 @@ export async function prepareRelease(
         throw new DeploymentHeld("published release lacks a frozen dependency manifest");
     }
     await command(
-      [config.bun, "install", "--frozen-lockfile", "--ignore-scripts", "--silent"],
+      [
+        "/bin/sh",
+        "-c",
+        'umask 077; exec "$@"',
+        "dori-managed-install",
+        config.bun,
+        "install",
+        "--frozen-lockfile",
+        "--ignore-scripts",
+        "--silent",
+      ],
       join(record.releasePath, relative),
       env,
       300_000,
       signal,
     );
   }
+  if (lstatSync(join(record.releasePath, "native-omp.lock"), { throwIfNoEntry: false }))
+    await prepareRuntimeToolchain(config, record);
   validateDeploymentInput(input);
   if (!sameManifest(sourceManifest(record.releasePath), candidate))
     throw new DeploymentHeld("provisioning changed reviewed source");

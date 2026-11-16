@@ -2,8 +2,10 @@ import { realpathSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-registry";
+import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import {
   ExtensionRuntime,
+  importExtensionModule,
   loadExtensionFromFactory,
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/loader";
 import {
@@ -15,11 +17,46 @@ import type {
   ExtensionAgentIdentity,
   ExtensionContext,
   ExtensionFactory,
+  PreparedExtension,
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
 import { EventBus } from "@oh-my-pi/pi-coding-agent/utils/event-bus";
 
 type FixtureModel = NonNullable<ExtensionContext["model"]>;
+
+const preparedFactories = new Map<string, Promise<PreparedExtension>>();
+
+async function assertNativeHost(): Promise<void> {
+  const host = process.env["DORI_TEST_OMP_ROOT"];
+  if (!host || !isAbsolute(host)) throw new Error("DORI_TEST_OMP_ROOT must name the absolute exact native OMP fixture");
+  const manifest = await Bun.file(join(host, "package.json")).json();
+  if (manifest.version !== "18.20.0") throw new Error(`native OMP fixture must be 18.20.0, got ${manifest.version}`);
+  for (const [specifier, path] of [
+    ["@oh-my-pi/pi-coding-agent/extensibility/extensions/runner", "src/extensibility/extensions/runner.ts"],
+    ["@oh-my-pi/pi-coding-agent/extensibility/extensions/loader", "src/extensibility/extensions/loader.ts"],
+    ["@oh-my-pi/pi-coding-agent/config/settings", "src/config/settings.ts"],
+  ] as const) {
+    const resolved = import.meta.resolve(specifier);
+    const modulePath = resolved.startsWith("file:") ? fileURLToPath(resolved) : resolved;
+    if (realpathSync(modulePath) !== realpathSync(join(host, path)))
+      throw new Error(`native prompt guard imported ${specifier} outside DORI_TEST_OMP_ROOT`);
+  }
+}
+
+/** Rebind the same canonically prepared module across parent and subagent sessions, as the native host does. */
+export const nativeExtensionFactory = async (entry: string): Promise<ExtensionFactory> => {
+  await assertNativeHost();
+  const selected = realpathSync(entry);
+  let pending = preparedFactories.get(selected);
+  if (!pending) {
+    pending = importExtensionModule(selected, import.meta.dir);
+    preparedFactories.set(selected, pending);
+  }
+  const prepared = await pending;
+  if (!prepared.factory) throw new Error(prepared.error ?? `no extension factory at ${selected}`);
+  if (prepared.error) throw new Error(prepared.error);
+  return prepared.factory;
+};
 
 // A complete native Model with no transport implementation, catalog resolution, auth or provider request.
 export const SOL_MODEL = {
@@ -45,16 +82,10 @@ export const nativeComposition = async (
     model?: FixtureModel;
     agent?: ExtensionAgentIdentity;
     observeBefore?: string;
+    command?: { name: string; args: string; beforePrompt?: boolean };
   },
 ) => {
-  const host = process.env["DORI_TEST_OMP_ROOT"];
-  if (!host || !isAbsolute(host)) throw new Error("DORI_TEST_OMP_ROOT must name the absolute exact native OMP fixture");
-  const manifest = await Bun.file(join(host, "package.json")).json();
-  if (manifest.version !== "18.18.8") throw new Error(`native OMP fixture must be 18.18.8, got ${manifest.version}`);
-  const modulePath = import.meta.resolve("@oh-my-pi/pi-coding-agent/extensibility/extensions/runner");
-  const resolvedRunner = modulePath.startsWith("file:") ? fileURLToPath(modulePath) : modulePath;
-  if (realpathSync(resolvedRunner) !== realpathSync(join(host, "src/extensibility/extensions/runner.ts")))
-    throw new Error("native prompt guard imported a host outside DORI_TEST_OMP_ROOT");
+  await assertNativeHost();
   const runtime = new ExtensionRuntime();
   const events = new EventBus();
   const cwd = import.meta.dir;
@@ -78,10 +109,8 @@ export const nativeComposition = async (
     );
   for (const entry of entries) {
     if (entry === options.observeBefore) extensions.push(await observe("before-dori", beforeDori));
-    // Entries select the real extension/plugin factories at runtime, including the CI-only pinned dependency.
-    const module: { default?: unknown } = await import(entry);
-    if (typeof module.default !== "function") throw new Error(`no extension factory at ${entry}`);
-    extensions.push(await loadExtensionFromFactory(module.default as ExtensionFactory, cwd, events, runtime, entry));
+    const factory = await nativeExtensionFactory(entry);
+    extensions.push(await loadExtensionFromFactory(factory, cwd, events, runtime, entry));
   }
   extensions.push(await observe("declining-final-handler", afterAll));
   // No auth-backed registry is constructed. Any unexpected registry access fails this guard.
@@ -90,6 +119,7 @@ export const nativeComposition = async (
       throw new Error(`native prompt fixture unexpectedly accessed the model registry: ${String(key)}`);
     },
   });
+  const settings = Settings.isolated({ "prewalk.auto": "off", "prewalk.enabled": false });
   const runner = new ExtensionRunner(
     extensions,
     runtime,
@@ -97,7 +127,7 @@ export const nativeComposition = async (
     session,
     registry,
     undefined,
-    undefined,
+    settings,
     undefined,
     undefined,
     options.agent,
@@ -108,10 +138,16 @@ export const nativeComposition = async (
     throw new Error("native prompt fixture attempted an action outside prompt composition");
   };
   let active: string[] = [];
+  const userMessages: string[] = [];
   runner.initialize(
     {
       sendMessage: forbidden,
-      sendUserMessage: forbidden,
+      sendUserMessage: options.command
+        ? async (content) => {
+            if (typeof content !== "string") throw new Error("native command fixture requires a text user message");
+            userMessages.push(content);
+          }
+        : forbidden,
       appendEntry: (type, data) => void session.appendCustomEntry(type, data),
       setLabel: forbidden,
       getActiveTools: () => [...active],
@@ -137,13 +173,36 @@ export const nativeComposition = async (
       getSystemPrompt: () => base,
     },
   );
+  const invokeCommand = async (): Promise<void> => {
+    const request = options.command;
+    if (!request) return;
+    const command = runner.getCommand(request.name);
+    if (!command) throw new Error(`no native command ${request.name}`);
+    await runner.runScoped(() => command.handler(request.args, runner.createCommandContext()));
+  };
   try {
     await runner.emit({ type: "session_start" });
+    if (options.command?.beforePrompt) await invokeCommand();
     const first = await runner.emitBeforeAgentStart("ulw fix the fixture", undefined, base);
     const second = await runner.emitBeforeAgentStart("ulw fix the fixture", undefined, base);
-    return { first: first?.systemPrompt, second: second?.systemPrompt, beforeDori, afterAll };
+    if (options.command && !options.command.beforePrompt) await invokeCommand();
+    return {
+      firstResult: first,
+      secondResult: second,
+      first: first?.systemPrompt,
+      second: second?.systemPrompt,
+      beforeDori,
+      afterAll,
+      userMessages,
+      entries: session.getBranch(),
+    };
   } finally {
-    await emitSessionShutdownEvent(runner);
+    try {
+      await emitSessionShutdownEvent(runner);
+    } finally {
+      settings.stopWatching();
+      await settings.flush();
+    }
     if (errors.length) throw new AggregateError(errors, "native prompt fixture handler failed");
   }
 };

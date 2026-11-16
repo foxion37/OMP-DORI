@@ -148,7 +148,7 @@ export function validateReleaseManifest(value: unknown): ReleaseManifest {
     platform: "linux",
     arch: "x64",
     bun: "1.4.4",
-    omp: "18.18.8",
+    omp: requirements["omp"] === "18.18.8" ? "18.18.8" : "18.20.0",
     runtime: "herdr",
     messenger: "discord",
   } as const;
@@ -158,6 +158,31 @@ export function validateReleaseManifest(value: unknown): ReleaseManifest {
   const ompUlw = record(manifest["ompUlw"], ["repository", "commit"], "omp-ulw pin");
   if (ompUlw["repository"] !== "https://github.com/dbc-hbin/omp-ulw.git" || !matches(ompUlw["commit"], COMMIT)) {
     throw new Error("Release omp-ulw repository/pin is invalid");
+  }
+  const publicSource = sourceManifest(manifest["source"]);
+  if (
+    supported.omp === "18.18.8" &&
+    publicSource.files.some((file) =>
+      ["native-omp.lock", "native-omp.patch", "omp-ulw.overlay.lock", "omp-ulw.patch"].includes(file.path),
+    )
+  )
+    throw new Error("New source-bundle payloads cannot use the older no-lock release protocol");
+  if (supported.omp === "18.20.0") {
+    for (const path of [
+      "omp-ulw.lock",
+      "omp-ulw.overlay.lock",
+      "omp-ulw.patch",
+      "native-omp.lock",
+      "native-omp.patch",
+      "native-addon/package.json",
+      "native-addon/bun.lock",
+      "scripts/source-dependencies.ts",
+      "scripts/consumer/omp",
+    ])
+      if (!publicSource.files.some((file) => file.path === path))
+        throw new Error(`Release source bundle is incomplete: ${path}`);
+    if (!publicSource.files.find((file) => file.path === "scripts/consumer/omp")?.executable)
+      throw new Error("Release source bundle OMP wrapper must be executable");
   }
   return {
     version: 1,
@@ -173,7 +198,7 @@ export function validateReleaseManifest(value: unknown): ReleaseManifest {
       sha256: archive["sha256"],
       bytes: archive["bytes"],
     },
-    source: sourceManifest(manifest["source"]),
+    source: publicSource,
     requirements: supported,
     ompUlw: { repository: "https://github.com/dbc-hbin/omp-ulw.git", commit: ompUlw["commit"] },
   };

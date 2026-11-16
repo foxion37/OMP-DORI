@@ -3,7 +3,7 @@
 FROM ubuntu:24.04
 
 # Binary assets are sha256-verified. Top-level npm packages have exact versions.
-# Dori comes from this build context; omp-ulw comes from the public commit in omp-ulw.lock.
+# Dori comes from this build context; native OMP and omp-ulw consume its bound upstream source/overlay locks.
 # This recipe has not been built as part of the source port.
 # Builds for linux/amd64 and linux/arm64; TARGETARCH is set by the builder.
 ARG TARGETARCH
@@ -18,7 +18,6 @@ ARG HERDR_VERSION=0.9.5
 ARG HERDR_SHA256_AMD64=14d9e8bc8b4a9e0118d77c32266f76d461f09b40342eb23752960bd89f59929d
 ARG HERDR_SHA256_ARM64=17d7536f2da50859523680ef279dffcac8e4a235f4e46fe8da6c2ec44141897c
 ARG AGENT_MESSENGER_VERSION=2.40.0
-ARG OMP_VERSION=18.18.8
 ARG GH_VERSION=2.100.0
 ARG GH_SHA256_AMD64=698c8d88cc19cc92bfe96bad58d10b2a5b274c52433d6dc57799c81f6139d5fc
 ARG GH_SHA256_ARM64=33ccd2ad7ce639c927e1cb209e36555b0e1fbb89f7a38239c0568040ec758612
@@ -76,22 +75,19 @@ RUN set -eu; \
 # bun global packages install their launchers into $BUN_INSTALL/bin
 ENV BUN_INSTALL=/usr/local
 
-# OMP and messenger versions are published npm package versions, not omo aliases.
-RUN bun install -g agent-messenger@${AGENT_MESSENGER_VERSION} @oh-my-pi/pi-coding-agent@${OMP_VERSION}
+# The messenger stays a published npm package; OMP is the bound source toolchain below.
+RUN bun install -g agent-messenger@${AGENT_MESSENGER_VERSION}
 
 # .dockerignore admits source inputs only; no host state, credentials or node_modules.
 COPY . /opt/omp-dori
 RUN set -eu; \
-    pin="$(tr -d '[:space:]' < /opt/omp-dori/omp-ulw.lock)"; \
-    git clone -q https://github.com/dbc-hbin/omp-ulw.git /opt/omp-ulw \
-    && git -C /opt/omp-ulw -c advice.detachedHead=false checkout -q "${pin}" \
-    && test "$(git -C /opt/omp-ulw rev-parse HEAD)" = "${pin}" \
-    && bun install --frozen-lockfile --cwd /opt/omp-dori \
+    bun install --frozen-lockfile --cwd /opt/omp-dori \
     && bun install --frozen-lockfile --cwd /opt/omp-dori/skills/dori-mode/scripts \
     && bun install --frozen-lockfile --cwd /opt/omp-dori/extension \
     && printf '#!/bin/sh\nexec bun /opt/omp-dori/skills/dori-mode/scripts/src/cli.ts "$@"\n' > /usr/local/bin/dori \
     && printf '#!/bin/sh\nexec bun /opt/omp-dori/src/cli.ts "$@"\n' > /usr/local/bin/dori-harness \
     && chmod +x /usr/local/bin/dori /usr/local/bin/dori-harness
+RUN ln -s /opt/omp-dori/scripts/consumer/omp /usr/local/bin/omp
 
 # run as a normal user; all state lives in the volumes named in compose.yaml
 # the state dirs are pre-created with dori ownership so fresh named volumes inherit it
@@ -101,16 +97,19 @@ RUN useradd -m -s /bin/bash dori \
       /home/dori/.agents/skills /home/dori/.config/gh /home/dori/.config/agent-messenger \
     && ln -s /opt/omp-dori/skills/dori-mode /home/dori/.agents/skills/dori-mode \
     && ln -s /opt/omp-dori/extension /home/dori/.omp/agent/extensions/omp-dori \
-    && ln -s /opt/omp-ulw /home/dori/.dori/omp-ulw \
     && if [ "${HC}" = 1 ]; then \
          mkdir -p /home/dori/.config/herdr-core \
          && echo 'notes = false' > /home/dori/.config/herdr-core/config.toml; \
        fi \
-    && chown -R dori:dori /home/dori
+    && chown -R dori:dori /home/dori /opt/omp-dori
 
 USER dori
 WORKDIR /home/dori
 ENV HOME=/home/dori DORI_TELEMETRY=0
+RUN set -eu; \
+    bun /opt/omp-dori/scripts/source-dependencies.ts native /opt/omp-dori /home/dori >/dev/null; \
+    ulw="$(bun /opt/omp-dori/scripts/source-dependencies.ts ulw /opt/omp-dori /home/dori)"; \
+    ln -s "$ulw" /home/dori/.dori/omp-ulw
 
 # the runtime's server hosts the sessions; the entrypoint starts it (herdr: nohup, so it
 # survives the exec into the container command; hc: `hc server start` runs in the background)

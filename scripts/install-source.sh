@@ -5,9 +5,10 @@
 # OMP_DORI_HOME (default ~/.omp-dori), without changing ~/.dori, the dori command or the dori-mode skill.
 # Without DORI_INSTALL_MODE, a ~/.dori owned by another Dori is never changed: a terminal is asked, anything else stops.
 # Consumer-managed ~/.dori homes use dori update; primary source installation always holds there.
-# Source omp-ulw follows OMP_ULW_REF (default main; lock uses omp-ulw.lock), or reuses an existing checkout.
+# Source omp-ulw uses the bound lock+overlay by default; OMP_ULW_REF explicitly selects an unpatched branch/tag/commit.
 # Primary mode discovers it globally; side mode loads it only through the isolated omp-dori omp wrapper.
 # Optional paths: DORI_SRC, OMP_ULW_SRC, OMP_ULW_REPO, SKILLS_DIR, OMP_EXTENSIONS_DIR, OMP_DORI_HOME, OMP_DORI_BIN_DIR.
+# Side mode also takes OMP_DORI_HC_SESSION (default omp-dori) and OMP_DORI_HC_SPACE (a Herdr app space id).
 set -euo pipefail
 
 fail() { echo "$1" >&2; exit 1; }
@@ -16,7 +17,7 @@ at_least() { [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | { read -r first; print
 
 repo="https://github.com/vntrevx/omp-dori.git"
 ulw_repo="${OMP_ULW_REPO:-https://github.com/dbc-hbin/omp-ulw.git}"
-ulw_ref="${OMP_ULW_REF:-main}"
+ulw_ref="${OMP_ULW_REF:-lock}"
 primary_home="$HOME/.dori"
 side_home="$(absolute "${OMP_DORI_HOME:-$HOME/.omp-dori}")"
 min_bun="1.4.4"
@@ -24,17 +25,13 @@ min_omp="18.18.8"
 
 command -v git >/dev/null || fail "git is required"
 command -v bun >/dev/null || fail "bun $min_bun+ is required: https://bun.sh"
-command -v omp >/dev/null || fail "omp $min_omp+ is required"
 bun_version="$(bun --version)"
 at_least "$min_bun" "$bun_version" || fail "bun $bun_version is older than $min_bun"
-omp_version="$(omp --version)"
-[[ "$omp_version" =~ ([0-9]+(\.[0-9]+){2}) ]] || fail "could not read omp version: $omp_version"
-omp_version="${BASH_REMATCH[1]}"
-at_least "$min_omp" "$omp_version" || fail "omp $omp_version is older than $min_omp"
-ulw_main_omp="18.19.0"
-if [ -z "${OMP_ULW_REF:-}" ] && ! at_least "$ulw_main_omp" "$omp_version"; then
-  ulw_ref=lock
-  echo "omp-ulw: its main needs OMP $ulw_main_omp+, this OMP is $omp_version, so omp-ulw.lock is used; update OMP or set OMP_ULW_REF to choose." >&2
+# An explicit external OMP command is an advanced override, never evidence for the bundled source.
+omp_bin="${DORI_OMP:-}"
+if [ -n "$omp_bin" ]; then
+  omp_bin="$(command -v "$omp_bin")" || fail "DORI_OMP does not name an executable"
+  omp_bin="$(absolute "$omp_bin")"
 fi
 
 # Every install of this repository leaves a marker in its home. Installs that predate it are known by the
@@ -77,9 +74,9 @@ other_dori() {
   [ -n "$consumer" ] && return 0
   marked "$primary_home" && return 1
   [ -L "$earlier_extension_link" ] && return 1
-  [ -d "$primary_home/src/.git" ] && is_omp_dori "$primary_home/src" && return 1
+  [ -e "$primary_home/src/.git" ] && is_omp_dori "$primary_home/src" && return 1
   [ -f "$primary_home/config.json" ] && return 0
-  [ -d "$primary_home/src/.git" ] && return 0
+  [ -e "$primary_home/src/.git" ] && return 0
   return 1
 }
 other=""
@@ -121,6 +118,51 @@ skills="$(absolute "${SKILLS_DIR:-$HOME/.agents/skills}")"
 extensions="$(absolute "${OMP_EXTENSIONS_DIR:-$HOME/.omp/agent/extensions}")"
 bin_dir="$(absolute "${OMP_DORI_BIN_DIR:-${BUN_INSTALL:-$HOME/.bun}/bin}")"
 
+# Resolve the install mode before checking every wrapper it writes. File identity follows symlinks,
+# including aliased parents, and catches hard links without trusting an existing wrapper's source.
+check_omp_wrapper_collision() {
+  local name command_link traverses
+  for name in omp dori omp-dori; do
+    if [ "$mode" = primary ] && [ "$name" != omp ]; then continue; fi
+    if [ "$omp_bin" -ef "$base/bin/$name" ]; then
+      fail "Selected OMP executable $omp_bin aliases generated wrapper $base/bin/$name; choose an independent executable with DORI_OMP."
+    fi
+  done
+  if [ "$mode" = primary ]; then command_link="$bin_dir/dori"; else command_link="$bin_dir/omp-dori"; fi
+  if [ -L "$command_link" ]; then
+    # Relinking changes a pathname, not its target inode. Preserve independent paths to that same target.
+    traverses="$(bun -e '
+      const { lstatSync, readlinkSync, realpathSync } = require("node:fs");
+      const { basename, dirname, isAbsolute, join } = require("node:path");
+      const target = join(realpathSync(dirname(process.argv[2])), basename(process.argv[2]));
+      const pending = process.argv[1].split("/");
+      let current = "/", links = 0;
+      while (pending.length) {
+        const part = pending.shift();
+        if (!part || part === ".") continue;
+        if (part === "..") { current = dirname(current); continue; }
+        const next = join(current, part);
+        if (next === target) { console.log("yes"); break; }
+        if (lstatSync(next).isSymbolicLink()) {
+          if (++links > 40) throw new Error("Too many native executable symbolic links");
+          const destination = readlinkSync(next);
+          if (isAbsolute(destination)) current = "/";
+          pending.unshift(...destination.split("/"));
+        } else {
+          current = next;
+        }
+      }
+    ' "$omp_bin" "$command_link")" || fail "Could not inspect selected OMP path $omp_bin before command publication."
+    [ "$traverses" != yes ] || fail "Selected OMP executable $omp_bin traverses installation command link $command_link; choose an independent executable with DORI_OMP."
+  fi
+}
+if [ -n "$omp_bin" ]; then
+  check_omp_wrapper_collision
+  omp_version="$("$omp_bin" --version)"
+  [[ "$omp_version" =~ ([0-9]+(\.[0-9]+){2}) ]] || fail "could not read DORI_OMP version"
+  at_least "$min_omp" "${BASH_REMATCH[1]}" || fail "DORI_OMP must be $min_omp or newer"
+fi
+
 # Checkouts of every supported revision have these files; older revisions have no package.json.
 is_ulw() { [ -f "$1/index.ts" ] && [ -f "$1/presets.ts" ]; }
 ulw_explicit="${OMP_ULW_SRC:+1}"
@@ -150,8 +192,10 @@ if [ "$mode" = primary ]; then
   for entry in "$extensions"/*; do
     [ "$entry" != "$extensions/omp-dori" ] || continue
     # Only a marked source home's own default link may be replaced by a later standalone extension.
-    if marked "$base" && [ "$entry" = "$extensions/omp-ulw" ] &&
-      [ "$(readlink "$entry" 2>/dev/null)" = "$base/omp-ulw" ]; then continue; fi
+    if marked "$base" && [ "$entry" = "$extensions/omp-ulw" ]; then
+      owned_ulw="$(readlink "$entry" 2>/dev/null || true)"
+      case "$owned_ulw" in "$base/omp-ulw"|"$base/omp-ulw-custom") continue ;; esac
+    fi
     if is_ulw "$entry"; then
       [ -z "$standalone_ulw" ] || fail "Multiple standalone omp-ulw extensions exist; keep one before source installation; nothing was changed."
       if [ -n "$ulw_explicit" ] && ! [ "$entry" -ef "$ulw" ]; then
@@ -191,18 +235,19 @@ if [ "$mode" = side ]; then
     "$base/bin/dori" "$base/bin/omp" "$base/bin/omp-dori"
 fi
 
-if [ -z "${DORI_SRC:-}" ] && [ -d "$src/.git" ] && ! is_omp_dori "$src"; then
+# A linked worktree has a .git file rather than a directory.
+if [ -z "${DORI_SRC:-}" ] && [ -e "$src/.git" ] && ! is_omp_dori "$src"; then
   fail "$src is a checkout of $(git -C "$src" remote get-url origin 2>/dev/null || echo 'another repository'), not omp-dori; nothing was changed. Move it aside, set DORI_SRC, or install with DORI_INSTALL_MODE=side."
 fi
 
-if [ ! -d "$src/.git" ]; then
-  git clone --quiet --depth 1 "$repo" "$src"
+if [ ! -e "$src/.git" ]; then
+  (umask 077; git clone --quiet --depth 1 "$repo" "$src")
 elif [[ "${DORI_NO_PULL:-}" =~ ^(1|true|yes)$ ]]; then
   echo "DORI_NO_PULL=$DORI_NO_PULL: installing $src as it is, without pulling" >&2
-elif ! git -C "$src" fetch --quiet; then
+elif ! (umask 077; git -C "$src" fetch --quiet); then
   echo "Could not fetch updates for $src; git's message above says why." >&2
   exit 1
-elif ! git -C "$src" merge --ff-only --quiet '@{u}'; then
+elif ! (umask 077; git -C "$src" merge --ff-only --quiet '@{u}'); then
   if git -C "$src" rev-parse --verify --quiet '@{u}' >/dev/null &&
     [ -n "$(git -C "$src" status --porcelain)$(git -C "$src" rev-list '@{u}..HEAD')" ]; then
     echo "Could not update $src. Local work in that checkout:" >&2
@@ -213,6 +258,11 @@ elif ! git -C "$src" merge --ff-only --quiet '@{u}'; then
     echo "Could not update $src; git's message above says why." >&2
   fi
   exit 1
+fi
+if [ -z "$omp_bin" ]; then
+  native="$(bun "$src/scripts/source-dependencies.ts" native "$src" "$HOME")"
+  omp_bin="$native/bin/omp"
+  check_omp_wrapper_collision
 fi
 
 if [ "$mode" = primary ] && { [ -n "$other" ] ||
@@ -226,29 +276,32 @@ if [ "$mode" = primary ] && { [ -n "$other" ] ||
   echo "The previous config.json and link targets are kept in $backup" >&2
 fi
 
+ulw_bound=""
 if [ -n "$standalone_ulw" ]; then
   echo "omp-ulw: using the standalone extension at $standalone_ulw; omp-dori does not load a second copy." >&2
-  if marked "$base" && [ "$(readlink "$extensions/omp-ulw" 2>/dev/null)" = "$base/omp-ulw" ]; then
-    rm "$extensions/omp-ulw"
-    echo "omp-ulw: removed the earlier $extensions/omp-ulw link so omp-ulw loads once." >&2
+  if marked "$base"; then
+    owned_ulw="$(readlink "$extensions/omp-ulw" 2>/dev/null || true)"
+    case "$owned_ulw" in
+      "$base/omp-ulw"|"$base/omp-ulw-custom") rm "$extensions/omp-ulw" ;;
+    esac
   fi
 elif [ -z "$ulw_explicit" ]; then
-  [ -d "$ulw/.git" ] || git clone --quiet "$ulw_repo" "$ulw"
-  if [ -n "${OMP_ULW_REPO:-}" ]; then git -C "$ulw" remote set-url origin "$ulw_repo"; fi
-  git -C "$ulw" fetch --quiet origin
   if [ "$ulw_ref" = lock ]; then
-    target="$(tr -d '[:space:]' < "$src/omp-ulw.lock")"
-  elif git -C "$ulw" rev-parse --verify --quiet "origin/$ulw_ref^{commit}" >/dev/null; then
-    target="origin/$ulw_ref"
+    selected="$(bun "$src/scripts/source-dependencies.ts" ulw "$src" "$HOME")"
+    [ ! -e "$ulw" ] || [ -L "$ulw" ] || fail "$ulw is an existing checkout; preserve it and move it aside before selecting the bound overlay."
+    mkdir -p "$base"
+    ln -sfn "$selected" "$ulw"
+    ulw_bound=1
   else
-    target="$ulw_ref"
-  fi
-  git -C "$ulw" -c advice.detachedHead=false checkout --quiet "$target"
-  is_ulw "$ulw" || fail "$ulw is not an omp-ulw checkout (no index.ts and presets.ts)"
-  echo "omp-ulw: $ulw_ref at $(git -C "$ulw" rev-parse --short HEAD)" >&2
-  if [ -f "$ulw/upstream/materialize-frontend-refs.mjs" ]; then
-    { git -C "$ulw" submodule update --init --recursive --quiet && (cd "$ulw" && bun upstream/materialize-frontend-refs.mjs >/dev/null); } ||
-      echo "omp-ulw: frontend references were not generated; see $ulw/README.md" >&2
+    # Explicit branch/tag/commit overrides have their own checkout; never mutate a bound cache.
+    ulw="$base/omp-ulw-custom"
+    [ -e "$ulw/.git" ] || git clone --quiet "$ulw_repo" "$ulw"
+    if [ -n "${OMP_ULW_REPO:-}" ]; then git -C "$ulw" remote set-url origin "$ulw_repo"; fi
+    git -C "$ulw" fetch --quiet origin
+    if git -C "$ulw" rev-parse --verify --quiet "origin/$ulw_ref^{commit}" >/dev/null; then target="origin/$ulw_ref"; else target="$ulw_ref"; fi
+    [ -z "$(git -C "$ulw" status --porcelain)" ] || fail "Explicit omp-ulw checkout changed; preserve local work before reinstalling."
+    git -C "$ulw" -c advice.detachedHead=false checkout --quiet "$target"
+    is_ulw "$ulw" || fail "$ulw is not an omp-ulw checkout"
   fi
 fi
 if [ "$mode" = side ]; then
@@ -297,17 +350,16 @@ fi
 config="$base/config.json"
 created=""
 [ -f "$config" ] || { cp "$src/skills/dori-mode/references/config.example.json" "$config" && created=1; }
-side_omp=""
-[ "$mode" = side ] && side_omp="$base/bin/omp"
-CONFIG="$config" CREATED="$created" SIDE_OMP="$side_omp" STATE_DIR="$base/state" bun -e '
+CONFIG="$config" CREATED="$created" SIDE_MODE="$mode" STATE_DIR="$base/state" bun -e '
+  import { realpathSync } from "node:fs";
+  import { dirname, join } from "node:path";
   const path = process.env.CONFIG;
   const config = await Bun.file(path).json();
   let changed = false;
-  if (process.env.CREATED && process.env.SIDE_OMP) {
-    // A new side configuration keeps its state and lanes inside the side home, never in ~/.dori.
+  if (process.env.CREATED && process.env.SIDE_MODE === "side") config.stateDir = process.env.STATE_DIR;
+  if (!config.agentCommand || config.agentCommand[0] === "omp") {
     const rest = Array.isArray(config.agentCommand) ? config.agentCommand.slice(1) : ["--dori-role", "lane", "--model", "{model}", "{prompt}"];
-    config.stateDir = process.env.STATE_DIR;
-    config.agentCommand = [process.env.SIDE_OMP, ...rest];
+    config.agentCommand = [join(realpathSync(dirname(path)), "bin/omp"), ...rest];
     changed = true;
   }
   // OMP loads this source dependency as an extension, so the Dori extension must not import it again.
@@ -320,6 +372,22 @@ printf '%s\n' "$mode" > "$base/.omp-dori"
 
 command -v herdr >/dev/null || command -v hc >/dev/null || echo "Install herdr or hc before launching sessions." >&2
 
+bun_bin="$(absolute "$(command -v bun)")"
+ulw_guard() {
+  [ -n "$ulw_bound" ] || return 0
+  printf '%s\n' 'guard=$(mktemp -d)' 'trap '\''rmdir "$guard"'\'' EXIT'
+  printf '(cd "$guard" && %q %q assert-ulw %q %q %q)\n' "$bun_bin" "$src/scripts/source-dependencies.ts" "$src" "$HOME" "$ulw"
+  printf '%s\n' 'rmdir "$guard"' 'trap - EXIT'
+}
+if [ "$mode" = primary ]; then
+  mkdir -p "$base/bin"
+  {
+    printf '#!/usr/bin/env bash\nset -euo pipefail\n'
+    ulw_guard
+    printf 'exec %q "$@"\n' "$omp_bin"
+  } > "$base/bin/omp"
+  chmod 755 "$base/bin/omp"
+fi
 if [ "$mode" = primary ]; then
   cat <<EOF
 Installed.
@@ -329,22 +397,12 @@ Installed.
   CLI:       dori (messenger/lane CLI), dori harness (upstream harness)
   Config:    $config
 Next: configure the runtime and hooks, install the omp herdr integration if using herdr,
-then start omp --dori-role dori. Installation does not start a messenger or watcher.
+then start $base/bin/omp --dori-role dori. Installation does not start a messenger or watcher.
 EOF
   exit 0
 fi
 
-real_omp() {
-  local dir
-  local IFS=:
-  for dir in $PATH; do
-    [ -n "$dir" ] && [ "$dir" != "$base/bin" ] && [ -f "$dir/omp" ] && [ -x "$dir/omp" ] && { printf '%s\n' "$dir/omp"; return 0; }
-  done
-  fail "omp is not on PATH"
-}
 hc_session="${OMP_DORI_HC_SESSION:-omp-dori}"
-omp_bin="$(real_omp)"
-bun_bin="$(command -v bun)"
 skill="$base/skills/omp-dori-mode"
 mkdir -p "$base/bin" "$base/state" "$base/skills"
 rm -rf "$skill"
@@ -371,16 +429,19 @@ EOF
   printf 'export DORI_HOME=%q\n' "$base"
   printf 'export DORI_CONFIG=%q\n' "$config"
   printf 'export DORI_STATE_DIR=%q\n' "$base/state"
-  printf 'export DORI_AGENT_CMD=%q\n' "$base/bin/omp"
+  printf '%s\n' 'unset DORI_AGENT_CMD DORI_AGENT_EXECUTABLE DORI_OMP_ULW_PATH'
+  printf 'export DORI_AGENT_ARGV=%q\n' "$(bun -e 'console.log(JSON.stringify([process.argv[1]]))' "$base/bin/omp")"
   printf 'export HC_SESSION=%q\n' "$hc_session"
+  # A Herdr app space id shows the side Dori's terminals in that space; without one, hc keeps them hidden.
+  [ -z "${OMP_DORI_HC_SPACE:-}" ] || printf 'export DORI_HC_SPACE=%q\n' "$OMP_DORI_HC_SPACE"
   printf 'case ":$PATH:" in *:%q:*) ;; *) export PATH=%q:"$PATH" ;; esac\n' "$base/bin" "$base/bin"
 } > "$base/env.sh"
 wrapper() {
-  { printf '#!/usr/bin/env bash\n. %q\n' "$base/env.sh"; cat; } > "$base/bin/$1"
+  { printf '#!/usr/bin/env bash\nset -euo pipefail\n. %q\n' "$base/env.sh"; cat; } > "$base/bin/$1"
   chmod 755 "$base/bin/$1"
 }
 printf 'exec %q %q "$@"\n' "$bun_bin" "$src/skills/dori-mode/scripts/src/cli.ts" | wrapper dori
-printf 'exec %q --no-extensions -e %q -e %q --config %q "$@"\n' "$omp_bin" "$src/extension" "$ulw" "$base/omp.yml" | wrapper omp
+{ ulw_guard; printf 'exec %q --no-extensions -e %q -e %q --config %q "$@"\n' "$omp_bin" "$src/extension" "$ulw" "$base/omp.yml"; } | wrapper omp
 printf 'case "${1:-}" in\n  omp) shift; exec %q "$@" ;;\n  hc) shift; exec hc "$@" ;;\n  *) exec %q "$@" ;;\nesac\n' \
   "$base/bin/omp" "$base/bin/dori" | wrapper omp-dori
 mkdir -p "$bin_dir"
@@ -397,6 +458,6 @@ Installed next to the Dori in $primary_home, which was not changed.
   Config:     $config
 Next: create a separate messenger bot and channel, set runtime, leadPane, defaultCwd, defaultModel and hooks
 in $config, then start the lead in its own hc session:
-  omp-dori hc run --name omp-dori-lead -- omp-dori omp --dori-role dori
+  omp-dori hc run --name omp-dori-lead${OMP_DORI_HC_SPACE:+ --label herdr.space=$OMP_DORI_HC_SPACE} -- omp-dori omp --dori-role dori
 Installation does not start a messenger, watcher or hc server.
 EOF

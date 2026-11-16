@@ -12,6 +12,7 @@ import type {
   RuntimeHealth,
   RuntimeIdentity,
 } from "./deployment-types.ts";
+import { procCmdline, procCwd, procStat } from "./proc.ts";
 
 export function readRuntimeHealth(config: DeploymentConfig): RuntimeHealth | undefined {
   const path = join(config.stateDir, "runtime", `${encodeURIComponent(config.pane)}.json`);
@@ -80,7 +81,7 @@ export function monitorProcessReceipts(
       (health !== undefined && observed?.startTicks !== identity.startTicks)
     )
       throw new DeploymentHeld("monitor is no longer owned by target runtime");
-    const argv = readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0").filter(Boolean);
+    const argv = procCmdline(pid).split("\0").filter(Boolean);
     if (!sameProcess(identity)) throw new DeploymentHeld("monitor PID changed during capture");
     return { ...identity, name, argv };
   });
@@ -97,8 +98,7 @@ export function attestMonitorForeground(
 ): void {
   const processes = current.foreground;
   const group = (pid: number): number => {
-    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
-    return Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[2]);
+    return procStat(pid).pgid;
   };
   if (
     current.pgid !== runtime.pid ||
@@ -180,7 +180,7 @@ export function attestMonitorForeground(
             : basename(arg) !== basename(expected)
           : arg !== expected;
       }) ||
-      realpathSync(`/proc/${monitor.pid}/cwd`) !== realpathSync(spec.cwd)
+      realpathSync(procCwd(monitor.pid)) !== realpathSync(spec.cwd)
     )
       throw new DeploymentHeld("foreground monitor command or cwd differs");
   }

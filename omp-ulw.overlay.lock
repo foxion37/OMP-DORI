@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "repository": "https://github.com/dbc-hbin/omp-ulw.git",
+  "commit": "b2159b77fe3acbf9a8c6482f80dc5d4069fda881",
+  "patchSha256": "a6b375ad49e46bd312795b76103369d0c97b133cb4126393e633b3a1c495c9cc",
+  "resultTree": "556112f26f7099040a393d061962adaba273c57e",
+  "files": [
+    {
+      "path": "CHANGELOG.md",
+      "sha256": "2860c9e741b8a3acadf20e76c7ba762295ec14452aa9944774cd9ce27ae8d565",
+      "executable": false
+    },
+    {
+      "path": "README.md",
+      "sha256": "1863ad29fbcd5beda94c0115ccdd587d44a171c1a8198264f8e1f77ae4662fa4",
+      "executable": false
+    },
+    {
+      "path": "claude-harness.test.ts",
+      "sha256": "fc30f92370cfefc533602288bf269918fdf0d9998234b3f5bd8f9a1cf3c90ec0",
+      "executable": false
+    },
+    {
+      "path": "host-guidance.ts",
+      "sha256": "466555d2604f4880ec1df4337dc6da2e4014cfc4516911872d87960f13a15045",
+      "executable": false
+    },
+    {
+      "path": "host.test.ts",
+      "sha256": "daced7b7e57aa22578385ddd32a102df656787dd089888945c64c77fcd372a32",
+      "executable": false
+    },
+    {
+      "path": "host.ts",
+      "sha256": "cad3d6c26a07a9254b182ee665f8be53904d683656a2cf5a93e3b719ee31e545",
+      "executable": false
+    },
+    {
+      "path": "index.test.ts",
+      "sha256": "7f13b3150fa4162b8434160e21684999edb6f4b9e68e9f7a0c4506c7dbcad0ad",
+      "executable": false
+    },
+    {
+      "path": "index.ts",
+      "sha256": "775262d76a8b91731589bf03aac57e1b253dadf120baf8ae28d5b58cfd56be21",
+      "executable": false
+    },
+    {
+      "path": "package.json",
+      "sha256": "1bfc78c42fd21a7575968b4abd3415c918894c8383a205d0ab85758870dcccaf",
+      "executable": false
+    },
+    {
+      "path": "presets.ts",
+      "sha256": "2f290aca312c544d303b461c3d3884bc2378d10b7170e501011753018072538c",
+      "executable": false
+    },
+    {
+      "path": "prewalk.ts",
+      "sha256": "0707083b61352f1ddfadf49c749e9fcf6b9001dde20915b21a57baddb111c8dd",
+      "executable": false
+    },
+    {
+      "path": "route-scope.test.ts",
+      "sha256": "48a07d925ed0f74d4e7a206fc1d7d07efd1355d287266f4073eca45711269ffd",
+      "executable": false
+    },
+    {
+      "path": "route-scope.ts",
+      "sha256": "63d4cce37f0f2a4f7e748f03d06a30f737d6a1792e6d26beaf2556c008423a17",
+      "executable": false
+    },
+    {
+      "path": "tests/presets.test.ts",
+      "sha256": "59fbc66b9bbc99b8e42664d47fddd1eb218dba5e09a83a6dbde4cad5858b0a39",
+      "executable": false
+    },
+    {
+      "path": "upstream/presets-deepseek-pin.d.ts",
+      "sha256": "969de4c37e5561369eaa91b186572d5493771126a8e16f3c5c61ff28a456eaed",
+      "executable": false
+    },
+    {
+      "path": "upstream/presets-deepseek-pin.js",
+      "sha256": "fb76ef064b6468b11acda258fe146b28fdea4d95ce7ed96c6de4afcb3432825e",
+      "executable": false
+    }
+  ]
+}

@@ -17,7 +17,8 @@ import {
 import type { DeploymentRecord, RuntimeIdentity } from "../src/update/deployment-types.ts";
 import { digest } from "../src/update/source.ts";
 
-const linux = test.skipIf(process.platform !== "linux");
+// The kernels whose process identity deployment can bind.
+const posix = test.skipIf(process.platform !== "linux" && process.platform !== "darwin");
 
 const directories: string[] = [];
 afterEach(() => {
@@ -136,7 +137,7 @@ test("expired, altered and public checkpoints never admit an actor that became b
   expect(() => verifyQuiesceCheckpoint(f.config, f.record, f.runtime)).toThrow();
 });
 
-linux("trusted monitor receipts bind a real descendant and reject the actor itself or another session", async () => {
+posix("trusted monitor receipts bind a real descendant and reject the actor itself or another session", async () => {
   const f = fixture();
   const path = join(f.root, "monitors.json");
   const child = Bun.spawn(["sleep", "60"], { stdout: "ignore", stderr: "ignore" });

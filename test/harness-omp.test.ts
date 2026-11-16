@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { up } from "../src/cli-up.ts";
 import { review } from "../src/gate.ts";
-import { agentCommand, defaultDeps } from "../src/harness.ts";
+import { agentCommand, defaultDeps, harnessLaunchEnv } from "../src/harness.ts";
 import { startLane } from "../src/lanes.ts";
 import { ompStateDir } from "../src/runtime/omp.ts";
 import { World } from "./fake.ts";
@@ -64,26 +64,30 @@ describe("OMP harness launches", () => {
     const d = { ...w.deps(), agentCmd: "omp --model 'configured model'" };
     w.gh = () => ({ code: 0, stdout: JSON.stringify({ headRefOid: "a".repeat(40) }) });
     await review(d, "o/r#7", "selected/model");
-    const call = w.calls.find((c) => c.cmd === "sh")!;
-    expect(call.argv.slice(0, 7)).toEqual([
+    const call = w.calls.find((c) => c.cmd === "env")!;
+    const context = Object.entries(harnessLaunchEnv(d)).map(([key, value]) => `${key}=${value}`);
+    expect(call.argv.slice(0, context.length)).toEqual(context);
+    expect(call.argv.slice(context.length, context.length + 8)).toEqual([
+      "sh",
       "-c",
-      "unset HERDR_PANE_ID HERDR_WORKSPACE_ID HC_TERMINAL_ID; omp --model 'configured model' --dori-role lane \"$@\"",
+      "unset HERDR_PANE_ID HERDR_WORKSPACE_ID HC_TERMINAL_ID DORI_MANAGED_STARTUP DORI_LANE; omp --model 'configured model' --dori-role lane \"$@\"",
       "dori-review",
       "-p",
       "--no-session",
       "--model",
       "selected/model",
     ]);
-    expect(call.argv[7]).toContain("o/r#7");
+    expect(call.argv[context.length + 8]).toContain("o/r#7");
     expect(d.store.receipt("o/r#7", "a".repeat(40))!.model).toBe("selected/model");
   });
 
   test("default dependencies select OMP and retain an explicit DORI_AGENT_CMD", () => {
-    const keys = ["DORI_HOME", "DORI_AGENT_CMD", "DORI_TELEMETRY", "DORI_CMD"];
+    const keys = ["DORI_HOME", "DORI_AGENT_CMD", "DORI_AGENT_ARGV", "DORI_TELEMETRY", "DORI_CMD"];
     const before = keys.map((key) => process.env[key]);
-    process.env["DORI_HOME"] = mkdtempSync(join(tmpdir(), "dori-default-"));
+    process.env["DORI_HOME"] = realpathSync(mkdtempSync(join(tmpdir(), "dori-default-")));
     process.env["DORI_TELEMETRY"] = "0";
     delete process.env["DORI_AGENT_CMD"];
+    delete process.env["DORI_AGENT_ARGV"];
     delete process.env["DORI_CMD"];
     try {
       const d = defaultDeps();
@@ -91,6 +95,9 @@ describe("OMP harness launches", () => {
       expect(agentCommand(d, "dori")).toBe("omp --dori-role dori");
       expect(d.doriCmd).toContain("bun '");
       expect(d.doriCmd).toContain("src/cli.ts");
+      writeFileSync(join(d.store.root, ".omp-dori"), "primary\n");
+      expect(defaultDeps().agentCmd).toContain(join(d.store.root, "bin/omp"));
+      expect(defaultDeps().agentCmd).not.toBe("omp");
       process.env["DORI_AGENT_CMD"] = "custom-agent --model x";
       expect(defaultDeps().agentCmd).toBe("custom-agent --model x");
     } finally {

@@ -84,6 +84,7 @@ export function releaseHeld(d: Deps, target: string, index: number, how: "ack" |
     d.store.saveInbox(
       ref,
       how === "ack" ? msgs.filter((_, i) => i !== index - 1) : msgs.map((x, i) => (i === index - 1 ? fresh : x)),
+      how === "ack" ? [m] : [],
     );
     return paneId;
   } finally {

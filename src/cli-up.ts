@@ -1,16 +1,17 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { shq } from "./delivery.ts";
-import { agentCommand, promptsDir, type Deps } from "./harness.ts";
+import { agentCommand, harnessLaunchEnv, promptFile, type Deps } from "./harness.ts";
 import { refText } from "./refs.ts";
 import { groupId } from "./runtime/group.ts";
 import { openSession, type SessionRef } from "./runtime/types.ts";
 import { RuntimeChoiceError } from "./runtime/select.ts";
+import { laneBoard } from "./status-view.ts";
 
 function renderPrompt(d: Deps, name: string): string {
   const dir = join(d.store.root, "prompts");
   mkdirSync(dir, { recursive: true });
-  const src = readFileSync(join(promptsDir(), name), "utf8").replaceAll("{{dori}}", d.doriCmd);
+  const src = readFileSync(promptFile(name), "utf8").replaceAll("{{dori}}", d.doriCmd);
   const out = join(dir, name);
   writeFileSync(out, src);
   return out;
@@ -23,12 +24,12 @@ function renderPrompt(d: Deps, name: string): string {
  */
 export async function up(d: Deps, cwd: string): Promise<void> {
   const rt = d.runtimes.default;
-  const env = { DORI_HOME: d.store.root };
+  const env = harnessLaunchEnv(d);
   const agent = (name: string) => `${agentCommand(d, "dori")} --append-system-prompt ${shq(renderPrompt(d, name))}`;
   // herdr ignores the group of a workspace-root session and reports the new workspace as the lead ref's group.
   const lead = await openSession(
     rt,
-    { name: "dori", role: "lead", container: "workspace-root", cwd, env: {}, group: groupId(d.store.root) },
+    { name: "dori", role: "lead", container: "workspace-root", cwd, env, group: groupId(d.store.root) },
     agent("lead.md"),
   );
   d.store.setRole("lead", lead);
@@ -69,16 +70,15 @@ function runtimeLine(d: Deps): string {
   }
 }
 
+/**
+ * The runtime line, the roles and the home path, each on a line of its own and never wrapped: the runtime line can name
+ * the config file and the home is a path, either of which may hold spaces, and a path broken at one names no file.
+ * Wider than a line, the terminal folds them. The lane board below keeps within WIDTH.
+ */
 export function status(d: Deps): void {
-  console.log(runtimeLine(d));
   const roles = d.store.roles();
   const show = (ref: SessionRef | undefined) => (ref ? refText(ref) : "-");
-  console.log(`lead=${show(roles.lead)} duty=${show(roles.duty)} home=${d.store.root}`);
-  for (const l of d.store.lanes()) {
-    const last = l.log.at(-1);
-    const age = Math.round((d.now() - l.lastActivityAt) / 60_000);
-    console.log(
-      `${l.key.padEnd(24)} ${l.status.padEnd(8)} ${l.sessionRef.runtime.padEnd(5)} ${refText(l.sessionRef).padEnd(14)} active ${age}m ago  ${last ? `${last.kind}: ${last.text.slice(0, 60)}` : ""}`,
-    );
-  }
+  for (const line of [runtimeLine(d), `lead=${show(roles.lead)} duty=${show(roles.duty)}`, `home=${d.store.root}`])
+    console.log(line);
+  for (const line of laneBoard(d.store.lanes(), d.now())) console.log(line);
 }

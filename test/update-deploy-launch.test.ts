@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { HerdrCli } from "../src/runtime/herdr/exec.ts";
+import { herdrDeploymentCli } from "../src/update/deployment-cli.ts";
 import { parseDeploymentConfig } from "../src/update/deployment.ts";
 import { launchedProcess } from "../src/update/deployment-launch.ts";
 import { DeploymentHeld, processIdentity } from "../src/update/deployment-process.ts";
@@ -10,14 +10,15 @@ import type { DeploymentRecord, RuntimeIdentity } from "../src/update/deployment
 import { digest } from "../src/update/source.ts";
 import { deploymentConfig } from "./update-deploy-setup.ts";
 
-const linux = test.skipIf(process.platform !== "linux");
+// The kernels whose process identity deployment can bind.
+const posix = test.skipIf(process.platform !== "linux" && process.platform !== "darwin");
 
 const directories: string[] = [];
 afterEach(() => {
   for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
 
-linux("launched process chronology allows only the two-second ps precision window", async () => {
+posix("launched process chronology allows only the two-second ps precision window", async () => {
   const root = mkdtempSync(join(tmpdir(), "dori-deploy-identity-"));
   directories.push(root);
   const config = parseDeploymentConfig(
@@ -106,7 +107,7 @@ linux("launched process chronology allows only the two-second ps precision windo
     // The observed KST lstart is 01:31:05Z; toString keeps this instant independent of the test host's timezone.
     const coarseStart = new Date("2026-11-12T01:31:05.000Z").toString();
     let psStart = coarseStart;
-    const cli = new HerdrCli(async (cmd, args) => {
+    const cli = herdrDeploymentCli(async (cmd, args) => {
       if (cmd === "herdr") {
         expect(args).toEqual(["--session", "clock-guard", "pane", "process-info", "--pane", f.config.pane]);
         return {
@@ -148,7 +149,9 @@ linux("launched process chronology allows only the two-second ps precision windo
   }
 });
 
-test.skipIf(process.platform !== "linux").each(["Etc/UTC", "America/New_York", "Asia/Seoul"])(
+test
+  .skipIf(process.platform !== "linux" && process.platform !== "darwin")
+  .each(["Etc/UTC", "America/New_York", "Asia/Seoul"])(
   "native ps observation preserves the caller's %s epoch without inheriting its environment",
   async (timezone) => {
     const root = mkdtempSync(join(tmpdir(), "dori-observer-zone-"));

@@ -1,0 +1,8 @@
+{
+  "name": "omp-dori-native-addon",
+  "private": true,
+  "version": "1.0.0",
+  "dependencies": {
+    "@oh-my-pi/pi-natives": "18.20.0"
+  }
+}

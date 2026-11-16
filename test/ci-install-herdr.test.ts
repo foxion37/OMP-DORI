@@ -92,5 +92,6 @@ test("checksum rejection preserves existing binary and cleans download", () => {
 test("hc gate requires its E2E file instead of reporting skipped success", () => {
   const workflow = readFileSync(join(import.meta.dir, "../.github/workflows/ci.yml"), "utf8");
   expect(workflow).toContain("test -f test/e2e-hc.test.ts\n          bun test test/e2e-hc.test.ts");
+  expect(workflow).toContain("test -f test/e2e-hc-deploy.test.ts\n          bun test test/e2e-hc-deploy.test.ts");
   expect(workflow).not.toContain("SKIP e2e-hc");
 });

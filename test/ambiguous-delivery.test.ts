@@ -192,7 +192,11 @@ describe("the CLI on an uncertain first delivery (#89 review)", () => {
     w.promptFails.set("w1:p1", "timeout");
     const r = await captureIo(() => main(["report", "fix-x", "--text", "SECRET progress"], d));
     expect(r.code).toBe(3);
-    expect(r.out).toBe(`REPORTED fix-x\n${HELD_LINE("lead")}`);
+    expect(r.out.split("\n")).toEqual([
+      "REPORTED fix-x",
+      expect.stringMatching(/^PROGRESS unchanged since /),
+      HELD_LINE("lead"),
+    ]);
     expect(r.out + r.err).not.toContain("SECRET");
     const fromLane = d.store.queued(href("w1:p1")).filter((m) => m.from === "fix-x");
     expect(fromLane).toHaveLength(1);

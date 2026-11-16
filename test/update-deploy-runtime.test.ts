@@ -1,11 +1,12 @@
 import { expect, spyOn, test } from "bun:test";
+import { procCmdline } from "../src/update/proc.ts";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type PaneState, writePaneState } from "../skills/dori-mode/scripts/src/lane-state.ts";
-import { HerdrCli } from "../src/runtime/herdr/exec.ts";
+import { herdrDeploymentCli } from "../src/update/deployment-cli.ts";
 import { deploymentConfig } from "./update-deploy-setup.ts";
 import { captureRuntime, stopRuntime } from "../src/update/deployment-native.ts";
 import { DeploymentBusy, DeploymentHeld, processIdentity, sameProcess } from "../src/update/deployment-process.ts";
@@ -97,7 +98,7 @@ test
   let observations = 0;
   let captures = 0;
   let persisted = 0;
-  const cli = new HerdrCli(async (cmd, args) => {
+  const cli = herdrDeploymentCli(async (cmd, args) => {
     if (cmd !== "herdr") {
       expect(cmd).toBe("ps");
       // Bun tests use a UTC JS clock; make real ps timestamps use that same zone.
@@ -136,7 +137,7 @@ test
           {
             pid: rootPid,
             name: "bash",
-            argv: readFileSync(`/proc/${rootPid}/cmdline`, "utf8").split("\0").filter(Boolean),
+            argv: procCmdline(rootPid).split("\0").filter(Boolean),
           },
         ];
       } else if (mode === "live") processes = [{ pid: process.pid, name: "omp", argv: ["omp"] }];

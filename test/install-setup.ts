@@ -1,7 +1,17 @@
 import { afterEach } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { digest } from "../src/update/source.ts";
 
 // The real source installer over a local upstream; package installs and toolchain probes stay isolated.
 export const script = resolve(import.meta.dir, "../scripts/install-source.sh");
@@ -28,7 +38,7 @@ export const git = (cwd: string, ...argv: string[]): string => {
 const skillFixture = "---\nname: dori-mode\ndescription: Turns a coding agent into a Dori.\n---\n\n# Dori mode\n";
 
 export function setup() {
-  const root = mkdtempSync(join(tmpdir(), "dori-install-"));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "dori-install-")));
   roots.push(root);
   const upstream = join(root, "upstream");
   const src = join(root, "src");
@@ -39,6 +49,11 @@ export function setup() {
   mkdirSync(join(upstream, "skills/dori-mode/scripts/src"), { recursive: true });
   mkdirSync(join(upstream, "skills/dori-mode/references"), { recursive: true });
   mkdirSync(join(upstream, "extension"));
+  mkdirSync(join(upstream, "scripts"));
+  symlinkSync(
+    resolve(import.meta.dir, "../scripts/source-dependencies.ts"),
+    join(upstream, "scripts/source-dependencies.ts"),
+  );
   writeFileSync(join(upstream, "extension/index.ts"), "export default () => {};\n");
   mkdirSync(ulw);
   writeFileSync(join(ulw, "index.ts"), "export default () => {};\n");
@@ -56,12 +71,12 @@ export function setup() {
   // Record package-manager mutations without installing or linking anything on the host.
   writeFileSync(
     join(bin, "bun"),
-    `#!/bin/sh\ncase "$1" in\n--version) echo "\${INSTALL_TEST_BUN_VERSION:-1.4.4}" ;;\n-e) exec ${JSON.stringify(process.execPath)} "$@" ;;\n*) echo "$*" >> ${JSON.stringify(join(root, "bun.log"))} ;;\nesac\n`,
+    `#!/bin/sh\ncase "$1" in\n--version) echo "\${INSTALL_TEST_BUN_VERSION:-1.4.4}" ;;\n-e|*/source-dependencies.ts) exec ${JSON.stringify(process.execPath)} "$@" ;;\n*) echo "$*" >> ${JSON.stringify(join(root, "bun.log"))} ;;\nesac\n`,
   );
   chmodSync(join(bin, "bun"), 0o755);
   writeFileSync(
     join(bin, "omp"),
-    `#!/bin/sh\ncase "$1" in\n--version) echo "omp \${INSTALL_TEST_OMP_VERSION:-18.19.0}" ;;\n*) exit 64 ;;\nesac\n`,
+    `#!/bin/sh\ncase "$1" in\n--version) echo "omp \${INSTALL_TEST_OMP_VERSION:-18.20.0}" ;;\n*) exit 64 ;;\nesac\n`,
   );
   chmodSync(join(bin, "omp"), 0o755);
   const upstreamCommit = (text: string) => {
@@ -75,6 +90,7 @@ export function setup() {
     DORI_INSTALL_MODE: "",
     DORI_NO_PULL: "",
     DORI_SRC: src,
+    DORI_OMP: join(bin, "omp"),
     SKILLS_DIR: join(home, "skills"),
     OMP_EXTENSIONS_DIR: join(home, "extensions"),
     OMP_ULW_SRC: ulw,
@@ -83,6 +99,7 @@ export function setup() {
     INSTALL_TEST_OMP_VERSION: "",
     OMP_DORI_HOME: join(home, ".omp-dori"),
     OMP_DORI_HC_SESSION: "",
+    OMP_DORI_HC_SPACE: "",
     OMP_DORI_BIN_DIR: join(home, "global-bin"),
     PATH: `${bin}:${process.env["PATH"]}`,
     ...extra,
@@ -109,10 +126,25 @@ export function withUlwRemote() {
   };
   const first = commit("u1");
   writeFileSync(join(s.upstream, "omp-ulw.lock"), `${first}\n`);
-  git(s.upstream, "add", "omp-ulw.lock");
+  const base = readFileSync(join(remote, "index.ts"), "utf8");
+  writeFileSync(join(remote, "index.ts"), `${base}export const reviewedOverlay = true;\n`);
+  const patch = `${git(remote, "diff", "--binary")}\n`;
+  git(remote, "add", "index.ts");
+  const lock = {
+    version: 1,
+    repository: "https://github.com/dbc-hbin/omp-ulw.git",
+    commit: first,
+    patchSha256: digest(patch),
+    resultTree: git(remote, "write-tree"),
+    files: [{ path: "index.ts", sha256: digest(readFileSync(join(remote, "index.ts"))), executable: false }],
+  };
+  writeFileSync(join(s.upstream, "omp-ulw.overlay.lock"), JSON.stringify(lock));
+  writeFileSync(join(s.upstream, "omp-ulw.patch"), patch);
+  git(remote, "restore", "--source=HEAD", "--staged", "--worktree", "index.ts");
+  git(s.upstream, "add", "omp-ulw.lock", "omp-ulw.overlay.lock", "omp-ulw.patch");
   git(s.upstream, "commit", "-qm", "lock");
   const config = () => JSON.parse(readFileSync(join(s.home, ".dori/config.json"), "utf8"));
-  const ulwHead = () => git(join(s.home, ".dori/omp-ulw"), "rev-parse", "HEAD");
+  const ulwHead = () => git(join(s.home, "extensions/omp-ulw"), "rev-parse", "HEAD");
   const install = (extra: Record<string, string> = {}) =>
     s.install({ OMP_ULW_SRC: "", OMP_ULW_REPO: remote, ...extra });
   return { ...s, remote, first, commit, config, ulwHead, install };

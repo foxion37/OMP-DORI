@@ -9,7 +9,12 @@
     "checkJs": false,
     "skipLibCheck": true,
     "noEmit": true,
-    "types": ["bun"]
+    "types": ["bun"],
+    "paths": {
+      "@oh-my-pi/pi-coding-agent/extensibility/extensions/loader": [
+        "../test/fixtures/omp-native-host/node_modules/@oh-my-pi/pi-coding-agent/dist/types/extensibility/extensions/loader.d.ts"
+      ]
+    }
   },
   "include": ["*.ts", "test/*.ts"]
 }

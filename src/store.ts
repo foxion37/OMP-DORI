@@ -3,11 +3,14 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import {
   appendQueue,
+  doneIds,
   forwardOf,
   forwardPending,
   inboxFile,
   inboxRefs,
+  markDone,
   mergeForwarded,
+  pendingQueue,
   readQueue,
   writeQueue,
 } from "./inbox-files.ts";
@@ -105,11 +108,25 @@ export class Store {
     appendQueue(this.inboxPath(this.forwardOf(ref) ?? ref), msg);
   }
 
-  queued(ref: SessionRef): QueuedMessage[] {
-    return readQueue(this.inboxPath(ref));
+  /**
+   * Queues a duty notice unless the same id is queued for this session or left its queue before (`<inbox>.ids`): a
+   * duty pass cut short after queueing it queues it again on the next pass. Returns false when it was not queued.
+   */
+  enqueueOnce(ref: SessionRef, msg: QueuedMessage & { id: string }): boolean {
+    const path = this.inboxPath(this.forwardOf(ref) ?? ref);
+    if (doneIds(path).has(msg.id) || readQueue(path).some((m) => m.id === msg.id)) return false;
+    appendQueue(path, msg);
+    return true;
   }
 
-  saveInbox(ref: SessionRef, msgs: readonly QueuedMessage[]): void {
+  /** The queue without entries whose id is recorded as gone (`<inbox>.ids`). */
+  queued(ref: SessionRef): QueuedMessage[] {
+    return pendingQueue(this.inboxPath(ref));
+  }
+
+  /** Rewrites the queue. The ids of `gone` are recorded first and commit it: `queued` leaves them out from then on. */
+  saveInbox(ref: SessionRef, msgs: readonly QueuedMessage[], gone: readonly QueuedMessage[] = []): void {
+    markDone(this.inboxPath(ref), gone);
     writeQueue(this.inboxPath(ref), msgs);
   }
 

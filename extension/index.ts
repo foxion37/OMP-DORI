@@ -16,6 +16,7 @@
 import { mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadConfig } from "../skills/dori-mode/scripts/src/config";
+import { SourceBundleError } from "../src/release/source-bundle.ts";
 import {
   type DoriRole,
   type GoalStatus,
@@ -37,6 +38,7 @@ interface SessionEntry {
 }
 export interface DoriContext {
   cwd: string;
+  abort(): void;
   agent: { kind: "main" | "sub"; id: string; parentId?: string };
   model?: PromptModel;
   /** How full the session's context is; absent when omp cannot report it. */
@@ -212,6 +214,7 @@ export default async function ompDori(pi: DoriApi): Promise<void> {
   let role: DoriRole | undefined;
   let stateDir: string | undefined;
   let loadError: string | undefined;
+  let requiredLoadError: SourceBundleError | undefined;
   let warned = false;
   let lifecycleRegistered = false;
   let session: { id: string; startedAt: string } | undefined;
@@ -421,7 +424,10 @@ export default async function ompDori(pi: DoriApi): Promise<void> {
     if (role && !lifecycleRegistered) registerLifecycle();
     if (role && loadError && !warned) {
       warned = true;
-      ctx.ui.notify(`omp-dori: ${loadError}. Running without omo presets.`, "warning");
+      ctx.ui.notify(
+        `omp-dori: ${loadError}. ${requiredLoadError ? "Required bound source failed; role requests are blocked." : "Running without omo presets."}`,
+        "warning",
+      );
     }
     await syncTools();
     savePane(ctx);
@@ -513,9 +519,20 @@ export default async function ompDori(pi: DoriApi): Promise<void> {
 
   // OMP chains prompt replacements in extension/handler order; append to the prompt this handler receives.
   pi.on("before_agent_start", (event, ctx) => {
+    if (role && requiredLoadError) {
+      ctx.abort();
+      throw requiredLoadError;
+    }
     if (role !== "lane" || ctx.agent.kind !== "main" || typeof event !== "object" || event === null) return;
     const systemPrompt = "systemPrompt" in event ? withLaneBookkeeping(event.systemPrompt, ctx.model) : undefined;
     return systemPrompt && { systemPrompt };
+  });
+
+  pi.on("before_provider_request", (_event, ctx) => {
+    if (role && requiredLoadError) {
+      ctx.abort();
+      throw requiredLoadError;
+    }
   });
 
   const z = pi.zod;
@@ -609,16 +626,26 @@ export default async function ompDori(pi: DoriApi): Promise<void> {
     // would register its commands and handlers twice.
     if (config.ompUlwPath) {
       try {
-        // The omp-ulw checkout is user-configured (`ompUlwPath`), so the specifier only exists at runtime.
-        const module: unknown = await import(config.ompUlwPath);
-        const ulw = module && typeof module === "object" && "default" in module ? module.default : undefined;
+        // Prepare the runtime-selected dependency through this host's canonical graph before binding the role gate.
+        // The host loader is optional when no embedded dependency is configured.
+        const { importExtensionModule } = await import("@oh-my-pi/pi-coding-agent/extensibility/extensions/loader");
+        const prepared = await importExtensionModule(config.ompUlwPath, import.meta.dir);
+        if (prepared.error) throw new Error(prepared.error);
+        const ulw: unknown = prepared.factory;
         if (typeof ulw !== "function") throw new Error("its default export is not a function");
         await ulw(gated);
       } catch (error) {
         loadError = `omp-ulw not loaded from ${config.ompUlwPath} (${errorText(error)})`;
+        if (
+          /\/(?:consumer-dependencies\/omp-ulw-[a-f0-9]{40}-[a-f0-9]{64}|\.cache\/omp-dori\/omp-ulw-[a-f0-9]{64})(?:\/index\.ts)?$/.test(
+            config.ompUlwPath,
+          )
+        )
+          requiredLoadError = new SourceBundleError(loadError);
       }
     }
   } catch (error) {
+    if (error instanceof SourceBundleError) requiredLoadError = error;
     loadError = `Dori config not loaded (${errorText(error)}); omp-ulw and pane state are off`;
   }
   pi.setLabel("omp-dori");

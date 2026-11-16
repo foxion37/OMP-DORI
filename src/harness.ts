@@ -1,8 +1,9 @@
-import { readFileSync } from "node:fs";
+import { accessSync, existsSync, readFileSync } from "node:fs";
 import { cpus, loadavg } from "node:os";
 import { join, resolve } from "node:path";
 import { shq } from "./delivery.ts";
 import { memFreePct } from "./host.ts";
+import { doriLaunchEnv, processOmpCommand, resolveConsumerOmpCommand } from "./release/runtime.ts";
 import { type Exec, spawnExec } from "./runtime/exec.ts";
 import { HcRuntime } from "./runtime/hc/index.ts";
 import { HerdrRuntime } from "./runtime/herdr/index.ts";
@@ -55,7 +56,17 @@ export const defaultDeps = (): Deps => {
     choice,
     exec: spawnExec,
     now: Date.now,
-    agentCmd: process.env["DORI_AGENT_CMD"] ?? "omp",
+    get agentCmd() {
+      const selected = processOmpCommand();
+      if (selected) return selected.map(shq).join(" ");
+      if (process.env["DORI_AGENT_CMD"] !== undefined) return process.env["DORI_AGENT_CMD"];
+      const command = resolveConsumerOmpCommand(["omp"]);
+      return command[0] !== "omp"
+        ? command.map(shq).join(" ")
+        : existsSync(join(store.root, ".omp-dori"))
+          ? shq(join(store.root, "bin/omp"))
+          : "omp";
+    },
     doriCmd: process.env["DORI_CMD"] ?? `DORI_HOME=${shq(store.root)} bun ${shq(CLI)}`,
     host: () => ({ load1: loadavg()[0] ?? 0, cores: cpus().length, memFreePct: memFreePct() }),
     usage: new Telemetry(store.root),
@@ -86,11 +97,39 @@ export const agentCommand = (d: Deps, role: "dori" | "lane"): string =>
     ? `${d.agentCmd} --dori-role ${role}`
     : d.agentCmd;
 
+/** Native agents and loop controllers keep this home's selection across the terminal server. */
+export function harnessLaunchEnv(d: Deps): Record<string, string> {
+  const configFile = process.env["DORI_CONFIG"] ?? join(d.store.root, "config.json");
+  return doriLaunchEnv(process.env, configFile, {
+    doriHome: d.store.root,
+    stateDir: ompStateDir({ ...process.env, DORI_CONFIG: configFile }),
+  });
+}
+
 /** `DORI_PROMPTS_DIR` when set, else the repo's `prompts/`. */
 export const promptsDir = (): string => process.env["DORI_PROMPTS_DIR"] || PROMPTS;
 
+/**
+ * The template `name` from `promptsDir()`, or the built-in one when that directory has none: a prompts directory made
+ * for an older dori lacks the templates added since (nudge-waiting.md), and those keep their defaults.
+ */
+export function promptFile(name: string): string {
+  const own = join(promptsDir(), name);
+  try {
+    accessSync(own);
+    return own;
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+    return join(PROMPTS, name);
+  }
+}
+
+/** `template` with each `{{name}}` in `vars` replaced; an unknown one is left as written. */
+export const fill = (template: string, vars: Record<string, string>): string =>
+  template.replace(/\{\{(\w+)\}\}/g, (_, k: string) => vars[k] ?? `{{${k}}}`);
+
 export const prompt = (name: string, vars: Record<string, string>): string =>
-  readFileSync(join(promptsDir(), name), "utf8").replace(/\{\{(\w+)\}\}/g, (_, k: string) => vars[k] ?? `{{${k}}}`);
+  fill(readFileSync(promptFile(name), "utf8"), vars);
 
 /** The roles `dori role` registers by hand; `dori up` also registers the two loop sessions. */
 export const ROLES: readonly Role[] = ["lead", "duty"];

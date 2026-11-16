@@ -1,12 +1,12 @@
-import { HerdrCli } from "../src/runtime/herdr/exec.ts";
+import { type DeploymentCli, herdrDeploymentCli } from "../src/update/deployment-cli.ts";
 import type { DeploymentConfig } from "../src/update/deployment-types.ts";
 
 export function foregroundCli(
   config: DeploymentConfig,
   observe: () => { front: unknown; status: string },
   run?: (line: string) => void,
-): HerdrCli {
-  return new HerdrCli(async (cmd, args) => {
+): DeploymentCli {
+  return herdrDeploymentCli(async (cmd, args) => {
     if (cmd === "herdr") {
       const { front, status } = observe();
       if (args[3] === "run" && run) {

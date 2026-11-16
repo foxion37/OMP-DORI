@@ -9,6 +9,7 @@ import { assertPreparedLayout, refreshBusyHandoff, verifyBusyHold } from "./depl
 import { launchRuntime } from "./deployment-launch.ts";
 import { waitForRestartLock } from "./deployment-lock.ts";
 import { assertRetryDeadline, nativeCli, stopRecordedMonitors, stopRuntime } from "./deployment-native.ts";
+import { holdPendingNativeUiExit } from "./deployment-native-ui.ts";
 import { prepareRelease, validateDeploymentInput } from "./deployment-prepare.ts";
 import { acquireRestartLock, DeploymentBusy, DeploymentHeld, DeploymentRetryable } from "./deployment-process.ts";
 import { restartDeployment } from "./deployment-restart.ts";
@@ -191,6 +192,12 @@ export async function deployRelease(
     return current;
   } catch (error) {
     current.error = error instanceof DeploymentHeld ? error.message : "release preparation or native startup failed";
+    if (holdPendingNativeUiExit(current)) {
+      current.retryableHold = true;
+      if (releaseLock) save(current);
+      else persist(current);
+      return current;
+    }
     if (!completed && releaseLock && current.stopRequestedAt && current.oldRuntime) {
       try {
         const rolledBack = await rollbackDeployment(config, current, save);
@@ -198,7 +205,7 @@ export async function deployRelease(
         return rolledBack;
       } catch (rollbackError) {
         current.status = "failed";
-        current.error =
+        current.rollbackError =
           rollbackError instanceof DeploymentHeld ? rollbackError.message : "rollback did not restore verified service";
       }
     } else current.status = !current.stopRequestedAt || error instanceof DeploymentHeld ? "held" : "failed";

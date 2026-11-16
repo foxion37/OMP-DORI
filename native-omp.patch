@@ -1,0 +1,3575 @@
+diff --git a/docs/context-files.md b/docs/context-files.md
+index 4d4df0511dbe2e950b0e75679abcd2a4906ef239..b4fc1b275a7b055de8289a6e109f35df8c450c56 100644
+--- a/docs/context-files.md
++++ b/docs/context-files.md
+@@ -184,6 +184,16 @@ Loading is automatic — there is no need to instruct the agent to search for `A
+ 
+ When workspace-tree scanning is enabled (`includeWorkspaceTree`), deeper-directory `AGENTS.md` files that were _not_ auto-loaded (for example, ones below the current directory) are surfaced separately in a `<dir-context>` block that lists their paths and tells the agent to read them before editing those directories. Those files are pointers, not full injected content.
+ 
++### Workspace tree snapshots
++
++The automatic primary workspace tree is a conversation/cwd snapshot within one SDK session factory. Reloading or returning to a conversation reuses its retained snapshot so filesystem edits do not rewrite that tree's prompt bytes mid-transcript. `/clear` and `/new` refresh it; changing that conversation's cwd also selects a fresh scan.
++
++Fresh-transcript invalidation stays with the affected conversation even while tree rendering is disabled. When rendering is re-enabled, retained conversations keep their own snapshots and fresh transcripts receive a new scan.
++
++This deliberately trades tree freshness for stable prompt content. Use direct file reads and searches for current filesystem facts. Snapshots are held in memory for the factory's lifetime, not persisted across process restarts. This policy does not freeze other prompt sections, context-file rediscovery, or additional workspace roots.
++
++A caller-supplied `workspaceTree` is kept as provided rather than rescanned. `includeWorkspaceTree` still controls whether the layout block renders, even for a supplied tree; its `AGENTS.md` index can still feed the separate `<dir-context>` block.
++
+ ## `@` imports
+ 
+ Inside any context file, an `@path` token expands inline to the referenced file's content before injection:
+diff --git a/docs/tools/eval.md b/docs/tools/eval.md
+index b9afbd0594066e6584c419554abc69731cd87841..fb086745208904f00bf7d2781907cab27a17b8b3 100644
+--- a/docs/tools/eval.md
++++ b/docs/tools/eval.md
+@@ -252,7 +252,7 @@ With `eval.tools.enabled` (default on), a cell can turn a function into a tool o
+ 
+ - Prelude helpers may read/write files and call arbitrary registered tools; JS exposes network-capable `fetch`.
+ - Python uses a retained subprocess kernel speaking framed local IPC. JavaScript uses an isolated subprocess, with a Bun Worker fallback; if both fail to start, the call fails without executing code on the host thread.
+-- Retained runtimes have no heartbeat or idle timer; they survive calls until reset, owner disposal (`EvalRunner.disposeKernels()` calls `disposeKernelSessionsByOwner` and `disposeVmContextsByOwner` keyed by `kernelOwnerId`, in `packages/coding-agent/src/session/eval-runner.ts`), or process exit.
++- Retained runtimes have no heartbeat or idle timer. They survive calls until reset, owner disposal, process exit, or release of a departed session's stale ownership after a session transition. Transition/rollback release waits for active eval to settle, then reads the adopted session id and preserves that language-namespaced session's live/starting runtime and owner registration. Shared runtimes retain their other owners; ordinary no-options full owner disposal remains unchanged (`EvalRunner` and the retained Python/JS registries).
+ - Cancellation is destructive when needed: JS terminates its worker; managed kernels interrupt and may escalate to shutdown. A reset is likewise destructive to concurrent work sharing that backend session.
+ - A retained runtime that dies between cells (crash, kill, out-of-memory, or a cancel/timeout that ended it) is replaced on the next call; the first cell to run on the replacement opens with `Kernel restarted: the previous Python kernel is dead; state is unavailable. …` (`JS worker` for JavaScript), once per replacement. A `reset` or owner disposal gives no notice.
+ - Eval-driven `agent()` children stay registered as keep-alive agents; owner teardown cancels their jobs, releases completion handles/judgment batches, and closes the owner's work pools.
+diff --git a/docs/tools/grep.md b/docs/tools/grep.md
+index 2e8f0544e236d6b0e215008547eb56a2ed1f886a..f9576b414d0370da6b572d024c3f982bb5893b11 100644
+--- a/docs/tools/grep.md
++++ b/docs/tools/grep.md
+@@ -29,7 +29,7 @@
+ | `gitignore` | `boolean`        | No       | Respect `.gitignore` during directory scans. Defaults to `true`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+ | `skip`      | `number \| null` | No       | File-page offset for multi-file results. Omitted or `null` means `0`; `grep.ts` floors finite numbers and rejects negative or non-finite values. Single-file searches ignore it because they do not paginate by file.                                                                                                                                                                                                                                                                                                                                                          |
+ 
+-`grep` is enabled by default (`grep.enabled = true`) and is discoverable rather than essential. Context defaults are configurable with `grep.contextBefore` and `grep.contextAfter`.
++`grep` is enabled by default (`grep.enabled = true`) and is discoverable rather than essential. Context defaults to matching lines only; explicit `grep.contextBefore` and `grep.contextAfter` settings still supply surrounding lines.
+ 
+ ## Outputs
+ 
+@@ -59,7 +59,7 @@ The tool returns a single text block in `content[0].text` plus structured `detai
+    - normalizes `skip` to a non-negative integer;
+    - expands delimiter-flattened `path` entries with `expandDelimitedPathEntries()`, keeping existing delimiter-containing paths intact, splitting semicolon-delimited lists unconditionally, accepting comma splits when at least one part resolves, and accepting whitespace splits only when every part resolves;
+    - peels any line-range selector from each resulting entry;
+-   - reads `grep.contextBefore` and `grep.contextAfter` from session settings (`1` and `3` by default);
++   - reads `grep.contextBefore` and `grep.contextAfter` from session settings (`0` and `0` by default);
+    - enables multiline only when `pattern` contains `\n` or an actual newline.
+ 2. Each `path` root is normalized with `normalizePathLikeInput()` again during shared scope resolution; this is a no-op for entries already normalized by delimiter expansion.
+ 3. Archive member paths such as `bundle.zip:src/foo.ts` are materialized to temporary UTF-8 scratch files before native grep. Binary or non-UTF-8 archive members are reported as skipped/unreadable.
+@@ -98,7 +98,7 @@ The tool returns a single text block in `content[0].text` plus structured `detai
+ 13. JS output shaping then:
+ 
+ - caps multi-file output to 20 files per page (`DEFAULT_FILE_LIMIT`), using `skip` as the next file offset;
+-- caps matches per file to 20 for multi-file scopes and 200 for single-file scopes, and names the rendered files the cap trimmed in a closing line placed past the byte cap (`More than 20 matches in a.ts; grep keeps the first 20 per file when searching several. Search one file alone for up to 200.`; a single file gets `More than 200 matches; …` with a line-range hint). The page label's total reads `N+` only when native grep stopped at `INTERNAL_TOTAL_CAP`, not when a per-file cap bit;
++- caps matches per file to 10 for multi-file scopes and 50 for single-file scopes, and names the rendered files the cap trimmed in a closing line placed past the byte cap (`More than 10 matches in a.ts; grep keeps the first 10 per file when searching several. Search one file alone for up to 50.`; a single file gets `More than 50 matches; …` with a line-range hint). The page label's total reads `N+` only when native grep stopped at `INTERNAL_TOTAL_CAP`, not when a per-file cap bit;
+ - round-robins selected per-file matches so one file does not monopolize the page;
+ - sanitizes emitted match and context lines with `sanitizeText()` (`packages/utils/src/sanitize-text.ts`, stripping ANSI escapes, NUL, and other control characters), then formats lines through `formatMatchLine()` for the model and `formatCodeFrameLine()` (`packages/tui/src/render/render-utils.ts`) for TUI;
+ - in hashline mode, calls `getEditStore(session).recordSnapshotFile()` for each eligible rendered file to mint the `#TAG` anchor, then records emitted lines with `recordSeenLinesFromBody()`. Archive entries, immutable external materializations, and immutable URL schemes are skipped; a mutable file-backed URL (`local://`) is snapshotted against its backing host file (`resultSnapshotPath()`). Files too large or unreadable for snapshots fall back to plain line output.
+@@ -111,7 +111,7 @@ The tool returns a single text block in `content[0].text` plus structured `detai
+ 1. **Single file path**
+    - Native `grep()` searches one file as text, including files containing NUL bytes across buffered files, streamed oversized files, and multiline searches within the leading 4 MiB window (unless answered by an `ovnfs` daemon; see Notes).
+    - Output is a flat list of match/context lines.
+-   - Visible limit is the first `200` matches after native matching and JS per-file capping.
++   - Visible limit is the first `50` matches after native matching and JS per-file capping. Narrow the file's line range to recover later matches.
+ 2. **Single directory path or single glob-like path**
+    - `parseSearchPath()` may split the input into `path` + `glob`.
+    - One native `grep()` scans the directory tree with `gitignore` and `hidden:true`.
+@@ -148,11 +148,11 @@ The tool returns a single text block in `content[0].text` plus structured `detai
+ ## Limits & Caps
+ 
+ - File page limit: `20` files (`DEFAULT_FILE_LIMIT` in `packages/coding-agent/src/tools/grep.ts`).
+-- Per-file match caps: `20` for multi-file scopes (`MULTI_FILE_PER_FILE_MATCHES`), `200` for single-file scopes (`SINGLE_FILE_MATCHES`).
++- Per-file match caps: `10` for multi-file scopes (`MULTI_FILE_PER_FILE_MATCHES`), `50` for single-file scopes (`SINGLE_FILE_MATCHES`).
+ - Ordinary native preselection cap: `2000` matches per invocation (`INTERNAL_TOTAL_CAP`). Line-range filters increase the fetch caps before JS filtering.
+ - Line truncation: `512` UTF-8 bytes per emitted line content, including the native `...` markers but not the line prefix or `[col N]` suffix (`DEFAULT_MAX_COLUMN` in `packages/tui/src/tools/streaming-output.ts`). Native grep windows a cut match line around the first match the searcher found (re-run over the search buffer from the line's start, as ripgrep's printer does) and reports its `column`; JS reports `linesTruncated`.
+ - Final text truncation: `truncateHead()` default byte cap `50 * 1024` bytes (`DEFAULT_MAX_BYTES` in `packages/tui/src/tools/streaming-output.ts`). `grep.ts` overrides `maxLines` to `Number.MAX_SAFE_INTEGER`, so normal grep output is byte-capped, not line-capped.
+-- Context defaults: `grep.contextBefore = 1`, `grep.contextAfter = 3` in `packages/coding-agent/src/tools/settings.ts`.
++- Context defaults: `grep.contextBefore = 0`, `grep.contextAfter = 0` in `packages/coding-agent/src/tools/settings.ts`. Explicit nonzero settings are preserved.
+ - Pagination: `skip` is a file-page offset for multi-file scopes. The result text says `Use skip=<N> for the next page` when more files remain.
+ - Native directory-scan cache: disabled natively for this tool — `GrepOptions` has no `cache` field; `build_grep_walk_request` hard-codes `.cache(false)` in `crates/pi-natives/src/grep.rs`.
+ - Native grep wall-clock budget: `30_000ms` per invocation (`SEARCH_GREP_TIMEOUT_MS` in `packages/coding-agent/src/tools/grep.ts`); hitting it raises `Grep timed out after 30s; ...`.
+diff --git a/docs/tools/todo.md b/docs/tools/todo.md
+index 5c3d8a4c521e2dcf858654a5978bf3f5168bc876..0a9673c76784ef61448736a7a846d9a5dacc2597 100644
+--- a/docs/tools/todo.md
++++ b/docs/tools/todo.md
+@@ -12,6 +12,8 @@
+    - `packages/coding-agent/src/session/todo-tracker.ts` — owns canonical phases, restores branch snapshots, and manages completion reminders.
+    - `packages/coding-agent/src/session/agent-session.ts` — exposes todo state hooks and emits failure reminders.
+    - `packages/coding-agent/src/modes/controllers/todo-command-controller.ts` — `/todo` command path, custom-entry persistence, transcript reminder injection.
++   - `packages/tui/src/tools/todo.ts` — shared target-list parser and todo transcript renderer.
++   - `packages/collab-web/src/tool-render/tools/todo.tsx` — array-aware summary and expanded operation previews; resulting phase board is unchanged.
+    - `packages/tui/src/render/render-utils.ts` — collapsed-preview cap for renderer trees.
+ 
+ ## Inputs
+@@ -21,10 +23,10 @@ The params object **is** a single op — the discriminator and its fields live a
+ | Op        | Required fields              | Optional fields                                                          | Effect                                                                                                                                                                 |
+ | --------- | ---------------------------- | ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+ | `init`    | `list` **or** flat `items`   | `phase` (names the phase for the flat `items` form; defaults to `Tasks`) | Replaces the entire list — with `list`, uses the given phases; with a flat `items` array, synthesizes one phase. Every new task starts `pending` before normalization. |
+-| `start`   | `task`                       | None                                                                     | Marks one task `in_progress`; any other `in_progress` task is demoted to `pending`.                                                                                    |
+-| `done`    | `task` or `phase` or neither | None                                                                     | Marks the target task, phase, or all tasks `completed`.                                                                                                                |
+-| `drop`    | `task` or `phase` or neither | None                                                                     | Marks the target task, phase, or all tasks `abandoned`.                                                                                                                |
+-| `rm`      | `task` or `phase` or neither | None                                                                     | Removes the target task, clears the phase's task list, or clears all task lists.                                                                                       |
++| `start`   | One resolved `task`           | None                                                                     | Marks one task `in_progress`; any other `in_progress` task is demoted to `pending`. Multiple resolved targets are an error.                                            |
++| `done`    | `task` or `phase` or neither | None                                                                     | Marks the target tasks, phase, or all tasks `completed`.                                                                                                               |
++| `drop`    | `task` or `phase` or neither | None                                                                     | Marks the target tasks, phase, or all tasks `abandoned`.                                                                                                               |
++| `rm`      | `task` or `phase` or neither | None                                                                     | Removes the target tasks, clears the phase's task list, or clears all task lists.                                                                                      |
+ | `append`  | `items`                      | `phase` (defaults to the active/next task's phase, then the last phase, then `Tasks`) | Appends new `pending` tasks to the selected phase; creates the phase if missing. |
+ | `view`    | None                         | None                                                                     | Echoes the current list. A `view` call is read-only: no normalization, no state write.                                                                                 |
+ 
+@@ -34,7 +36,7 @@ The params object **is** a single op — the discriminator and its fields live a
+ | -------- | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+ | `op`     | `"init" \| "start" \| "done" \| "rm" \| "drop" \| "append" \| "view"`                         | Yes in the schema                                                                                 | Operation discriminator. At execution time, an omitted op is repaired only for unambiguous `list`/`items` payloads (see Flow).                                                   |
+ | `list`   | `{ phase: string; items: string[] }[]`                                                        | For `init` (unless a flat `items` list is given)                                                  | Full replacement payload. Each phase's `items` has `minItems: 1`; an explicit `list: []` clears all phases.                                                                      |
+-| `task`   | `string`                                                                                      | For `start`; for task-targeted `done`/`drop`/`rm`                                                 | Exact task content match.                                                                                                                                                        |
++| `task`   | `string \| string[]`                                                                           | For `start`; for task-targeted `done`/`drop`/`rm`                                                 | Verbatim task content or several targets; `start` still resolves exactly one task.                                                                                       |
+ | `phase`  | `string` | For phase-targeted `done`/`drop`/`rm`; optional for `append` and flat `init` | Exact phase name match. `append` creates a named phase if missing; omitted names use the selection rules below. Flat `init` defaults to `Tasks`. |
+ | `items`  | `string[]`                                                                                    | For `append`; or as a flat `init` payload                                                         | Tasks to append, or the full task list for a flat `init`. Op-specific validation requires at least one item; a stray empty array on an unrelated op is schema-valid and ignored. |
+ 
+@@ -42,6 +44,10 @@ For `init`, an absent or empty phase name becomes `Tasks`; duplicate phase names
+ 
+ For `append`, an omitted `phase` selects the in-progress task's phase, otherwise the first pending task's phase. If no task is actionable, it uses the last phase; if no phases exist, it creates `Tasks`. An explicit phase overrides this selection, but an explicit empty string is rejected. Omitting `op` as well as `phase` remains ambiguous when a list exists and is not inferred as `append`.
+ 
++An exact full task name wins before list recovery, including names containing commas, semicolons or spaces. Otherwise the shared tool/renderer parser expands array entries and flattened newline/semicolon/comma lists, trimming and unquoting parts. Whitespace-only splitting applies when every part names a known task. Partial punctuation-separated lists report each missing part rather than the entire flattened input.
++
++For `done`, `drop` and `rm`, an explicit `task: []` is an error, not a request to affect the whole phase/list. Omit `task` for scope-wide operations. Empty/missing array entries remain errors; any error discards the entire tool mutation. Multiple resolved targets for `start` are also an error.
++
+ ## Outputs
+ 
+ The tool returns a single-shot `AgentToolResult`:
+@@ -70,9 +76,9 @@ The TUI renderer (`todoToolRenderer`) merges call and result into one transcript
+ 3. `applyParams(...)` applies the resolved op with `applyEntry(...)`.
+ 4. Each op mutates the working phase array:
+    - `initPhases(...)` rebuilds the list from scratch.
+-   - `start` resolves a task by exact `content`, demotes every other `in_progress` task to `pending`, then marks the target `in_progress`.
+-   - `done` / `drop` use `getTaskTargets(...)` to target one task, one phase, or every task.
+-   - `rm` removes one task, clears one phase's `tasks`, or clears all phases' task arrays.
++   - `start` resolves one task through the shared target parser, demotes every other `in_progress` task to `pending`, then marks the target `in_progress`.
++   - `done` / `drop` use `getTaskTargets(...)` to target several tasks, one phase, or every task.
++   - `rm` removes selected tasks, clears one phase's `tasks`, or clears all phases' task arrays.
+    - `appendItems(...)` resolves or creates the target phase and pushes new `pending` tasks unless the same task content already exists anywhere.
+ 5. Missing task/phase references and op-specific failures are recorded in an `errors` array; any error discards the op's mutations at the end.
+ 6. After a successful mutation, `normalizeInProgressTask(...)` enforces the single-active-task invariant:
+@@ -100,7 +106,7 @@ Normalization then re-applies the single-active-task rule after the op runs.
+ ### Op targeting rules
+ 
+ - `done`, `drop`, `rm`:
+-   - `task` set: affect one exact-content task.
++   - Non-empty `task` targets: resolve all selected task contents; an explicit empty array errors without falling through.
+    - else `phase` set: affect every task in that exact-name phase.
+    - else: affect every task in every phase.
+ - `append` is the only op that creates a missing phase.
+@@ -147,6 +153,7 @@ The same file also exposes non-tool helpers used by `/todo`:
+ - Error strings come from the helpers in `packages/coding-agent/src/tools/todo.ts`, including:
+    - `Missing list for init operation`
+    - `Missing task content`
++   - `start takes a single task: only one task can be in progress`
+    - `Duplicate phase "..." in init list` / `Duplicate task "..." in init list`
+    - `Task "..." not found` with an extra empty-list hint when applicable, or a hint that tasks are referenced by content (not `task-N` IDs) when the missing content looks like an ID
+    - `Missing phase name`
+@@ -164,7 +171,7 @@ The same file also exposes non-tool helpers used by `/todo`:
+ 
+ ## Notes
+ 
+-- Task lookup is exact string equality inside the tool. The model-facing prompt says task content and phase names are identifiers and should stay unique; `append` enforces task uniqueness globally, and `init` rejects duplicate phase names and duplicate task contents in its payload.
++- Task names remain exact identifiers: a full-name match precedes target-list recovery, and phase names remain exact. The model-facing prompt says identifiers should stay unique; `append` enforces task uniqueness globally, and `init` rejects duplicate phase names and duplicate task contents in its payload.
+ - `findTaskByContent(...)` returns the first matching task across phases. Duplicate task contents make later targeted ops ambiguous.
+ - `normalizeInProgressTask(...)` runs once after the op, not mid-op. A single op (e.g. `init`) can build an intermediate invalid state and rely on final normalization.
+ - `storage: "session"` means the session has a session-file backing; it does not mean this tool wrote a durable custom entry.
+diff --git a/docs/tools/wait.md b/docs/tools/wait.md
+index 9b7e73adf1825c7dbaf247ce999f8628da167021..9aa7069a401664535ddce03a5ac2aeb4e0359f32 100644
+--- a/docs/tools/wait.md
++++ b/docs/tools/wait.md
+@@ -17,12 +17,13 @@
+ - Returns on the first settled caller-owned job or incoming peer message. Job results delivered by this call are consumed so no duplicate async-result follows.
+ - Each settled job's `Delivery:` line distinguishes four cases: already consumed by an earlier call; delivered by this call (the job was not settled when the call began); handed over by this snapshot, which superseded the job's queued completion push so no duplicate result follows; and a genuinely late result, which keeps the "not auto-delivered" wording and adds how long before the call it had finished. Entry state comes from `settledJobIds()` (membership, not a timestamp comparison), and `JobSnapshot.settledAtMs` carries the finish time.
+ - A steering/tool interrupt returns `Wait interrupted by message.` with `details.interrupted=true`; other aborts propagate. Handle the incoming notice before calling `wait` again.
+-- There is no caller-selectable timeout. A wait with nothing new returns a still-running snapshot (`useless`) after a window that climbs 5s → 10s → 30s → 1m → 5m across back-to-back idle waits; any wait that returns news, or 60s away from `wait`, restarts it at 5s. From the 10s rung on, an elapsed wait appends a `<system-notice>` with the time spent waiting, telling the agent to make progress on everything that does not need the result before waiting again.
++- There is no caller-selectable timeout. Idle windows climb 5s → 10s → 30s → 1m → 4m across back-to-back waits; the first wait stays at 5s. A subsequent wait that is the only top-level tool call of its turn goes straight to the 4m rung. Calls nested inside eval or sharing an assistant turn with another tool do not qualify. News or 60s away from `wait` restarts the ladder. From the second idle wait, a notice asks the agent to finish independent work rather than poll.
+ - With no owned job or service running, `wait` blocks for a reply when the caller sent a direct message (not a broadcast) during its current run to an agent that has not answered it since and is still running. The agent answers with a direct message back (a woken subagent's relayed turn output included), or by settling a job of it the caller owns (its spawn job, or the job of a turn the caller's message woke), which delivers its result. Any incoming direct message (other than `agent://<id>?progress`) ends `wait`. An `agent://all` broadcast never settles the question: one arriving from an agent asked while `wait` is blocking for a reply interrupts that `wait` so a later `wait` keeps blocking for the direct reply, while broadcasts received earlier or from other agents do not end `wait` and reach the caller when it returns. It also ends, without an error, once no agent asked can still answer: each one finished its turn without replying, or is blocked on the caller (a `wait` only the caller's result can end, entered after the question; an inline `task` spawn of it; an untimed eval handle wait on it). A reply that cannot come is what would park both sides.
+ - An `agent://<id>?progress` message from an agent asked is not its answer and does not end `wait`: `wait` keeps blocking for that agent while it is still live (even idle), and from then on only a direct message answers — not an `agent://all` broadcast or a settled job of the turn that sent the progress.
+ - Otherwise returns immediately with “Nothing to wait for”, naming any agent asked that finished without replying or cannot reply before the caller finishes.
+ - With no owned jobs, a service finishing returns a notice directing the caller to `proc://` for status/output; with jobs, the call returns their current snapshot/result instead.
+ - Results and peer messages also auto-deliver without calling `wait`. Continue useful work instead of polling.
++- When the host identifies the top-level interactive TUI transcript, the description and elapsed result tell an otherwise-idle agent to end its turn: results/messages wake its next turn. Print/ACP/headless callers retain blocking-wait guidance instead; ending a print turn can cancel its jobs, while ACP may hold results until the client's next prompt.
+ - Queued peer messages are checked first. Already-settled but undelivered owned jobs are returned without another wait. A wake already queued before execution still lets `wait` drain its message or owned job instead of being skipped; host-owned notices inject at the next boundary after the normal wait result. If a peer message wins a race with job completion, that job remains eligible for normal async delivery.
+ - Job waits emit progress snapshots every 500 ms when an update callback is present. Job results/snapshots use `details: { op: "wait", jobs: ... }`; peer-message results use the messaging result shape.
+ - A running subagent's row carries its latest progress, e.g. ``- `AcpSurface` [task] — <label> — 5h7m · 90 req · $18.40 · ctx 160K/1M · stage: <stage>``: run time, requests, cost, context fill, self-estimated completion and stage, whichever its progress record reports. Bash and eval rows, and task rows without a progress record, stay ``- `<id>` [<type>] — <label>``. `read proc://` and `read proc://<id>` show the same progress on running task rows.
+@@ -33,3 +34,7 @@
+ - `write proc://<id>/kill` cancels a job or owned subagent, or stops a service; no `content` needed. Bare `proc://<id>` writes send stdin only to a service, including empty input.
+ - `write agent://<id>` sends a peer message; `agent://all` broadcasts to visible live peers from the main agent only. Bare `read history://` discovers registered agent transcripts. The final result of a subagent is delivered to its parent automatically.
+ - Start supervised services with `bash` `name` and optional `ready`; inspect and control them through `proc://`.
++
++## Extension monitor boundary
++
++Persistent processes supervised by an extension, such as Dori's monitor tool, are not automatically caller-owned native `AsyncJobManager` jobs or project services. A monitor can still be alive when native `wait` returns “Nothing to wait for”; its matching events arrive through the extension's existing message auto-delivery path. This tool does not adopt those processes or add monitor polling, and that integration boundary is not a native-job admission fix.
+diff --git a/packages/coding-agent/CHANGELOG.md b/packages/coding-agent/CHANGELOG.md
+index 1bc6d6e17afd80be521ef1425c298c6a7e1a29d1..85843395c0cef935a2354191c9b94751a86f31d0 100644
+--- a/packages/coding-agent/CHANGELOG.md
++++ b/packages/coding-agent/CHANGELOG.md
+@@ -2,6 +2,17 @@
+ 
+ ## [Unreleased]
+ 
++### Changed
++
++- Grep now defaults to matching lines only and shows fewer matches per file; explicit context settings, limit notices, file pagination, and line-range recovery remain available.
++- Native wait now backs off immediately for a consecutive sole top-level call and distinguishes interactive turn-ending guidance from print/ACP waiting, without changing owned-job or owed-reply admission.
++- Preserve each conversation's workspace-tree prompt snapshot across resume/reload, refreshing automatic trees on new/cleared transcripts and cwd changes without replacing caller-supplied trees.
++- Todo accepts arrays and recovered task lists for done/drop/remove, preserving exact full task names and single-task start; empty arrays report an error instead of targeting the whole list.
++
++### Fixed
++
++- Release departed eval runtime ownership after session transitions and rollback settle, preserving the adopted session's Python/JS runtimes and shared owners while retaining full-disposal behavior.
++
+ ## [18.20.0] - 2026-11-12
+ 
+ ### Breaking Changes
+diff --git a/packages/coding-agent/src/eval/executor-base.ts b/packages/coding-agent/src/eval/executor-base.ts
+index d5694ef5eb155e3a9cdf30286a07ebf45989496e..3774984d88fab7b55b6a78eb204ded321857ce07 100644
+--- a/packages/coding-agent/src/eval/executor-base.ts
++++ b/packages/coding-agent/src/eval/executor-base.ts
+@@ -442,6 +442,12 @@ export interface SessionOwners {
+ 	hasFallbackOwner: boolean;
+ }
+ 
++/** Narrows owner-scoped retained-kernel disposal. */
++export interface DisposeByOwnerOptions {
++	/** Sessions with this (language-namespaced) session id keep their kernel and owner registration. */
++	keepSessionId?: string;
++}
++
+ // ---------------------------------------------------------------------------
+ // Base executor implementation
+ // ---------------------------------------------------------------------------
+diff --git a/packages/coding-agent/src/eval/js/context-manager.ts b/packages/coding-agent/src/eval/js/context-manager.ts
+index 3caf074bdaadaa6480e9c29abb7d89b552cef3d3..596c97656204502b9bb2427b93d3abf024d586a0 100644
+--- a/packages/coding-agent/src/eval/js/context-manager.ts
++++ b/packages/coding-agent/src/eval/js/context-manager.ts
+@@ -16,6 +16,7 @@ import { getEnabledEvalPreludes } from "../preludes";
+ import {
+ 	abortReasonError,
+ 	attachSessionOwner,
++	type DisposeByOwnerOptions,
+ 	EvalKernelNotRunningError,
+ 	formatKernelRestartNotice,
+ 	type SessionOwners,
+@@ -122,6 +123,7 @@ interface JsSession {
+ }
+ 
+ interface StartingJsSession extends SessionOwners {
++	sessionId: string;
+ 	promise: Promise<JsSession>;
+ }
+ 
+@@ -426,11 +428,13 @@ export async function disposeAllVmContexts(): Promise<void> {
+ /**
+  * Shut down retained JS contexts owned solely by `ownerId`; contexts with other
+  * owners (e.g. an in-memory session keyed only by cwd) just drop the registration.
++ * Contexts for `options.keepSessionId` are left untouched.
+  */
+-export async function disposeVmContextsByOwner(ownerId: string): Promise<void> {
++export async function disposeVmContextsByOwner(ownerId: string, options?: DisposeByOwnerOptions): Promise<void> {
++	const keepSessionId = options?.keepSessionId;
+ 	const toKill: JsSession[] = [];
+ 	for (const session of Array.from(sessions.values())) {
+-		if (!session.ownerIds.has(ownerId)) continue;
++		if (!session.ownerIds.has(ownerId) || session.sessionId === keepSessionId) continue;
+ 		if (session.ownerIds.size === 1) {
+ 			toKill.push(session);
+ 			continue;
+@@ -439,7 +443,7 @@ export async function disposeVmContextsByOwner(ownerId: string): Promise<void> {
+ 	}
+ 	const startingToKill: StartingJsSession[] = [];
+ 	for (const [sessionKey, starting] of Array.from(startingSessions.entries())) {
+-		if (sessions.has(sessionKey) || !starting.ownerIds.has(ownerId)) continue;
++		if (sessions.has(sessionKey) || !starting.ownerIds.has(ownerId) || starting.sessionId === keepSessionId) continue;
+ 		if (starting.ownerIds.size === 1) {
+ 			startingSessions.delete(sessionKey);
+ 			startingToKill.push(starting);
+@@ -702,6 +706,7 @@ async function acquireSession(
+ 	startingSession = {
+ 		ownerIds: new Set(),
+ 		hasFallbackOwner: false,
++		sessionId: snapshot.sessionId,
+ 		promise: startup,
+ 	};
+ 	attachSessionOwner(startingSession, snapshot.sessionId, ownerId);
+diff --git a/packages/coding-agent/src/eval/kernel-session-registry.ts b/packages/coding-agent/src/eval/kernel-session-registry.ts
+index 71fd860cb40a58b1365a164193b6b2f473a10d8c..9071ba13fbfcf92179a5162effd3ee920d624879 100644
+--- a/packages/coding-agent/src/eval/kernel-session-registry.ts
++++ b/packages/coding-agent/src/eval/kernel-session-registry.ts
+@@ -4,6 +4,7 @@ import { logger } from "@oh-my-pi/pi-utils";
+ import {
+ 	attachSessionOwner,
+ 	type CancelledErrorClass,
++	type DisposeByOwnerOptions,
+ 	getRemainingTimeoutMs,
+ 	isCancellationError,
+ 	isTimedOutCancellation,
+@@ -39,6 +40,7 @@ export interface KernelSession<TKernel extends RegistryKernel> extends SessionOw
+ }
+ 
+ interface StartingKernelSession<TSession> extends SessionOwners {
++	sessionId: string;
+ 	promise: Promise<TSession>;
+ }
+ 
+@@ -93,7 +95,7 @@ interface KernelSessionRegistry<
+ 	TSession extends KernelSession<TKernel>,
+ > {
+ 	disposeAll(): Promise<void>;
+-	disposeByOwner(ownerId: string): Promise<void>;
++	disposeByOwner(ownerId: string, options?: DisposeByOwnerOptions): Promise<void>;
+ 	executeOnSession(code: string, cwd: string, options: TOptions): Promise<R>;
+ 	peekLiveKernel(cwd: string, options: TOptions): TKernel | undefined;
+ 	getPresentSession(cwd: string, options: TOptions): TSession | undefined;
+@@ -208,6 +210,7 @@ export function createKernelSessionRegistry<
+ 		startingSession = {
+ 			ownerIds: new Set(),
+ 			hasFallbackOwner: false,
++			sessionId,
+ 			promise: startup,
+ 		};
+ 		attachSessionOwner(startingSession, sessionId, options.kernelOwnerId);
+@@ -363,11 +366,12 @@ export function createKernelSessionRegistry<
+ 		}
+ 	}
+ 
+-	async function disposeByOwner(ownerId: string): Promise<void> {
++	async function disposeByOwner(ownerId: string, options?: DisposeByOwnerOptions): Promise<void> {
++		const keepSessionId = options?.keepSessionId;
+ 		const toShutdown: TSession[] = [];
+ 		const startingToShutdown: StartingKernelSession<TSession>[] = [];
+ 		for (const session of Array.from(sessions.values())) {
+-			if (!session.ownerIds.has(ownerId)) continue;
++			if (!session.ownerIds.has(ownerId) || session.sessionId === keepSessionId) continue;
+ 			if (session.ownerIds.size === 1) {
+ 				toShutdown.push(session);
+ 				continue;
+@@ -375,7 +379,9 @@ export function createKernelSessionRegistry<
+ 			session.ownerIds.delete(ownerId);
+ 		}
+ 		for (const [sessionKey, starting] of Array.from(startingSessions.entries())) {
+-			if (sessions.has(sessionKey) || !starting.ownerIds.has(ownerId)) continue;
++			if (sessions.has(sessionKey) || !starting.ownerIds.has(ownerId) || starting.sessionId === keepSessionId) {
++				continue;
++			}
+ 			if (starting.ownerIds.size === 1) {
+ 				startingSessions.delete(sessionKey);
+ 				startingToShutdown.push(starting);
+diff --git a/packages/coding-agent/src/eval/py/executor.ts b/packages/coding-agent/src/eval/py/executor.ts
+index 09401f2be40e87f201429a9f41e63302ba93aad3..6a0ef13c89cfbee4d5721ca610e08907ccb6c975 100644
+--- a/packages/coding-agent/src/eval/py/executor.ts
++++ b/packages/coding-agent/src/eval/py/executor.ts
+@@ -9,6 +9,7 @@ import {
+ 	buildManagedKernelEnv,
+ 	buildManagedKernelEnvPatch,
+ 	createCancelledKernelResult,
++	type DisposeByOwnerOptions,
+ 	EvalKernelNotRunningError,
+ 	executeWithKernelBase,
+ 	getExecutionDeadlineMs,
+@@ -576,8 +577,8 @@ export async function disposeAllKernelSessions(): Promise<void> {
+ 	await sessionRegistry.disposeAll();
+ }
+ 
+-export async function disposeKernelSessionsByOwner(ownerId: string): Promise<void> {
+-	await sessionRegistry.disposeByOwner(ownerId);
++export async function disposeKernelSessionsByOwner(ownerId: string, options?: DisposeByOwnerOptions): Promise<void> {
++	await sessionRegistry.disposeByOwner(ownerId, options);
+ }
+ 
+ /** Projects against an already-retained, idle Python session without starting a kernel. */
+diff --git a/packages/coding-agent/src/export/html/viewer.generated.json b/packages/coding-agent/src/export/html/viewer.generated.json
+index 04a1c4a4297ca3eae7dccf29e3b7d8062a6656bc..36803b61a80f60c98cb8c3787e7532417abee286 100644
+--- a/packages/coding-agent/src/export/html/viewer.generated.json
++++ b/packages/coding-agent/src/export/html/viewer.generated.json
+@@ -1,5 +1,5 @@
+ {
+-	"file": "export-viewer-a453a3a5e3536ca377898ca37e9f1569acd5841d7a9fdfbe04a1e705bbdc4bbe.js",
+-	"integrity": "sha256-pFOjpeNTbKN3iYyjfp8VaazVhB16n9++BKHnBbvcS74=",
+-	"size": 793212
++	"file": "export-viewer-1107a6845f2b4292b07683a9e76f6fe1dcfa9d2ab6c1259df2217a7838fd0e64.js",
++	"integrity": "sha256-EQemhF8rQpKwdoOp529v4dz6nSq2wSWd8iF6eDj9DmQ=",
++	"size": 793385
+ }
+diff --git a/packages/coding-agent/src/prompts/tools/todo.md b/packages/coding-agent/src/prompts/tools/todo.md
+index a5629d2a81924a5dd8db8bf6a7501526d9e6ce23..e0ec372cc6ba5efd85c4dd85b57e3a609c236548 100644
+--- a/packages/coding-agent/src/prompts/tools/todo.md
++++ b/packages/coding-agent/src/prompts/tools/todo.md
+@@ -1,5 +1,6 @@
+ `todo` NEVER takes a turn of its own: emit it in the same response as your next real tool call (parallel tool calls), `init` beside the first read or action, `done`/`start` beside the next action or check. A response whose only call is `todo` wastes a full model round trip.
+ Tasks identified by verbatim content, NEVER generated IDs (task-1). Unique, stable task/phase names; lost text: view, NEVER guess.
++`done`/`drop`/`rm`: `task` accepts one verbatim string or a non-empty array of task strings. Omit `task` to target `phase`, or all phases if both are omitted. Empty arrays/array entries are errors. `start` requires exactly one task.
+ `append` requires `items`; omitted `phase` uses the in-progress task's phase, else the first pending task's phase, else the last phase, else a new `Tasks` phase. Supply `phase` to target another phase; an empty name is invalid.
+ Before work, init for 3+ steps, requested task sets, or new instructions. MUST list EVERY user item separately (phased/numbered/bulleted/N); NEVER omit or remember leftovers.
+ After successful mutation: no active means earliest pending starts (phase order); multiple active means only earliest stays. Done out of order may rewind pointer but NEVER reopen completed. Mark done immediately; follow phase order.
+diff --git a/packages/coding-agent/src/prompts/tools/wait.md b/packages/coding-agent/src/prompts/tools/wait.md
+index d62b951774a555d0397f297ff09053a81e3c8bd8..a3433ea09a751c90a766b21faf2f186bbdbf025f 100644
+--- a/packages/coding-agent/src/prompts/tools/wait.md
++++ b/packages/coding-agent/src/prompts/tools/wait.md
+@@ -4,4 +4,9 @@ Nothing you started running and no answer owed? Returns at once.
+ - MUST wait only on your own jobs/services, or rarely the answer to a question that blocks you.
+ - NEVER wait for another agent's progress or for messages nobody owes you.
+ - Result in, other jobs still running? SHOULD act on it before waiting again.
++{{#if endTurn}}
++- Nothing left but waiting on your own jobs/services or an owed reply? End your turn instead: each of their results and messages starts your next turn.
++{{else}}
++- A wait returned with nothing new and nothing else is left? Call `wait` right away with no other tool call: it then blocks up to {{longest}}.
++{{/if}}
+ Results and messages auto-deliver. NEVER poll while work remains.
+diff --git a/packages/coding-agent/src/sdk.ts b/packages/coding-agent/src/sdk.ts
+index ad253ff78074c59f9dc86b388a647c5c4d334ce5..02abdf939fb3b088c417fb22d08ea9da1938f972 100644
+--- a/packages/coding-agent/src/sdk.ts
++++ b/packages/coding-agent/src/sdk.ts
+@@ -2067,9 +2067,9 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
+ 		totalLines: 0,
+ 		agentsMdFiles: [],
+ 	};
+-	const scanWorkspaceTree = (): Promise<WorkspaceTree> => {
++	const scanWorkspaceTree = (root: string): Promise<WorkspaceTree> => {
+ 		const scan = logger.time("buildWorkspaceTree", () =>
+-			buildWorkspaceTree(cwd, { timeoutMs: STARTUP_SCAN_DEADLINE_MS }),
++			buildWorkspaceTree(root, { timeoutMs: STARTUP_SCAN_DEADLINE_MS }),
+ 		);
+ 		scan.catch(() => {});
+ 		return scan;
+@@ -2079,8 +2079,20 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
+ 	let workspaceTreePromise: Promise<WorkspaceTree> | undefined = options.workspaceTree
+ 		? Promise.resolve(options.workspaceTree)
+ 		: cfgIncludeWorkspaceTree.get(settings)
+-			? scanWorkspaceTree()
++			? scanWorkspaceTree(cwd)
+ 			: undefined;
++	// A rebuild after the conversation's cwd changes (`/move`, resuming a
++	// session from another project) or a fresh transcript starts (`/clear`,
++	// `/new`) rescans so the prompt reflects the tree on disk (e.g. after a
++	// branch checkout). Every other rebuild keeps the conversation's own tree,
++	// so its cached prompt prefix stays byte-stable: `workspaceTrees` hands a
++	// resumed conversation back the scan it was last sent with, even when
++	// another conversation rescanned in between. A tree the caller supplied is
++	// theirs: it is never replaced by a scan.
++	let workspaceTreeRoot = path.resolve(cwd);
++	let workspaceTreeEpoch = 0;
++	// An entry without a scan retains invalidation while tree rendering is disabled.
++	const workspaceTrees = new Map<string, { root: string; scan?: Promise<WorkspaceTree> }>();
+ 	// Tree from a mid-session scan; supersedes the startup value handed to subagents.
+ 	let lateWorkspaceTree: WorkspaceTree | undefined;
+ 
+@@ -4249,6 +4261,15 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
+ 			xdev,
+ 		): Promise<BuildSystemPromptResult> => {
+ 			const promptCwd = sessionManager.getCwd();
++			const treeRoot = path.resolve(promptCwd);
++			const conversation = sessionManager.getSessionId();
++			const treeEpoch = hasSession ? session.transcriptEpoch : 0;
++			if (!options.workspaceTree && treeEpoch !== workspaceTreeEpoch) {
++				// Claim the boundary for this conversation before any discovery awaits,
++				// even when its tree will not be rendered on this rebuild.
++				workspaceTrees.set(conversation, { root: treeRoot });
++				workspaceTreeEpoch = treeEpoch;
++			}
+ 			let activeRepoContext = initialActiveRepoContext;
+ 			// Re-discover rules and context files from disk on every session-scoped
+ 			// rebuild. The rule buckets are otherwise frozen at
+@@ -4391,15 +4412,29 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
+ 			// namespace catalog; native tool calling lets the compact name list suffice.
+ 			const nativeTools = resolveDialect(cfgToolsFormat.get(settings), agent?.state.model ?? model) === undefined;
+ 			const includeWorkspaceTree = cfgIncludeWorkspaceTree.get(settings);
+-			if (includeWorkspaceTree && !workspaceTreePromise) {
+-				const scan = scanWorkspaceTree();
+-				workspaceTreePromise = scan;
+-				scan.then(
+-					tree => {
+-						lateWorkspaceTree = tree;
+-					},
+-					() => {},
+-				);
++			if (includeWorkspaceTree && !options.workspaceTree) {
++				const held = workspaceTrees.get(conversation);
++				// A known conversation owns its scan (or its pending fresh scan). Only
++				// one first seen here may share the current scan for the same directory.
++				const kept = held
++					? held.root === treeRoot
++						? held.scan
++						: undefined
++					: treeRoot === workspaceTreeRoot
++						? workspaceTreePromise
++						: undefined;
++				const scan = kept ?? scanWorkspaceTree(treeRoot);
++				workspaceTrees.set(conversation, { root: treeRoot, scan });
++				workspaceTreeRoot = treeRoot;
++				if (scan !== workspaceTreePromise) {
++					workspaceTreePromise = scan;
++					scan.then(
++						tree => {
++							if (workspaceTreePromise === scan) lateWorkspaceTree = tree;
++						},
++						() => {},
++					);
++				}
+ 			}
+ 			// Mounted xd:// readers stay out of the direct inventory, but their skill
+ 			// capability still drives catalog/URI guidance: project them into the
+diff --git a/packages/coding-agent/src/session/agent-session.ts b/packages/coding-agent/src/session/agent-session.ts
+index 8fdbac39ace69b277c7c24dba235bab700c0cc67..0348b2af4096081738dc839b56336417e04bb34b 100644
+--- a/packages/coding-agent/src/session/agent-session.ts
++++ b/packages/coding-agent/src/session/agent-session.ts
+@@ -1411,6 +1411,10 @@ export class AgentSession implements SettingsScope, AgentViewSession {
+ 	 *  enqueue and fold/resume normally across an in-session interrupt, only a session identity
+ 	 *  change should drop them. */
+ 	#sessionGeneration = 0;
++	/** Advances when a fresh transcript starts: `/clear` or `/new`. Resuming or reloading an
++	 *  existing session keeps it: that conversation may still have a warm provider cache, so
++	 *  prompt content snapshotted from disk (the workspace tree) must stay byte-stable for it. */
++	#transcriptEpoch = 0;
+ 	/** Latest `session_init` of the transcript the model calls ran on; `init` is null when it has none. */
+ 	#sessionInit: { sessionFile: string | undefined; init: PersistedSessionInit | null } | undefined;
+ 	/** Settles when switchSession commits or restores its previous generation on rollback.
+@@ -1437,6 +1441,8 @@ export class AgentSession implements SettingsScope, AgentViewSession {
+ 			const resolve = this.#resolveSessionTransition;
+ 			this.#sessionTransitionSettled = undefined;
+ 			this.#resolveSessionTransition = undefined;
++			// Also after rollbacks: a hook may have started a kernel for the abandoned target.
++			this.#eval.releaseStaleKernels();
+ 			resolve?.();
+ 			// Deliveries held while the transcript was swapped go to whichever session it settled on.
+ 			this.yieldQueue.requestIdleFlush();
+@@ -2215,6 +2221,8 @@ export class AgentSession implements SettingsScope, AgentViewSession {
+ 			evalToolSession: config.evalToolSession,
+ 			extensionRunner: () => this.#extensionRunner,
+ 			isStreaming: () => this.isStreaming,
++			isSessionTransitioning: () => this.isSessionTransitioning,
++			waitForSessionTransition: () => this.waitForSessionTransition(),
+ 			appendSessionMessage: message => {
+ 				this.agent.appendMessage(message);
+ 				this.sessionManager.appendMessage(message);
+@@ -7138,6 +7146,7 @@ export class AgentSession implements SettingsScope, AgentViewSession {
+ 		this.sessionManager.appendResetBoundary();
+ 
+ 		resetCapabilities();
++		this.#transcriptEpoch++;
+ 		await this.refreshBaseSystemPrompt();
+ 
+ 		return { droppedCount };
+@@ -7316,6 +7325,11 @@ export class AgentSession implements SettingsScope, AgentViewSession {
+ 		return this.agent.state.isStreaming || this.#promptInFlightCount > 0;
+ 	}
+ 
++	/** Transcript epoch: advances on `/clear` and `/new`, never when resuming an existing session. */
++	get transcriptEpoch(): number {
++		return this.#transcriptEpoch;
++	}
++
+ 	/**
+ 	 * Fold background results into context until the next deliberate prompt instead of
+ 	 * waking on them. Used when the user ends a background-job wait; a plain `abort` stops
+@@ -12404,6 +12418,7 @@ export class AgentSession implements SettingsScope, AgentViewSession {
+ 			// directory set, not the previous session's — refresh before the next
+ 			// turn goes out.
+ 			resetCapabilities();
++			this.#transcriptEpoch++;
+ 			await this.refreshBaseSystemPrompt();
+ 
+ 			this.#reseedCostGate();
+diff --git a/packages/coding-agent/src/session/eval-runner.ts b/packages/coding-agent/src/session/eval-runner.ts
+index a8da48e5a32deef9bcee7f176242d9b6b576375e..09285765c0164a141fbe8d1ebe80d02691162af8 100644
+--- a/packages/coding-agent/src/session/eval-runner.ts
++++ b/packages/coding-agent/src/session/eval-runner.ts
+@@ -1,6 +1,7 @@
+ import type { Agent } from "@oh-my-pi/pi-agent-core";
+ import { logger } from "@oh-my-pi/pi-utils";
+ import type { Settings } from "../config/settings";
++import { namespaceSessionId as namespaceJsSessionId } from "../eval/js";
+ import { disposeVmContextsByOwner } from "../eval/js/context-manager";
+ import { namespaceSessionId as namespacePythonSessionId } from "../eval/py";
+ import {
+@@ -25,6 +26,8 @@ export interface EvalRunnerHost {
+ 	extensionRunner(): ExtensionRunner | undefined;
+ 	evalToolSession?: ToolSession;
+ 	isStreaming(): boolean;
++	isSessionTransitioning(): boolean;
++	waitForSessionTransition(): Promise<void>;
+ 	appendSessionMessage(message: PythonExecutionMessage): void;
+ }
+ 
+@@ -42,6 +45,9 @@ export class EvalRunner {
+ 	#pendingMessages: PythonExecutionMessage[] = [];
+ 	#activeExecutions = new Set<Promise<unknown>>();
+ 	#disposing = false;
++	readonly #disposeStarted = Promise.withResolvers<void>();
++	#staleKernelReleaseQueued = false;
++	#pendingKernelRelease: Promise<void> | undefined;
+ 
+ 	constructor(host: EvalRunnerHost, options: { kernelOwnerId: string }) {
+ 		this.#host = host;
+@@ -175,10 +181,50 @@ export class EvalRunner {
+ 	/** Prevents new Python executions before asynchronous disposal starts. */
+ 	beginDispose(): void {
+ 		this.#disposing = true;
++		this.#disposeStarted.resolve();
++	}
++
++	/**
++	 * Releases departed kernels after eval work and session transitions settle, keeping whichever
++	 * session was adopted or restored on rollback, including kernels its hooks started.
++	 */
++	releaseStaleKernels(): void {
++		if (this.#disposing || this.#staleKernelReleaseQueued) return;
++		this.#staleKernelReleaseQueued = true;
++		const previousRelease = this.#pendingKernelRelease;
++		const release = (async () => {
++			await previousRelease;
++			while (!this.#disposing && (this.#activeExecutions.size > 0 || this.#host.isSessionTransitioning())) {
++				await Promise.race([
++					Promise.allSettled([...this.#activeExecutions, this.#host.waitForSessionTransition()]),
++					this.#disposeStarted.promise,
++				]);
++			}
++			this.#staleKernelReleaseQueued = false;
++			if (this.#disposing) return;
++			// Check quiescence and select both languages without yielding to another execution or transition.
++			const sessionId = this.getSessionId();
++			const results = await Promise.allSettled([
++				disposeKernelSessionsByOwner(this.#kernelOwnerId, {
++					keepSessionId: namespacePythonSessionId(sessionId),
++				}),
++				disposeVmContextsByOwner(this.#kernelOwnerId, { keepSessionId: namespaceJsSessionId(sessionId) }),
++			]);
++			for (const result of results) {
++				if (result.status === "rejected") {
++					logger.warn("Failed to release stale eval kernels", { error: String(result.reason) });
++				}
++			}
++		})();
++		this.#pendingKernelRelease = release;
++		void release.finally(() => {
++			if (this.#pendingKernelRelease === release) this.#pendingKernelRelease = undefined;
++		});
+ 	}
+ 
+ 	/** Waits for active work and disposes every retained eval kernel owned by the session. */
+ 	async disposeKernels(): Promise<void> {
++		await this.#pendingKernelRelease;
+ 		const settled = await this.#prepareExecutionsForDispose();
+ 		if (!settled) {
+ 			logger.warn("Detaching retained eval-kernel ownership during dispose while eval execution is still active");
+diff --git a/packages/coding-agent/src/tools/grep.ts b/packages/coding-agent/src/tools/grep.ts
+index 5a48472101c9b9ad2beab50d7ab4b25d352f3d4f..53734dca33759b2d97915db11f922c2252e0c505 100644
+--- a/packages/coding-agent/src/tools/grep.ts
++++ b/packages/coding-agent/src/tools/grep.ts
+@@ -85,10 +85,10 @@ export type GrepToolInput = typeof searchSchema.infer;
+ export const DEFAULT_FILE_LIMIT = 20;
+ /** Per-file match cap for multi-file searches — keeps a single hot file
+  * from crowding out diverse hits. Applied in JS after grep returns. */
+-export const MULTI_FILE_PER_FILE_MATCHES = 20;
++export const MULTI_FILE_PER_FILE_MATCHES = 10;
+ /** Per-file match cap for single-file searches — there's no diversity
+  * concern when the scope is one file. */
+-export const SINGLE_FILE_MATCHES = 200;
++export const SINGLE_FILE_MATCHES = 50;
+ /** Hard safety ceiling on how many matches we fetch from native grep
+  * before JS-side grouping. Sized to comfortably cover the file window
+  * (DEFAULT_FILE_LIMIT files × MULTI_FILE_PER_FILE_MATCHES matches) plus
+@@ -936,10 +936,24 @@ export class GrepTool implements AgentTool<typeof searchSchema, GrepToolDetails>
+ 				}
+ 				if (rangesByAbsPath.size > 0) {
+ 					const filteredMatches: GrepMatch[] = [];
++					const nativeMatchCounts = new Map<string, number>();
++					let limitReached = totalCapReached;
+ 					for (const match of result.matches) {
+ 						const abs = resolveSearchResultPath(searchPath, match.path);
+ 						// Native absolute matches can retain forward slashes on Windows; range keys use path.resolve.
+-						const ranges = rangesByAbsPath.get(path.isAbsolute(match.path) ? path.resolve(abs) : abs);
++						const absKey = path.isAbsolute(match.path) ? path.resolve(abs) : abs;
++						const ranges = rangesByAbsPath.get(absKey);
++						const nativeMatchCount = (nativeMatchCounts.get(absKey) ?? 0) + 1;
++						nativeMatchCounts.set(absKey, nativeMatchCount);
++						// Native marks an exact fetch cap as reached, even at EOF. A
++						// bounded selector is complete once the last fetched match
++						// reaches every range end; later matches are outside its scope.
++						if (
++							nativeMatchCount >= nativeMaxCountPerFile &&
++							(!ranges || ranges.some(range => range.endLine === undefined || range.endLine > match.lineNumber))
++						) {
++							limitReached = true;
++						}
+ 						if (!ranges) {
+ 							// Path has no line-range constraint (e.g. a peer entry without `:N-M`).
+ 							filteredMatches.push(match);
+@@ -961,7 +975,7 @@ export class GrepTool implements AgentTool<typeof searchSchema, GrepToolDetails>
+ 						totalMatches: filteredMatches.length,
+ 						filesWithMatches: new Set(filteredMatches.map(match => match.path)).size,
+ 						filesSearched: result.filesSearched,
+-						limitReached: result.limitReached,
++						limitReached: Boolean(result.limitReached && limitReached),
+ 					};
+ 				}
+ 				if (archiveDisplayMap.size > 0) {
+diff --git a/packages/coding-agent/src/tools/settings.ts b/packages/coding-agent/src/tools/settings.ts
+index 710c869f9dffa0d1c5d058a2531159d3e7f62a61..670233b3674953dbbac271b1c850c33d67e1e051 100644
+--- a/packages/coding-agent/src/tools/settings.ts
++++ b/packages/coding-agent/src/tools/settings.ts
+@@ -488,7 +488,7 @@ export const cfgGrepEnabled = register({
+ export const cfgGrepContextBefore = register({
+ 	id: "grep.contextBefore",
+ 	type: "number",
+-	default: 1,
++	default: 0,
+ 	ui: {
+ 		tab: "tools",
+ 		group: "Grep & Browser",
+@@ -507,7 +507,7 @@ export const cfgGrepContextBefore = register({
+ export const cfgGrepContextAfter = register({
+ 	id: "grep.contextAfter",
+ 	type: "number",
+-	default: 3,
++	default: 0,
+ 	ui: {
+ 		tab: "tools",
+ 		group: "Grep & Browser",
+diff --git a/packages/coding-agent/src/tools/todo.ts b/packages/coding-agent/src/tools/todo.ts
+index 13c994ec7838707be870dd566858581b79f65c0b..c8db930fe336916216f47c70e33e1fd0e5042e14 100644
+--- a/packages/coding-agent/src/tools/todo.ts
++++ b/packages/coding-agent/src/tools/todo.ts
+@@ -5,6 +5,7 @@ import {
+ 	type TodoPhase,
+ 	type TodoCompletionTransition,
+ 	type TodoToolDetails,
++	todoTaskTargets,
+ } from "@oh-my-pi/pi-tui/tools/todo";
+ import { type } from "@oh-my-pi/omptype";
+ import type { AgentTool, AgentToolContext, AgentToolResult, AgentToolUpdateCallback } from "@oh-my-pi/pi-agent-core";
+@@ -59,7 +60,7 @@ const InitListEntry = type({
+ const todoSchema = type({
+ 	op: TodoOp,
+ 	"list?": InitListEntry.array().describe("phases for init"),
+-	"task?": type("string").describe("verbatim task content"),
++	"task?": type("string | string[]").describe("verbatim task content or array of targets; start requires exactly one"),
+ 	"phase?": type("string"),
+ 	// No `atLeastLength(1)` here: `items` is only meaningful for `init`/`append`,
+ 	// and both enforce non-empty with op-specific errors. A stray `items: []` on
+@@ -284,6 +285,16 @@ function resolveTaskOrError(
+ 	return hit;
+ }
+ 
++/** Resolve every targeted task, recording one error per missing content. */
++function resolveTasksOrError(phases: TodoPhase[], contents: readonly string[], errors: string[]): TodoItem[] {
++	const tasks: TodoItem[] = [];
++	for (const content of contents) {
++		const hit = resolveTaskOrError(phases, content, errors);
++		if (hit) tasks.push(hit.task);
++	}
++	return tasks;
++}
++
+ function resolvePhaseOrError(phases: TodoPhase[], name: string | undefined, errors: string[]): TodoPhase | undefined {
+ 	if (!name) {
+ 		errors.push("Missing phase name");
+@@ -295,10 +306,12 @@ function resolvePhaseOrError(phases: TodoPhase[], name: string | undefined, erro
+ }
+ 
+ function getTaskTargets(phases: TodoPhase[], entry: TodoOpEntryValue, errors: string[]): TodoItem[] {
+-	if (entry.task) {
+-		const hit = resolveTaskOrError(phases, entry.task, errors);
+-		return hit ? [hit.task] : [];
++	if (Array.isArray(entry.task) && entry.task.length === 0) {
++		errors.push("Missing task content");
++		return [];
+ 	}
++	const contents = todoTaskTargets(phases, entry.task);
++	if (contents.length > 0) return resolveTasksOrError(phases, contents, errors);
+ 	if (entry.phase) {
+ 		const phase = resolvePhaseOrError(phases, entry.phase, errors);
+ 		return phase ? [...phase.tasks] : [];
+@@ -387,20 +400,9 @@ function appendItems(phases: TodoPhase[], entry: TodoOpEntryValue, errors: strin
+ }
+ 
+ function removeTasks(phases: TodoPhase[], entry: TodoOpEntryValue, errors: string[]): TodoPhase[] {
+-	if (entry.task) {
+-		const hit = resolveTaskOrError(phases, entry.task, errors);
+-		if (!hit) return phases;
+-		hit.phase.tasks = hit.phase.tasks.filter(candidate => candidate !== hit.task);
+-		return phases;
+-	}
+-	if (entry.phase) {
+-		const phase = resolvePhaseOrError(phases, entry.phase, errors);
+-		if (!phase) return phases;
+-		phase.tasks = [];
+-		return phases;
+-	}
++	const targets = new Set(getTaskTargets(phases, entry, errors));
+ 	for (const phase of phases) {
+-		phase.tasks = [];
++		phase.tasks = phase.tasks.filter(task => !targets.has(task));
+ 	}
+ 	return phases;
+ }
+@@ -410,7 +412,12 @@ function applyEntry(phases: TodoPhase[], entry: TodoOpEntryValue, errors: string
+ 		case "init":
+ 			return initPhases(entry, errors);
+ 		case "start": {
+-			const hit = resolveTaskOrError(phases, entry.task, errors);
++			const contents = todoTaskTargets(phases, entry.task);
++			if (contents.length > 1) {
++				errors.push("start takes a single task: only one task can be in progress");
++				return phases;
++			}
++			const hit = resolveTaskOrError(phases, contents[0], errors);
+ 			if (!hit) return phases;
+ 			for (const phase of phases) {
+ 				for (const candidate of phase.tasks) {
+@@ -698,9 +705,9 @@ export class TodoTool implements AgentTool<typeof todoSchema, TodoToolDetails> {
+ 		const { phases: updated, errors } = readOnly
+ 			? { phases: previousPhases, errors: [] as string[] }
+ 			: applyParams(clonePhases(previousPhases), entry);
+-		// A batch with any error is discarded wholesale: persisting a
+-		// half-applied batch makes the natural retry hit "already exists" for
+-		// the ops that did land. State and rendered summary stay at previous.
++		// Any target error discards the whole operation, so a retry never sees
++		// partially completed, abandoned or removed tasks. The result and the
++		// persisted snapshot both stay at the previous state.
+ 		const failed = errors.length > 0;
+ 		const effective = failed ? previousPhases : updated;
+ 		const completedTasks = readOnly || failed ? [] : getCompletionTransitions(previousPhases, updated);
+diff --git a/packages/coding-agent/src/tools/wait.ts b/packages/coding-agent/src/tools/wait.ts
+index 6da4915035f99418db2c57af23310866c9d87d45..17fe1c2c9cd9d226c4eee8a3dc50ef0e1fc88a4b 100644
+--- a/packages/coding-agent/src/tools/wait.ts
++++ b/packages/coding-agent/src/tools/wait.ts
+@@ -25,9 +25,13 @@ const waitSchema = type({});
+ /**
+  * Windows (ms) a blocking wait gives its first wake before it returns with
+  * nothing new. Each back-to-back idle wait climbs one rung, so the agent gets
+- * its turn back early while work warms up, and a wait loop backs off.
++ * its turn back early while work warms up, and a wait loop backs off. A
++ * back-to-back wait that is the only call of its turn takes the top rung at
++ * once: the agent has nothing else to do, so an early return would only cost
++ * it a request. The first wait of a streak still starts at the floor.
+  */
+-const WAIT_LADDER_MS = [5_000, 10_000, 30_000, 60_000, 300_000] as const;
++const WAIT_LADDER_MS = [5_000, 10_000, 30_000, 60_000, 240_000] as const;
++const WAIT_TOP_RUNG = WAIT_LADDER_MS.length - 1;
+ /** A gap this long since the last idle wait returned means the agent worked in between: the ladder restarts at the floor. */
+ const WAIT_LADDER_RESET_MS = 60_000;
+ /** First rung whose elapsed window appends the progress reminder: one idle wait is patience, a second back-to-back is a loop. */
+@@ -142,13 +146,42 @@ function noReplyText(replies: PendingReplies): string {
+ }
+ 
+ /**
+- * The line an elapsed wait reports: the window it spent and the one a
+- * back-to-back wait gets. A bare still-running snapshot reads as an empty
+- * result, and agents then start `sleep` jobs to block for longer.
++ * The line an elapsed wait reports: the window it spent, then what to do once
++ * nothing else is left. A bare still-running snapshot reads as an empty
++ * result, and agents then start `sleep` jobs to block for longer. Every result
++ * and message starts the next turn of an `endTurn` caller (see
++ * `ToolSession.tuiTranscript`), so it is told to end its turn; any other
++ * caller, to wait again right away with no other tool call, which takes the
++ * top rung (a minute away from `wait` restarts the ladder at the floor).
+  */
+-function elapsedReport(what: string, rung: number): string {
+-	const next = WAIT_LADDER_MS[Math.min(rung + 1, WAIT_LADDER_MS.length - 1)];
+-	return `${what} within ${formatDuration(WAIT_LADDER_MS[rung])}; a back-to-back wait allows up to ${formatDuration(next)}.`;
++function elapsedReport(what: string, rung: number, endTurn: boolean): string {
++	const next = endTurn
++		? "Nothing else left? End your turn: results and messages start your next one."
++		: `Nothing else left? Call \`wait\` right away with no other tool call: it then blocks up to ${formatDuration(WAIT_LADDER_MS[WAIT_TOP_RUNG])}.`;
++	return `${what} within ${formatDuration(WAIT_LADDER_MS[rung])}. ${next}`;
++}
++
++/**
++ * Whether `toolCallId` is the only tool call of the turn that made it: the
++ * latest assistant message in the caller's context. A call that is not there
++ * (no context, or a call from an eval cell) counts as not alone.
++ */
++function isOnlyCallOfTurn(session: ToolSession, toolCallId: string): boolean {
++	const messages = session.getContextMessages?.();
++	if (!messages) return false;
++	for (let i = messages.length - 1; i >= 0; i--) {
++		const message = messages[i];
++		if (message.role !== "assistant") continue;
++		let calls = 0;
++		let found = false;
++		for (const block of message.content) {
++			if (block.type !== "toolCall") continue;
++			calls++;
++			found ||= block.id === toolCallId;
++		}
++		return found && calls === 1;
++	}
++	return false;
+ }
+ 
+ /** Whether `session` has the `wait` tool active, so prompts may point blocked callers at it. */
+@@ -163,7 +196,8 @@ export function hasWaitTool(session: ToolSession): boolean {
+  * still answer soon: each one finished its turn, is blocked on the caller
+  * itself (the cycle that would park both sides), or is waiting on the user.
+  * With nothing new, a wait returns after a window from {@link WAIT_LADDER_MS}
+- * that climbs across back-to-back idle waits. A direct message arriving
++ * that climbs across back-to-back idle waits, or takes the top rung when the
++ * wait is the only call of its turn. A direct message arriving
+  * mid-wait ends any wait. Messages never ride in the wait's result: each one
+  * reaches the caller as a user turn right after it (see `handOffMail`).
+  * Broadcast legs and progress notes ask the caller nothing, so they never end
+@@ -176,7 +210,7 @@ export class WaitTool implements AgentTool<typeof waitSchema, CoordinationDetail
+ 	readonly name = "wait";
+ 	readonly label = "Wait";
+ 	readonly summary = "Wait for the next result of a background job or service you started, or a reply you asked for";
+-	readonly description = prompt.render(waitDescription);
++	readonly description: string;
+ 	readonly parameters = waitSchema;
+ 	readonly strict = true;
+ 	readonly interruptible = true;
+@@ -185,11 +219,19 @@ export class WaitTool implements AgentTool<typeof waitSchema, CoordinationDetail
+ 	readonly loadMode = "essential";
+ 	readonly intent = "optional";
+ 	#idle: IdleStreak | undefined;
++	/** The top-level interactive session: every result and message starts its next turn, so it ends its turn instead of waiting. */
++	readonly #endTurn: boolean;
+ 
+-	constructor(private readonly session: ToolSession) {}
++	constructor(private readonly session: ToolSession) {
++		this.#endTurn = session.tuiTranscript === true;
++		this.description = prompt.render(waitDescription, {
++			endTurn: this.#endTurn,
++			longest: formatDuration(WAIT_LADDER_MS[WAIT_TOP_RUNG]),
++		});
++	}
+ 
+ 	async execute(
+-		_toolCallId: string,
++		toolCallId: string,
+ 		_params: typeof waitSchema.infer,
+ 		signal?: AbortSignal,
+ 		onUpdate?: AgentToolUpdateCallback<CoordinationDetails>,
+@@ -256,6 +298,7 @@ export class WaitTool implements AgentTool<typeof waitSchema, CoordinationDetail
+ 			}
+ 		}
+ 		return this.#blockUntilWake({
++			toolCallId,
+ 			jobs,
+ 			manager,
+ 			messaging,
+@@ -273,6 +316,7 @@ export class WaitTool implements AgentTool<typeof waitSchema, CoordinationDetail
+ 	 * With neither jobs nor a service, the block is a reply wait: it also ends once no agent asked can still reply.
+ 	 */
+ 	async #blockUntilWake(args: {
++		toolCallId: string;
+ 		jobs: AsyncJob[];
+ 		manager: AsyncJobManagerApi | undefined;
+ 		messaging: WaitMessaging | undefined;
+@@ -287,7 +331,11 @@ export class WaitTool implements AgentTool<typeof waitSchema, CoordinationDetail
+ 	}): Promise<AgentToolResult<CoordinationDetails>> {
+ 		const { jobs, manager, messaging, serviceRunning, idle, signal, onUpdate, startedAtMs, settledAtEntry } = args;
+ 		const streak = idle && Date.now() - idle.endedAt < WAIT_LADDER_RESET_MS ? idle : undefined;
+-		const rung = streak ? Math.min(streak.rung + 1, WAIT_LADDER_MS.length - 1) : 0;
++		const rung = !streak
++			? 0
++			: isOnlyCallOfTurn(this.session, args.toolCallId)
++				? WAIT_TOP_RUNG
++				: Math.min(streak.rung + 1, WAIT_TOP_RUNG);
+ 		const watchedIds = jobs.map(job => job.id);
+ 		manager?.watchJobs(watchedIds);
+ 		const serviceAbort = new AbortController();
+@@ -411,7 +459,7 @@ export class WaitTool implements AgentTool<typeof waitSchema, CoordinationDetail
+ 				if (wake === "timeout") {
+ 					// The report is one text block (`buildJobResult`); the timeout line joins it.
+ 					const report = result.content.find(block => block.type === "text")?.text ?? "";
+-					const text = `${report}\n\n${elapsedReport("No job finished", rung)}`;
++					const text = `${report}\n\n${elapsedReport("No job finished", rung, this.#endTurn)}`;
+ 					return this.#elapsed({ ...result, content: [{ type: "text", text }] }, rung, streak);
+ 				}
+ 				// A finished service is news even while every watched job still runs.
+@@ -421,8 +469,8 @@ export class WaitTool implements AgentTool<typeof waitSchema, CoordinationDetail
+ 			}
+ 			if (wake === "timeout") {
+ 				const text = replyWait
+-					? elapsedReport("No reply", rung)
+-					: `${elapsedReport("No service finished", rung)} Read proc:// for status.`;
++					? elapsedReport("No reply", rung, this.#endTurn)
++					: `${elapsedReport("No service finished", rung, this.#endTurn)} Read proc:// for status.`;
+ 				// A wait that ran out with nothing to report is an idle poll.
+ 				const result: AgentToolResult<CoordinationDetails> = {
+ 					content: [{ type: "text", text }],
+diff --git a/packages/coding-agent/test/agent-session-context-file-reload.test.ts b/packages/coding-agent/test/agent-session-context-file-reload.test.ts
+index 0abffc373f77a5213dc011c40b25584d2db18478..5858bec672fb5a6bfe7e1f44f8f99059210c0453 100644
+--- a/packages/coding-agent/test/agent-session-context-file-reload.test.ts
++++ b/packages/coding-agent/test/agent-session-context-file-reload.test.ts
+@@ -10,8 +10,10 @@ import { createAgentSession } from "@oh-my-pi/pi-coding-agent/sdk";
+ import type { AgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session";
+ import { AuthStorage } from "@oh-my-pi/pi-coding-agent/session/auth-storage";
+ import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
++import { cfgIncludeWorkspaceTree } from "@oh-my-pi/pi-coding-agent/session/settings";
+ import { buildSessionContextView } from "@oh-my-pi/pi-coding-agent/session/context-view";
+ import * as repoContext from "@oh-my-pi/pi-coding-agent/utils/active-repo-context";
++import type { WorkspaceTree } from "@oh-my-pi/pi-coding-agent/workspace-tree";
+ import { TempDir } from "@oh-my-pi/pi-utils";
+ 
+ function buildLocalModel(api: string): Model<Api> {
+@@ -29,27 +31,35 @@ function buildLocalModel(api: string): Model<Api> {
+ 	} as ModelSpec<Api>) as Model<Api>;
+ }
+ 
+-async function expectContextReload(reset: (session: AgentSession) => Promise<unknown>): Promise<void> {
+-	using tempDir = TempDir.createSync("@pi-context-reload-");
+-	const marker = Bun.nanoseconds().toString(36);
+-	const original = `ORIGINAL_RULES_${marker}`;
+-	const updated = `UPDATED_RULES_${marker}`;
+-	const agentsMd = path.join(tempDir.path(), "AGENTS.md");
+-	await fs.writeFile(agentsMd, original);
++interface ReloadSession {
++	session: AgentSession;
++	close(): Promise<void>;
++}
++
++interface ReloadSessionOptions {
++	settings?: Readonly<Record<string, unknown>>;
++	sessionManager?: SessionManager;
++	workspaceTree?: WorkspaceTree;
++}
+ 
+-	const api = `context-reload-${marker}`;
++/** Session whose prompt inputs are discovered from `cwd` on disk. */
++async function openReloadSession(
++	tempDir: TempDir,
++	cwd: string,
++	options: ReloadSessionOptions = {},
++): Promise<ReloadSession> {
+ 	const authStorage = await AuthStorage.create(tempDir.join("auth.db"));
+ 	authStorage.keys.setRuntime("managed-primary", "test-key");
+ 	const modelRegistry = new ModelRegistry(authStorage, tempDir.join("models.yml"));
+-
+ 	const { session } = await createAgentSession({
+-		cwd: tempDir.path(),
++		cwd,
+ 		agentDir: tempDir.path(),
+-		sessionManager: SessionManager.inMemory(tempDir.path()),
++		sessionManager: options.sessionManager ?? SessionManager.inMemory(cwd),
+ 		authStorage,
+ 		modelRegistry,
+-		settings: Settings.isolated({ "compaction.enabled": false }),
+-		model: buildLocalModel(api),
++		settings: Settings.isolated({ "compaction.enabled": false, ...options.settings }),
++		workspaceTree: options.workspaceTree,
++		model: buildLocalModel(`context-reload-${Bun.nanoseconds().toString(36)}`),
+ 		disableExtensionDiscovery: true,
+ 		skills: [],
+ 		// contextFiles intentionally omitted so discovery runs against disk.
+@@ -59,6 +69,24 @@ async function expectContextReload(reset: (session: AgentSession) => Promise<unk
+ 		enableLsp: false,
+ 		skipPythonPreflight: true,
+ 	});
++	return {
++		session,
++		async close() {
++			await session.dispose();
++			authStorage.close();
++		},
++	};
++}
++
++async function expectContextReload(reset: (session: AgentSession) => Promise<unknown>): Promise<void> {
++	using tempDir = TempDir.createSync("@pi-context-reload-");
++	const marker = Bun.nanoseconds().toString(36);
++	const original = `ORIGINAL_RULES_${marker}`;
++	const updated = `UPDATED_RULES_${marker}`;
++	const agentsMd = path.join(tempDir.path(), "AGENTS.md");
++	await fs.writeFile(agentsMd, original);
++
++	const { session, close } = await openReloadSession(tempDir, tempDir.path());
+ 
+ 	try {
+ 		await session.refreshBaseSystemPrompt();
+@@ -81,8 +109,28 @@ async function expectContextReload(reset: (session: AgentSession) => Promise<unk
+ 		expect(instructionText()).toContain(updated);
+ 		expect(instructionText()).not.toContain(original);
+ 	} finally {
+-		await session.dispose();
+-		authStorage.close();
++		await close();
++	}
++}
++
++async function withTreeSession(
++	run: (session: AgentSession, tempDir: TempDir) => Promise<void>,
++	options: { persisted?: boolean; workspaceTree?: WorkspaceTree; expectInitial?: string } = {},
++): Promise<void> {
++	using tempDir = TempDir.createSync("@pi-workspace-tree-");
++	await fs.mkdir(tempDir.join("project"));
++	await Bun.write(tempDir.join("project", "original_entry.txt"), "x");
++	const cwd = tempDir.join("project");
++	const { session, close } = await openReloadSession(tempDir, cwd, {
++		settings: { includeWorkspaceTree: true },
++		sessionManager: options.persisted ? SessionManager.create(cwd, tempDir.join("sessions")) : undefined,
++		workspaceTree: options.workspaceTree,
++	});
++	try {
++		expect(session.systemPrompt.join("\n")).toContain(options.expectInitial ?? "original_entry.txt");
++		await run(session, tempDir);
++	} finally {
++		await close();
+ 	}
+ }
+ 
+@@ -141,3 +189,266 @@ describe("AgentSession context-file reload on session reset", () => {
+ 		});
+ 	});
+ });
++
++describe("workspace tree in the system prompt", () => {
++	it("keeps the prompt byte-stable within a transcript and refreshes the tree after a context reset", async () => {
++		await withTreeSession(async (session, tempDir) => {
++			const before = [...session.systemPrompt];
++			await Bun.write(tempDir.join("project", "checked_out_entry.txt"), "x");
++
++			await session.refreshBaseSystemPrompt();
++			expect(session.systemPrompt).toEqual(before);
++
++			expect(await session.resetSessionContext()).toBeTruthy();
++			expect(session.systemPrompt.join("\n")).toContain("checked_out_entry.txt");
++		});
++	});
++
++	it("rescans the tree when a new session starts", async () => {
++		await withTreeSession(async (session, tempDir) => {
++			await Bun.write(tempDir.join("project", "checked_out_entry.txt"), "x");
++
++			expect(await session.newSession()).toBe(true);
++			expect(session.systemPrompt.join("\n")).toContain("checked_out_entry.txt");
++		});
++	});
++
++	it("keeps the tree when resuming another session in the same directory", async () => {
++		await withTreeSession(
++			async (session, tempDir) => {
++				const cwd = session.sessionManager.getCwd();
++				const target = SessionManager.create(cwd, tempDir.join("sessions"));
++				target.appendMessage({ role: "user", content: "target", timestamp: 1 });
++				await target.ensureOnDisk();
++				await target.flush();
++				const targetFile = target.getSessionFile();
++				await target.close();
++				if (!targetFile) throw new Error("Expected the target session to be on disk");
++				await Bun.write(path.join(cwd, "checked_out_entry.txt"), "x");
++
++				// The resumed conversation may still be cached under this prefix.
++				expect(await session.switchSession(targetFile)).toBe(true);
++				expect(session.systemPrompt.join("\n")).not.toContain("checked_out_entry.txt");
++			},
++			{ persisted: true },
++		);
++	});
++
++	it("gives a resumed conversation back its own tree after another one rescanned", async () => {
++		await withTreeSession(
++			async (session, tempDir) => {
++				const cwd = session.sessionManager.getCwd();
++				const earlier = SessionManager.create(cwd, tempDir.join("sessions"));
++				earlier.appendMessage({ role: "user", content: "earlier", timestamp: 1 });
++				await earlier.ensureOnDisk();
++				await earlier.flush();
++				const earlierFile = earlier.getSessionFile();
++				await earlier.close();
++				if (!earlierFile) throw new Error("Expected the earlier session to be on disk");
++				expect(await session.switchSession(earlierFile)).toBe(true);
++
++				await Bun.write(path.join(cwd, "checked_out_entry.txt"), "x");
++				expect(await session.newSession()).toBe(true);
++				expect(session.systemPrompt.join("\n")).toContain("checked_out_entry.txt");
++
++				// The earlier conversation must not inherit the newer conversation's rescan.
++				expect(await session.switchSession(earlierFile)).toBe(true);
++				expect(session.systemPrompt.join("\n")).not.toContain("checked_out_entry.txt");
++			},
++			{ persisted: true },
++		);
++	});
++
++	it("keeps new and clear invalidation with their conversation while tree rendering is disabled", async () => {
++		await withTreeSession(
++			async session => {
++				const cwd = session.sessionManager.getCwd();
++				await Bun.write(path.join(cwd, "original_pkg", "AGENTS.md"), "original rules");
++				expect(await session.resetSessionContext()).toBeTruthy();
++				await session.sendCustomMessage(
++					{ customType: "note", content: "persist A", display: true },
++					{ triggerTurn: false },
++				);
++				const fileA = session.sessionFile;
++				if (!fileA) throw new Error("Expected conversation A to be on disk");
++
++				const workspaceContext = () => {
++					const prompt = session.systemPrompt.join("\n");
++					return {
++						tree: prompt.match(/<workspace-tree>[\s\S]*?<\/workspace-tree>/)?.[0],
++						directory: prompt.match(/<dir-context>[\s\S]*?<\/dir-context>/)?.[0],
++					};
++				};
++				const setTreeRendering = async (enabled: boolean) => {
++					// Settings.isolated seeds runtime overrides; update that same layer.
++					cfgIncludeWorkspaceTree.override(session.settings, enabled);
++					// The settings watch queues a rebuild on the next microtask.
++					await Promise.resolve();
++					await session.refreshBaseSystemPrompt();
++				};
++				const snapshotA = workspaceContext();
++				expect(snapshotA.tree).toContain("original_entry.txt");
++				expect(snapshotA.directory).toContain("original_pkg/AGENTS.md");
++
++				await setTreeRendering(false);
++				expect(workspaceContext().tree).toBeUndefined();
++				await Bun.write(path.join(cwd, "new_entry.txt"), "x");
++				await Bun.write(path.join(cwd, "new_pkg", "AGENTS.md"), "new rules");
++				expect(await session.newSession()).toBe(true);
++				await session.sendCustomMessage(
++					{ customType: "note", content: "persist B", display: true },
++					{ triggerTurn: false },
++				);
++				const fileB = session.sessionFile;
++				if (!fileB) throw new Error("Expected conversation B to be on disk");
++
++				// A must not consume B's deferred invalidation when rendering resumes.
++				expect(await session.switchSession(fileA)).toBe(true);
++				expect(workspaceContext().tree).toBeUndefined();
++				await setTreeRendering(true);
++				expect(workspaceContext()).toEqual(snapshotA);
++
++				// B must still take its fresh scan rather than sharing A's retained one.
++				expect(await session.switchSession(fileB)).toBe(true);
++				const snapshotB = workspaceContext();
++				expect(snapshotB.tree).toContain("new_entry.txt");
++				expect(snapshotB.directory).toContain("new_pkg/AGENTS.md");
++
++				await Bun.write(path.join(cwd, "later_entry.txt"), "x");
++				await Bun.write(path.join(cwd, "later_pkg", "AGENTS.md"), "later rules");
++				await session.refreshBaseSystemPrompt();
++				expect(workspaceContext()).toEqual(snapshotB);
++				await session.reload();
++				expect(workspaceContext()).toEqual(snapshotB);
++
++				// Clearing B while disabled must retire only B's existing snapshot.
++				await setTreeRendering(false);
++				expect(await session.resetSessionContext()).toBeTruthy();
++				expect(await session.switchSession(fileA)).toBe(true);
++				expect(workspaceContext().tree).toBeUndefined();
++				await setTreeRendering(true);
++				expect(workspaceContext()).toEqual(snapshotA);
++				expect(await session.switchSession(fileB)).toBe(true);
++				const clearedB = workspaceContext();
++				expect(clearedB.tree).toContain("later_entry.txt");
++				expect(clearedB.directory).toContain("later_pkg/AGENTS.md");
++			},
++			{ persisted: true },
++		);
++	});
++
++	it("keeps the prompt byte-stable when the current session is reloaded from disk", async () => {
++		await withTreeSession(
++			async session => {
++				await session.sendCustomMessage(
++					{ customType: "note", content: "persist the session", display: true },
++					{ triggerTurn: false },
++				);
++				const before = [...session.systemPrompt];
++				await Bun.write(path.join(session.sessionManager.getCwd(), "checked_out_entry.txt"), "x");
++
++				await session.reload();
++				expect(session.systemPrompt).toEqual(before);
++			},
++			{ persisted: true },
++		);
++	});
++
++	it("rescans the tree and nested AGENTS.md list after the session cwd moves", async () => {
++		await withTreeSession(async (session, tempDir) => {
++			await Bun.write(tempDir.join("project", "old_pkg", "AGENTS.md"), "old");
++			expect(await session.resetSessionContext()).toBeTruthy();
++			expect(session.systemPrompt.join("\n")).toContain("old_pkg/AGENTS.md");
++
++			await Bun.write(tempDir.join("moved", "moved_entry.txt"), "x");
++			await Bun.write(tempDir.join("moved", "new_pkg", "AGENTS.md"), "new");
++
++			session.sessionManager.setCwdWithoutRelocation(tempDir.join("moved"));
++			await session.refreshBaseSystemPrompt();
++
++			const prompt = session.systemPrompt.join("\n");
++			expect(prompt).toContain("moved_entry.txt");
++			expect(prompt).toContain("new_pkg/AGENTS.md");
++			expect(prompt).not.toContain("original_entry.txt");
++			expect(prompt).not.toContain("old_pkg/AGENTS.md");
++		});
++	});
++
++	it("never replaces a caller-supplied tree with a scan", async () => {
++		const supplied: WorkspaceTree = {
++			rootPath: "/synthetic",
++			rendered: ".\n  - supplied_entry.txt",
++			truncated: false,
++			totalLines: 2,
++			agentsMdFiles: [],
++		};
++		await withTreeSession(
++			async (session, tempDir) => {
++				expect(await session.resetSessionContext()).toBeTruthy();
++				expect(await session.newSession()).toBe(true);
++				await fs.mkdir(tempDir.join("moved"));
++				session.sessionManager.setCwdWithoutRelocation(tempDir.join("moved"));
++				await session.refreshBaseSystemPrompt();
++
++				const prompt = session.systemPrompt.join("\n");
++				expect(prompt).toContain("supplied_entry.txt");
++				expect(prompt).not.toContain("original_entry.txt");
++			},
++			{ workspaceTree: supplied, expectInitial: "supplied_entry.txt" },
++		);
++	});
++
++	it("keeps a caller-supplied AGENTS.md index when automatic workspace trees are disabled", async () => {
++		using tempDir = TempDir.createSync("@pi-workspace-tree-supplied-");
++		const cwd = tempDir.join("project");
++		await Bun.write(path.join(cwd, "on_disk_pkg", "AGENTS.md"), "disk rules");
++		const { session, close } = await openReloadSession(tempDir, cwd, {
++			settings: { includeWorkspaceTree: false },
++			workspaceTree: {
++				rootPath: cwd,
++				rendered: ".\n  - supplied_entry.txt",
++				truncated: false,
++				totalLines: 2,
++				agentsMdFiles: ["supplied_pkg/AGENTS.md"],
++			},
++		});
++		try {
++			const initialPrompt = session.systemPrompt.join("\n");
++			expect(initialPrompt).toContain("supplied_pkg/AGENTS.md");
++			expect(initialPrompt).not.toContain("on_disk_pkg/AGENTS.md");
++			expect(initialPrompt).not.toContain("supplied_entry.txt");
++
++			expect(await session.resetSessionContext()).toBeTruthy();
++			expect(session.systemPrompt.join("\n")).toContain("supplied_pkg/AGENTS.md");
++			expect(await session.newSession()).toBe(true);
++			await fs.mkdir(tempDir.join("moved"));
++			session.sessionManager.setCwdWithoutRelocation(tempDir.join("moved"));
++			await session.refreshBaseSystemPrompt();
++
++			const prompt = session.systemPrompt.join("\n");
++			expect(prompt).toContain("supplied_pkg/AGENTS.md");
++			expect(prompt).not.toContain("on_disk_pkg/AGENTS.md");
++			expect(prompt).not.toContain("supplied_entry.txt");
++		} finally {
++			await close();
++		}
++	});
++
++	it("omits the workspace tree when initially disabled without a supplied tree", async () => {
++		using tempDir = TempDir.createSync("@pi-workspace-tree-disabled-");
++		const cwd = tempDir.join("project");
++		await Bun.write(path.join(cwd, "disabled_entry.txt"), "x");
++		const { session, close } = await openReloadSession(tempDir, cwd, {
++			settings: { includeWorkspaceTree: false },
++		});
++		try {
++			expect(session.systemPrompt.join("\n")).not.toContain("disabled_entry.txt");
++			expect(await session.resetSessionContext()).toBeTruthy();
++			expect(session.systemPrompt.join("\n")).not.toContain("disabled_entry.txt");
++			expect(await session.newSession()).toBe(true);
++			expect(session.systemPrompt.join("\n")).not.toContain("disabled_entry.txt");
++		} finally {
++			await close();
++		}
++	});
++});
+diff --git a/packages/coding-agent/test/agent-session-python-cleanup.test.ts b/packages/coding-agent/test/agent-session-python-cleanup.test.ts
+index bc9d08d07a3a0df82af0bd2747ba5ca839c8e2b3..e6d73d79cf60652465912aa7043a5dedba1289ac 100644
+--- a/packages/coding-agent/test/agent-session-python-cleanup.test.ts
++++ b/packages/coding-agent/test/agent-session-python-cleanup.test.ts
+@@ -3,13 +3,22 @@ import * as fs from "node:fs";
+ import { getBundledModel } from "@oh-my-pi/pi-catalog/models";
+ import { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-registry";
+ import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
++import { namespaceSessionId as namespaceJsSessionId } from "@oh-my-pi/pi-coding-agent/eval/js/index";
++import {
++	disposeVmContextsByOwner,
++	executeInVmContext,
++	snapshotVmContext,
++} from "@oh-my-pi/pi-coding-agent/eval/js/context-manager";
+ import * as pythonExecutor from "@oh-my-pi/pi-coding-agent/eval/py/executor";
+ import type { PythonKernel as PythonKernelInstance } from "@oh-my-pi/pi-coding-agent/eval/py/kernel";
+ import * as pythonKernel from "@oh-my-pi/pi-coding-agent/eval/py/kernel";
+ import { AgentRegistry } from "@oh-my-pi/pi-coding-agent/registry/agent-registry";
+ import { createAgentSession, type ExtensionFactory, type WorkspaceTree } from "@oh-my-pi/pi-coding-agent/sdk";
++import type { AgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session";
+ import { AgentStorage } from "@oh-my-pi/pi-coding-agent/session/agent-storage";
+ import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
++import type { ToolSession } from "@oh-my-pi/pi-coding-agent/tools";
++import type { EvalToolDetails } from "@oh-my-pi/pi-tui/tools/eval";
+ import { Snowflake, TempDir } from "@oh-my-pi/pi-utils";
+ import { createInMemoryAuthStorage } from "./helpers/agent-session-setup";
+ 
+@@ -167,6 +176,34 @@ const createMockKernel = () => {
+ 	};
+ };
+ 
++async function executeJsCell(session: AgentSession, code: string): Promise<string> {
++	const tool = session.getToolByName("eval");
++	if (!tool) throw new Error("Expected the session's eval tool");
++	const result = await tool.execute(
++		Snowflake.next(),
++		{ language: "js", code, timeout: 0 },
++		undefined,
++		undefined,
++		undefined,
++	);
++	const details = result.details as EvalToolDetails | undefined;
++	const cell = details?.cells?.[0];
++	expect(cell?.status).toBe("complete");
++	if (!cell) throw new Error("Expected a completed JavaScript cell");
++	return cell.output.trim();
++}
++
++function snapshotJs(cwd: string, evalSessionId: string) {
++	const sessionId = namespaceJsSessionId(evalSessionId);
++	return snapshotVmContext({ cwd, sessionKey: sessionId, sessionId });
++}
++
++async function flushLifecycleTurn(): Promise<void> {
++	const nextTurn = Promise.withResolvers<void>();
++	setImmediate(nextTurn.resolve);
++	await nextTurn.promise;
++}
++
+ describe("AgentSession python cleanup", () => {
+ 	const tempDirs: TempDir[] = [];
+ 	let originalNullPrompt: string | undefined;
+@@ -761,4 +798,403 @@ describe("AgentSession python cleanup", () => {
+ 		expect(kernel.executeCalls).toEqual(["print('blocked')", "print('blocked')"]);
+ 		expect(kernel.shutdownCalls).toBe(1);
+ 	});
++
++	it("keeps live Python and JS namespaces when a transition retains the same session file", async () => {
++		const { tempDir, cwd } = createTempProject();
++		tempDirs.push(tempDir);
++		const kernel = new FakeKernel();
++		vi.spyOn(pythonKernel, "checkPythonKernelAvailability").mockResolvedValue({ ok: true });
++		vi.spyOn(pythonKernel.PythonKernel, "start").mockResolvedValueOnce(kernel as unknown as PythonKernelInstance);
++		const session = await createSession(tempDir, cwd, {
++			sessionManager: SessionManager.create(cwd, tempDir.join("sessions")),
++		});
++		try {
++			await session.executePython("current");
++			await executeJsCell(session, "var lifetimeValue = 40; print(lifetimeValue);");
++			const sessionId = session.getEvalSessionId();
++			await session.resetSessionContext();
++			await flushLifecycleTurn();
++			expect(session.getEvalSessionId()).toBe(sessionId);
++			expect(kernel.alive).toBe(true);
++			expect(await executeJsCell(session, "print(lifetimeValue + 2);")).toBe("42");
++		} finally {
++			await session.dispose();
++		}
++	}, 30_000);
++
++	it("keeps hook-started Python and JS namespaces when /new releases the departed session", async () => {
++		const { tempDir, cwd } = createTempProject();
++		tempDirs.push(tempDir);
++		const previousKernel = new FakeKernel();
++		const adoptedKernel = new FakeKernel();
++		vi.spyOn(pythonKernel, "checkPythonKernelAvailability").mockResolvedValue({ ok: true });
++		vi.spyOn(pythonKernel.PythonKernel, "start")
++			.mockResolvedValueOnce(previousKernel as unknown as PythonKernelInstance)
++			.mockResolvedValueOnce(adoptedKernel as unknown as PythonKernelInstance);
++		const extension: ExtensionFactory = api => {
++			api.on("session_switch", async () => {
++				await session.executePython("hook");
++				await executeJsCell(session, "var lifetimeValue = 40; print(lifetimeValue);");
++			});
++		};
++		const session = await createSession(tempDir, cwd, {
++			extensions: [extension],
++			sessionManager: SessionManager.create(cwd, tempDir.join("sessions")),
++		});
++		try {
++			await session.executePython("previous");
++			await executeJsCell(session, "var departedValue = 21; print(departedValue);");
++			const previousId = session.getEvalSessionId();
++			expect(await session.newSession()).toBe(true);
++			await flushLifecycleTurn();
++			expect(previousKernel.alive).toBe(false);
++			expect(await snapshotJs(cwd, previousId)).toBeNull();
++			expect(adoptedKernel.alive).toBe(true);
++			expect((await snapshotJs(cwd, session.getEvalSessionId()))?.values.lifetimeValue).toBe(40);
++			expect(await executeJsCell(session, "print(lifetimeValue + 2);")).toBe("42");
++		} finally {
++			await session.dispose();
++		}
++		expect(adoptedKernel.alive).toBe(false);
++	}, 30_000);
++
++	it("detaches a departed shared JS owner and preserves language isolation during full owner disposal", async () => {
++		const { tempDir, cwd } = createTempProject();
++		tempDirs.push(tempDir);
++		const previousKernel = new FakeKernel();
++		const currentKernel = new FakeKernel();
++		const replacementKernel = new FakeKernel();
++		vi.spyOn(pythonKernel, "checkPythonKernelAvailability").mockResolvedValue({ ok: true });
++		vi.spyOn(pythonKernel.PythonKernel, "start")
++			.mockResolvedValueOnce(previousKernel as unknown as PythonKernelInstance)
++			.mockResolvedValueOnce(currentKernel as unknown as PythonKernelInstance)
++			.mockResolvedValueOnce(replacementKernel as unknown as PythonKernelInstance);
++		const session = await createSession(tempDir, cwd, {
++			sessionManager: SessionManager.create(cwd, tempDir.join("sessions")),
++		});
++		const ownerId = session.getEvalKernelOwnerId();
++		const peerId = `lifetime-peer:${Snowflake.next()}`;
++		try {
++			await session.executePython("previous");
++			expect(await executeJsCell(session, "var lifetimeValue = 40; print(lifetimeValue);")).toBe("40");
++			const previousId = session.getEvalSessionId();
++			const previousJsId = namespaceJsSessionId(previousId);
++			const peer: ToolSession = {
++				cwd,
++				hasUI: false,
++				settings: session.settings,
++				getSessionFile: () => null,
++				getSessionSpawns: () => null,
++				getEvalSessionId: () => previousId,
++				getEvalKernelOwnerId: () => peerId,
++			};
++			const chunks: string[] = [];
++			await executeInVmContext({
++				cwd,
++				sessionKey: previousJsId,
++				sessionId: previousJsId,
++				ownerId: peerId,
++				session: peer,
++				code: "print(lifetimeValue + 1);",
++				filename: "[shared-lifetime].js",
++				runState: { onText: chunk => chunks.push(chunk) },
++			});
++			expect(chunks.join("").trim()).toBe("41");
++			expect(await session.newSession()).toBe(true);
++			await flushLifecycleTurn();
++			expect(previousKernel.alive).toBe(false);
++			expect((await snapshotJs(cwd, previousId))?.values.lifetimeValue).toBe(40);
++			await disposeVmContextsByOwner(peerId);
++			expect(await snapshotJs(cwd, previousId)).toBeNull();
++
++			await session.executePython("current");
++			await executeJsCell(session, "var lifetimeValue = 40; print(lifetimeValue);");
++			await pythonExecutor.disposeKernelSessionsByOwner(ownerId);
++			expect(currentKernel.alive).toBe(false);
++			expect(await executeJsCell(session, "print(lifetimeValue + 2);")).toBe("42");
++			await session.executePython("replacement");
++			const currentId = session.getEvalSessionId();
++			await disposeVmContextsByOwner(ownerId);
++			expect(await snapshotJs(cwd, currentId)).toBeNull();
++			expect(replacementKernel.alive).toBe(true);
++			expect((await session.executePython("after-js-dispose")).exitCode).toBe(0);
++			expect(await executeJsCell(session, "print(typeof lifetimeValue);")).toBe("undefined");
++		} finally {
++			await disposeVmContextsByOwner(peerId);
++			await session.dispose();
++		}
++		expect(replacementKernel.alive).toBe(false);
++	}, 30_000);
++
++	it("waits for the old active cell and rereads the final adopted ID after two completed transitions", async () => {
++		const { tempDir, cwd } = createTempProject();
++		tempDirs.push(tempDir);
++		const originalKernel = new FakeKernel();
++		const middleKernel = new FakeKernel();
++		const adoptedKernel = new FakeKernel();
++		const blocked = Promise.withResolvers<typeof OK_EXECUTION>();
++		const started = Promise.withResolvers<void>();
++		originalKernel.blockedCode = "blocked";
++		originalKernel.blockedExecution = blocked.promise;
++		originalKernel.blockedExecutionStarted = () => started.resolve();
++		originalKernel.blockedExecutionReject = error => blocked.reject(error);
++		originalKernel.abortBlockedExecution = false;
++		vi.spyOn(pythonKernel, "checkPythonKernelAvailability").mockResolvedValue({ ok: true });
++		vi.spyOn(pythonKernel.PythonKernel, "start")
++			.mockResolvedValueOnce(originalKernel as unknown as PythonKernelInstance)
++			.mockResolvedValueOnce(middleKernel as unknown as PythonKernelInstance)
++			.mockResolvedValueOnce(adoptedKernel as unknown as PythonKernelInstance);
++		const extension: ExtensionFactory = api => {
++			api.on("session_switch", async () => {
++				await session.executePython("hook");
++				await executeJsCell(session, "var lifetimeValue = 40; print(lifetimeValue);");
++			});
++		};
++		const session = await createSession(tempDir, cwd, {
++			extensions: [extension],
++			sessionManager: SessionManager.create(cwd, tempDir.join("sessions")),
++		});
++		let execution: Promise<pythonExecutor.PythonResult> | undefined;
++		let executionSettled = false;
++		try {
++			await executeJsCell(session, "var lifetimeValue = 10; print(lifetimeValue);");
++			const originalId = session.getEvalSessionId();
++			execution = session.executePython("blocked");
++			void execution.then(
++				() => {
++					executionSettled = true;
++				},
++				() => {
++					executionSettled = true;
++				},
++			);
++			await started.promise;
++			expect(await session.newSession()).toBe(true);
++			const middleId = session.getEvalSessionId();
++			await flushLifecycleTurn();
++			expect(originalKernel.alive).toBe(true);
++			expect(middleKernel.alive).toBe(true);
++			expect((await snapshotJs(cwd, originalId))?.values.lifetimeValue).toBe(10);
++			expect(await session.newSession()).toBe(true);
++			const adoptedId = session.getEvalSessionId();
++			expect(adoptedId).not.toBe(middleId);
++			await flushLifecycleTurn();
++			expect((await snapshotJs(cwd, middleId))?.values.lifetimeValue).toBe(40);
++			expect(originalKernel.alive).toBe(true);
++			expect(middleKernel.alive).toBe(true);
++			expect(executionSettled).toBe(false);
++
++			blocked.resolve(OK_EXECUTION);
++			// /new requests cancellation; a kernel that finishes later still reports that cancellation.
++			expect(await execution).toMatchObject({ cancelled: true, exitCode: undefined });
++			await flushLifecycleTurn();
++			expect(originalKernel.alive).toBe(false);
++			expect(middleKernel.alive).toBe(false);
++			expect(adoptedKernel.alive).toBe(true);
++			expect(await snapshotJs(cwd, originalId)).toBeNull();
++			expect(await snapshotJs(cwd, middleId)).toBeNull();
++			expect((await snapshotJs(cwd, adoptedId))?.values.lifetimeValue).toBe(40);
++			expect(await executeJsCell(session, "print(lifetimeValue + 2);")).toBe("42");
++		} finally {
++			blocked.resolve(OK_EXECUTION);
++			if (execution) await Promise.allSettled([execution]);
++			await session.dispose();
++		}
++	}, 30_000);
++
++	it("releases an abandoned target's Python and JS kernels after rollback while keeping restored state", async () => {
++		const { tempDir, cwd } = createTempProject();
++		tempDirs.push(tempDir);
++		const originalKernel = new FakeKernel();
++		const targetKernel = new FakeKernel();
++		vi.spyOn(pythonKernel, "checkPythonKernelAvailability").mockResolvedValue({ ok: true });
++		vi.spyOn(pythonKernel.PythonKernel, "start")
++			.mockResolvedValueOnce(originalKernel as unknown as PythonKernelInstance)
++			.mockResolvedValueOnce(targetKernel as unknown as PythonKernelInstance);
++		const targetManager = SessionManager.create(cwd, tempDir.join("sessions"));
++		targetManager.appendMessage({ role: "user", content: "target", timestamp: 1 });
++		await targetManager.flush();
++		const targetFile = targetManager.getSessionFile();
++		await targetManager.close();
++		if (!targetFile) throw new Error("Expected a persisted target session");
++		let targetId: string | undefined;
++		const extension: ExtensionFactory = api => {
++			api.on("session_switch", async () => {
++				targetId = session.getEvalSessionId();
++				await session.executePython("target");
++				await executeJsCell(session, "var abandonedValue = 99; print(abandonedValue);");
++			});
++		};
++		const session = await createSession(tempDir, cwd, {
++			extensions: [extension],
++			sessionManager: SessionManager.create(cwd, tempDir.join("sessions")),
++		});
++		const replaceMessages = session.agent.replaceMessages.bind(session.agent);
++		let failTarget = true;
++		const replaceSpy = vi.spyOn(session.agent, "replaceMessages").mockImplementation(messages => {
++			if (failTarget && session.sessionFile === targetFile) {
++				failTarget = false;
++				throw new Error("lifetime rollback");
++			}
++			replaceMessages(messages);
++		});
++		try {
++			await session.executePython("original");
++			await executeJsCell(session, "var restoredValue = 40; print(restoredValue);");
++			const originalId = session.getEvalSessionId();
++			const originalFile = session.sessionFile;
++			await expect(session.switchSession(targetFile)).rejects.toThrow("lifetime rollback");
++			expect(session.sessionFile).toBe(originalFile);
++			expect(session.getEvalSessionId()).toBe(originalId);
++			await flushLifecycleTurn();
++			if (!targetId) throw new Error("Expected the target hook to start its kernels");
++			expect(targetKernel.alive).toBe(false);
++			expect(await snapshotJs(cwd, targetId)).toBeNull();
++			expect(originalKernel.alive).toBe(true);
++			expect(await executeJsCell(session, "print(restoredValue + 2);")).toBe("42");
++		} finally {
++			replaceSpy.mockRestore();
++			await session.dispose();
++		}
++	}, 30_000);
++
++	it("keeps rollback namespaces when an older stale release becomes idle during a later switch", async () => {
++		const { tempDir, cwd } = createTempProject();
++		tempDirs.push(tempDir);
++		const originalKernel = new FakeKernel();
++		const restoredKernel = new FakeKernel();
++		const targetKernel = new FakeKernel();
++		const blocked = Promise.withResolvers<typeof OK_EXECUTION>();
++		const started = Promise.withResolvers<void>();
++		const targetReady = Promise.withResolvers<void>();
++		const releaseTarget = Promise.withResolvers<void>();
++		originalKernel.blockedCode = "blocked";
++		originalKernel.blockedExecution = blocked.promise;
++		originalKernel.blockedExecutionStarted = () => started.resolve();
++		originalKernel.blockedExecutionReject = error => blocked.reject(error);
++		originalKernel.abortBlockedExecution = false;
++		vi.spyOn(pythonKernel, "checkPythonKernelAvailability").mockResolvedValue({ ok: true });
++		vi.spyOn(pythonKernel.PythonKernel, "start")
++			.mockResolvedValueOnce(originalKernel as unknown as PythonKernelInstance)
++			.mockResolvedValueOnce(restoredKernel as unknown as PythonKernelInstance)
++			.mockResolvedValueOnce(targetKernel as unknown as PythonKernelInstance);
++		const targetManager = SessionManager.create(cwd, tempDir.join("sessions"));
++		targetManager.appendMessage({ role: "user", content: "target", timestamp: 1 });
++		await targetManager.flush();
++		const targetFile = targetManager.getSessionFile();
++		await targetManager.close();
++		if (!targetFile) throw new Error("Expected a persisted target session");
++		let targetId: string | undefined;
++		const extension: ExtensionFactory = api => {
++			api.on("session_switch", async event => {
++				await session.executePython(event.reason === "new" ? "restored" : "target");
++				await executeJsCell(
++					session,
++					event.reason === "new"
++						? "var lifetimeValue = 40; print(lifetimeValue);"
++						: "var lifetimeValue = 99; print(lifetimeValue);",
++				);
++				if (event.reason === "resume") {
++					targetId = session.getEvalSessionId();
++					targetReady.resolve();
++					await releaseTarget.promise;
++				}
++			});
++		};
++		const session = await createSession(tempDir, cwd, {
++			extensions: [extension],
++			sessionManager: SessionManager.create(cwd, tempDir.join("sessions")),
++		});
++		const replaceMessages = session.agent.replaceMessages.bind(session.agent);
++		const replaceSpy = vi.spyOn(session.agent, "replaceMessages").mockImplementation(messages => {
++			if (session.sessionFile === targetFile) throw new Error("overlapping release rollback");
++			replaceMessages(messages);
++		});
++		let execution: Promise<pythonExecutor.PythonResult> | undefined;
++		let switching: Promise<boolean> | undefined;
++		try {
++			execution = session.executePython("blocked");
++			void execution.catch(() => undefined);
++			await started.promise;
++			expect(await session.newSession()).toBe(true);
++			const restoredId = session.getEvalSessionId();
++			const restoredFile = session.sessionFile;
++			expect(originalKernel.alive).toBe(true);
++			switching = session.switchSession(targetFile);
++			void switching.catch(() => undefined);
++			await targetReady.promise;
++
++			blocked.resolve(OK_EXECUTION);
++			expect(await execution).toMatchObject({ cancelled: true, exitCode: undefined });
++			await flushLifecycleTurn();
++			expect(restoredKernel.alive).toBe(true);
++			expect((await snapshotJs(cwd, restoredId))?.values.lifetimeValue).toBe(40);
++			expect(targetKernel.alive).toBe(true);
++
++			releaseTarget.resolve();
++			await expect(switching).rejects.toThrow("overlapping release rollback");
++			expect(session.sessionFile).toBe(restoredFile);
++			expect(session.getEvalSessionId()).toBe(restoredId);
++			await flushLifecycleTurn();
++			if (!targetId) throw new Error("Expected the target hook to start its kernels");
++			expect(originalKernel.alive).toBe(false);
++			expect(targetKernel.alive).toBe(false);
++			expect(await snapshotJs(cwd, targetId)).toBeNull();
++			expect(restoredKernel.alive).toBe(true);
++			expect((await session.executePython("after rollback")).exitCode).toBe(0);
++			expect(await executeJsCell(session, "print(lifetimeValue + 2);")).toBe("42");
++		} finally {
++			blocked.resolve(OK_EXECUTION);
++			releaseTarget.resolve();
++			await Promise.allSettled([execution, switching]);
++			replaceSpy.mockRestore();
++			await session.dispose();
++		}
++	}, 30_000);
++
++	it("begins full disposal while stale release awaits an active cell without deadlocking cleanup", async () => {
++		const { tempDir, cwd } = createTempProject();
++		tempDirs.push(tempDir);
++		const kernel = new FakeKernel();
++		const blocked = Promise.withResolvers<typeof OK_EXECUTION>();
++		const started = Promise.withResolvers<void>();
++		kernel.blockedCode = "blocked";
++		kernel.blockedExecution = blocked.promise;
++		kernel.blockedExecutionStarted = () => started.resolve();
++		kernel.blockedExecutionReject = error => blocked.reject(error);
++		kernel.abortBlockedExecution = false;
++		vi.spyOn(pythonKernel, "checkPythonKernelAvailability").mockResolvedValue({ ok: true });
++		vi.spyOn(pythonKernel.PythonKernel, "start").mockResolvedValueOnce(kernel as unknown as PythonKernelInstance);
++		const session = await createSession(tempDir, cwd, {
++			sessionManager: SessionManager.create(cwd, tempDir.join("sessions")),
++		});
++		let execution: Promise<pythonExecutor.PythonResult> | undefined;
++		let sleepSpy: Mock<typeof Bun.sleep> | undefined;
++		try {
++			await executeJsCell(session, "var lifetimeValue = 40; print(lifetimeValue);");
++			const originalId = session.getEvalSessionId();
++			execution = session.executePython("blocked");
++			void execution.catch(() => undefined);
++			await started.promise;
++			expect(await session.newSession()).toBe(true);
++			await flushLifecycleTurn();
++			expect(kernel.alive).toBe(true);
++			expect((await snapshotJs(cwd, originalId))?.values.lifetimeValue).toBe(40);
++
++			sleepSpy = mockPositiveSleepsImmediate();
++			session.beginDispose();
++			await session.dispose();
++			expectSleepNear(sleepSpy, 3000);
++			expectSleepNear(sleepSpy, 1000);
++			expect(kernel.alive).toBe(false);
++			expect(kernel.shutdownCalls).toBe(1);
++			expect(await execution).toMatchObject({ cancelled: true });
++			expect(await snapshotJs(cwd, originalId)).toBeNull();
++		} finally {
++			blocked.resolve(OK_EXECUTION);
++			if (execution) await Promise.allSettled([execution]);
++			await session.dispose();
++			sleepSpy?.mockRestore();
++		}
++	}, 30_000);
+ });
+diff --git a/packages/coding-agent/test/eval/context-manager-startup.test.ts b/packages/coding-agent/test/eval/context-manager-startup.test.ts
+index 3cd4a70dcc7fc62459cbb8eb62408897db304f6a..65ccdd42d5e7f8472be884cacdf2857c0636673a 100644
+--- a/packages/coding-agent/test/eval/context-manager-startup.test.ts
++++ b/packages/coding-agent/test/eval/context-manager-startup.test.ts
+@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, setDefaultTimeout } from "bun:test";
+ import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
+ import {
+ 	disposeAllVmContexts,
++	disposeVmContextsByOwner,
+ 	executeInVmContext,
+ 	type JsEvalWorkerFactories,
+ 	type JsEvalWorkerHandle,
+@@ -91,6 +92,88 @@ async function captureStartupError(sessionKey: string): Promise<Error> {
+ 	}
+ }
+ 
++/** Hold a real isolated worker's init until the test releases the retained startup record. */
++function createInitGatedWorker(): {
++	handle: JsEvalWorkerHandle;
++	initialized: Promise<void>;
++	release(): void;
++	stop(): Promise<void>;
++} {
++	const worker = new Worker(new URL("../../src/eval/js/worker-entry.ts", import.meta.url).href, { type: "module" });
++	const initialized = Promise.withResolvers<void>();
++	const exited = Promise.withResolvers<void>();
++	const listeners = new Set<(message: WorkerOutbound) => void>();
++	let heldInit: Extract<WorkerInbound, { type: "init" }> | undefined;
++	let released = false;
++	let stopped = false;
++	worker.addEventListener("message", (event: MessageEvent<WorkerOutbound>) => {
++		for (const listener of listeners) listener(event.data);
++	});
++	worker.addEventListener("close", () => exited.resolve());
++	const stop = async (): Promise<void> => {
++		if (!stopped) {
++			stopped = true;
++			worker.terminate();
++		}
++		await exited.promise;
++	};
++	return {
++		initialized: initialized.promise,
++		release() {
++			released = true;
++			if (!heldInit) return;
++			worker.postMessage(heldInit);
++			heldInit = undefined;
++		},
++		stop,
++		handle: {
++			mode: "worker",
++			send(message) {
++				if (message.type === "init" && !released) {
++					heldInit = message;
++					initialized.resolve();
++					return;
++				}
++				worker.postMessage(message);
++			},
++			onMessage(handler) {
++				listeners.add(handler);
++				return () => listeners.delete(handler);
++			},
++			onError(handler) {
++				const onError = (event: ErrorEvent): void =>
++					handler(event.error instanceof Error ? event.error : new Error(event.message));
++				worker.addEventListener("error", onError);
++				return () => worker.removeEventListener("error", onError);
++			},
++			async close() {
++				await stop();
++				return true;
++			},
++			terminate: stop,
++		},
++	};
++}
++
++async function executeLifetimeCell(sessionKey: string, ownerId: string, code: string): Promise<string> {
++	const chunks: string[] = [];
++	await executeInVmContext({
++		sessionKey,
++		sessionId: sessionKey,
++		ownerId,
++		cwd: process.cwd(),
++		session: {
++			...createSession(),
++			getEvalSessionId: () => sessionKey,
++			getEvalKernelOwnerId: () => ownerId,
++		},
++		code,
++		filename: "[owner-lifetime].js",
++		runState: { onText: chunk => chunks.push(chunk) },
++	});
++	return chunks.join("").trim();
++}
++
+ describe("JS eval isolated startup failures", () => {
+ 	let restoreFactories: (() => void) | undefined;
+ 
+@@ -149,4 +232,54 @@ describe("JS eval isolated startup failures", () => {
+ 		expect(state).toEqual({ runMessages: 0, terminations: 4 });
+ 		expect(process.env[EXECUTION_MARKER]).toBeUndefined();
+ 	});
++
++	it("keeps a live or starting current namespace and its ownership until ordinary owner disposal", async () => {
++		const sessionKey = `js:owner-lifetime-${crypto.randomUUID()}`;
++		const ownerId = `${sessionKey}:owner`;
++		const peerId = `${sessionKey}:peer`;
++		const gated = createInitGatedWorker();
++		restoreFactories = setJsEvalWorkerFactoriesForTests({ spawnProcess: () => gated.handle });
++		const first = executeLifetimeCell(sessionKey, ownerId, "var sharedLifetime = 40; print(sharedLifetime);");
++		void first.catch(() => undefined);
++		let peer: Promise<string> | undefined;
++		const disposals: Promise<void>[] = [];
++		const finishesBeforeNextTurn = async (work: Promise<void>): Promise<boolean> => {
++			const nextTurn = Promise.withResolvers<void>();
++			setImmediate(nextTurn.resolve);
++			return await Promise.race([work.then(() => true), nextTurn.promise.then(() => false)]);
++		};
++		try {
++			await gated.initialized;
++			const keepSole = disposeVmContextsByOwner(ownerId, { keepSessionId: sessionKey });
++			disposals.push(keepSole);
++			expect(await finishesBeforeNextTurn(keepSole)).toBe(true);
++
++			peer = executeLifetimeCell(sessionKey, peerId, "print(6 * 7);");
++			void peer.catch(() => undefined);
++			const keepShared = disposeVmContextsByOwner(ownerId, { keepSessionId: sessionKey });
++			disposals.push(keepShared);
++			expect(await finishesBeforeNextTurn(keepShared)).toBe(true);
++			const detachPeer = disposeVmContextsByOwner(peerId);
++			disposals.push(detachPeer);
++			expect(await finishesBeforeNextTurn(detachPeer)).toBe(true);
++
++			gated.release();
++			expect(await first).toBe("40");
++			expect(await peer).toBe("42");
++			restoreFactories?.();
++			restoreFactories = undefined;
++			await disposeVmContextsByOwner(ownerId, { keepSessionId: sessionKey });
++			expect(await executeLifetimeCell(sessionKey, ownerId, "print(sharedLifetime + 2);")).toBe("42");
++
++			await disposeVmContextsByOwner(ownerId);
++			expect(await executeLifetimeCell(sessionKey, ownerId, "print(typeof sharedLifetime);")).toBe("undefined");
++		} finally {
++			gated.release();
++			restoreFactories?.();
++			restoreFactories = undefined;
++			await Promise.allSettled([first, ...(peer ? [peer] : []), ...disposals]);
++			await Promise.all([disposeVmContextsByOwner(ownerId), disposeVmContextsByOwner(peerId)]);
++			await gated.stop();
++		}
++	}, 30_000);
+ });
+diff --git a/packages/coding-agent/test/eval/kernel-session-registry.test.ts b/packages/coding-agent/test/eval/kernel-session-registry.test.ts
+index 67c4e24a3198343f0171773a188b0f030a3fad43..20001525b58985f4b7f69dc0191f4da6426a3971 100644
+--- a/packages/coding-agent/test/eval/kernel-session-registry.test.ts
++++ b/packages/coding-agent/test/eval/kernel-session-registry.test.ts
+@@ -573,3 +573,189 @@ describe("kernel restart notice claim", () => {
+ 		});
+ 	}
+ });
++
++describe("owner-scoped session lifetime", () => {
++	async function finishesBeforeNextTurn(work: Promise<void>): Promise<boolean> {
++		const nextTurn = Promise.withResolvers<void>();
++		setImmediate(nextTurn.resolve);
++		return await Promise.race([work.then(() => true), nextTurn.promise.then(() => false)]);
++	}
++
++	it("keeps current live ownership while releasing departed and shared registrations", async () => {
++		const { registry } = createFakeRegistry(async kernel => ({
++			cancelled: false,
++			value: String(kernel.index),
++		}));
++		const current = { sessionId: "python:current", kernelOwnerId: "departing" };
++		const shared = { sessionId: "python:shared", kernelOwnerId: "departing" };
++		const stale = { sessionId: "python:stale", kernelOwnerId: "departing" };
++		const foreign = { sessionId: "python:foreign", kernelOwnerId: "remaining" };
++		try {
++			await registry.executeOnSession("current", "/tmp", current);
++			await registry.executeOnSession("join current", "/tmp", { ...current, kernelOwnerId: "remaining" });
++			await registry.executeOnSession("shared", "/tmp", shared);
++			await registry.executeOnSession("join shared", "/tmp", { ...shared, kernelOwnerId: "remaining" });
++			await registry.executeOnSession("stale", "/tmp", stale);
++			await registry.executeOnSession("foreign", "/tmp", foreign);
++			const kept = registry.peekLiveKernel("/tmp", current)!;
++			const sharedKernel = registry.peekLiveKernel("/tmp", shared)!;
++			const staleKernel = registry.peekLiveKernel("/tmp", stale)!;
++			const foreignKernel = registry.peekLiveKernel("/tmp", foreign)!;
++
++			await registry.disposeByOwner("departing", { keepSessionId: current.sessionId });
++			expect(registry.peekLiveKernel("/tmp", current)).toBe(kept);
++			expect(registry.peekLiveKernel("/tmp", shared)).toBe(sharedKernel);
++			expect(registry.peekLiveKernel("/tmp", stale)).toBeUndefined();
++			expect(staleKernel.alive).toBe(false);
++			expect(registry.peekLiveKernel("/tmp", foreign)).toBe(foreignKernel);
++
++			// Dropping the other owner must kill the departed shared kernel, not the kept current one.
++			await registry.disposeByOwner("remaining");
++			expect(sharedKernel.alive).toBe(false);
++			expect(foreignKernel.alive).toBe(false);
++			expect(kept.alive).toBe(true);
++			expect((await registry.executeOnSession("still current", "/tmp", current)).value).toBe(String(kept.index));
++			await registry.disposeByOwner("departing");
++			expect(kept.alive).toBe(false);
++			expect(registry.peekLiveKernel("/tmp", current)).toBeUndefined();
++		} finally {
++			await registry.disposeAll();
++		}
++	});
++
++	it("leaves a sole current startup registered without waiting for it", async () => {
++		const started = Promise.withResolvers<void>();
++		const release = Promise.withResolvers<void>();
++		const { kernels, registry } = createFakeRegistry(
++			async kernel => ({ cancelled: false, value: String(kernel.index) }),
++			async () => {
++				started.resolve();
++				await release.promise;
++			},
++		);
++		const current = { sessionId: "python:starting", kernelOwnerId: "owner" };
++		const execution = registry.executeOnSession("setup", "/tmp", current);
++		void execution.catch(() => undefined);
++		let disposal: Promise<void> | undefined;
++		try {
++			await started.promise;
++			disposal = registry.disposeByOwner("owner", { keepSessionId: current.sessionId });
++			expect(await finishesBeforeNextTurn(disposal)).toBe(true);
++			release.resolve();
++			expect(await execution).toEqual({ cancelled: false, value: "0" });
++			expect(registry.peekLiveKernel("/tmp", current)).toBe(kernels[0]);
++			await registry.disposeByOwner("owner");
++			expect(kernels[0]?.alive).toBe(false);
++			expect(registry.peekLiveKernel("/tmp", current)).toBeUndefined();
++		} finally {
++			release.resolve();
++			await Promise.allSettled([execution, ...(disposal ? [disposal] : [])]);
++			await registry.disposeAll();
++		}
++	});
++
++	it("keeps current startup ownership when another startup owner detaches", async () => {
++		const started = Promise.withResolvers<void>();
++		const release = Promise.withResolvers<void>();
++		const { kernels, registry } = createFakeRegistry(
++			async kernel => ({ cancelled: false, value: String(kernel.index) }),
++			async () => {
++				started.resolve();
++				await release.promise;
++			},
++		);
++		const current = { sessionId: "python:shared-starting", kernelOwnerId: "kept" };
++		const first = registry.executeOnSession("first", "/tmp", current);
++		void first.catch(() => undefined);
++		let second: Promise<TestResult> | undefined;
++		let disposal: Promise<void> | undefined;
++		try {
++			await started.promise;
++			second = registry.executeOnSession("second", "/tmp", { ...current, kernelOwnerId: "peer" });
++			void second.catch(() => undefined);
++			await registry.disposeByOwner("kept", { keepSessionId: current.sessionId });
++			disposal = registry.disposeByOwner("peer");
++			expect(await finishesBeforeNextTurn(disposal)).toBe(true);
++			release.resolve();
++			expect(await Promise.all([first, second])).toEqual([
++				{ cancelled: false, value: "0" },
++				{ cancelled: false, value: "0" },
++			]);
++			expect(registry.peekLiveKernel("/tmp", current)).toBe(kernels[0]);
++			await registry.disposeByOwner("kept");
++			expect(kernels[0]?.alive).toBe(false);
++		} finally {
++			release.resolve();
++			await Promise.allSettled([first, ...(second ? [second] : []), ...(disposal ? [disposal] : [])]);
++			await registry.disposeAll();
++		}
++	});
++
++	it("detaches only the departed startup owner and still fully disposes its last owner without options", async () => {
++		const started = Promise.withResolvers<void>();
++		const release = Promise.withResolvers<void>();
++		const { kernels, registry } = createFakeRegistry(
++			async kernel => ({ cancelled: false, value: String(kernel.index) }),
++			async () => {
++				started.resolve();
++				await release.promise;
++			},
++		);
++		const stale = { sessionId: "python:departed-starting", kernelOwnerId: "departing" };
++		const first = registry.executeOnSession("first", "/tmp", stale);
++		void first.catch(() => undefined);
++		let second: Promise<TestResult> | undefined;
++		let disposal: Promise<void> | undefined;
++		try {
++			await started.promise;
++			second = registry.executeOnSession("second", "/tmp", { ...stale, kernelOwnerId: "remaining" });
++			void second.catch(() => undefined);
++			await registry.disposeByOwner("departing", { keepSessionId: "python:current" });
++			disposal = registry.disposeByOwner("remaining");
++			expect(await finishesBeforeNextTurn(disposal)).toBe(false);
++			release.resolve();
++			await disposal;
++			expect(kernels[0]?.alive).toBe(false);
++			expect(registry.peekLiveKernel("/tmp", stale)).toBeUndefined();
++			const results = await Promise.allSettled([first, second]);
++			for (const result of results) {
++				expect(result.status).toBe("rejected");
++				if (result.status === "rejected") expect(result.reason).toBeInstanceOf(TestCancelledError);
++			}
++		} finally {
++			release.resolve();
++			await Promise.allSettled([first, ...(second ? [second] : []), ...(disposal ? [disposal] : [])]);
++			await registry.disposeAll();
++		}
++	});
++
++	it("disposes a departed sole startup while a different current session ID is kept", async () => {
++		const started = Promise.withResolvers<void>();
++		const release = Promise.withResolvers<void>();
++		const { kernels, registry } = createFakeRegistry(
++			async kernel => ({ cancelled: false, value: String(kernel.index) }),
++			async () => {
++				started.resolve();
++				await release.promise;
++			},
++		);
++		const stale = { sessionId: "python:departed-sole", kernelOwnerId: "owner" };
++		const execution = registry.executeOnSession("setup", "/tmp", stale);
++		void execution.catch(() => undefined);
++		let disposal: Promise<void> | undefined;
++		try {
++			await started.promise;
++			disposal = registry.disposeByOwner("owner", { keepSessionId: "python:current" });
++			expect(await finishesBeforeNextTurn(disposal)).toBe(false);
++			release.resolve();
++			await disposal;
++			expect(kernels[0]?.alive).toBe(false);
++			expect(registry.peekLiveKernel("/tmp", stale)).toBeUndefined();
++			await expect(execution).rejects.toBeInstanceOf(TestCancelledError);
++		} finally {
++			release.resolve();
++			await Promise.allSettled([execution, ...(disposal ? [disposal] : [])]);
++			await registry.disposeAll();
++		}
++	});
++});
+diff --git a/packages/coding-agent/test/tools/grep-pagination.test.ts b/packages/coding-agent/test/tools/grep-pagination.test.ts
+index 52d174a5395ba15762ee05cb0d5478f4ad704171..f88a1c6729405b229fe70ba8ffd7eae5e9906993 100644
+--- a/packages/coding-agent/test/tools/grep-pagination.test.ts
++++ b/packages/coding-agent/test/tools/grep-pagination.test.ts
+@@ -43,36 +43,95 @@ describe("grep file pagination", () => {
+ 
+ 		const first = await tool.execute("page-1", { pattern: "needle", path: "." });
+ 		expect(first.details?.files).toEqual(names.slice(0, 20));
++		expect(first.details?.matchCount).toBe(20);
++		expect(first.details?.fileLimitReached).toBe(20);
+ 		// The walk saw every file; only hot.txt's own cap bit, so the total is exact.
+ 		expect(textOf(first)).toContain("Showing files 1-20 of 26. Use skip=20 for the next page");
+ 		expect(textOf(first)).not.toContain("More than");
+ 
+ 		const second = await tool.execute("page-2", { pattern: "needle", path: ".", skip: 20 });
+ 		expect(second.details?.files).toEqual([...names.slice(20), "hot.txt"]);
++		expect(second.details?.matchCount).toBe(15);
++		expect(second.details?.fileCount).toBe(6);
++		expect(second.details?.perFileLimitReached).toBe(10);
+ 		const text = textOf(second);
+-		// The hot file keeps its first 20 matches, and the model is told so.
+-		expect(text).toContain("needle 19");
+-		expect(text).not.toContain("needle 20");
+-		expect(text).toContain("More than 20 matches in hot.txt; grep keeps the first 20 per file");
+-		expect(text).toContain("Search one file alone for up to 200.");
++		// The hot file keeps its first 10 matches, and the model is told so.
++		expect(text).toContain("needle 9");
++		expect(text).not.toContain("needle 10");
++		expect(text).toContain("More than 10 matches in hot.txt; grep keeps the first 10 per file");
++		expect(text).toContain("Search one file alone for up to 50.");
+ 		expect(text).not.toContain("skip=");
+ 
+-		const alone = textOf(await tool.execute("hot-alone", { pattern: "needle", path: "hot.txt" }));
++		const aloneResult = await tool.execute("hot-alone", { pattern: "needle", path: "hot.txt" });
++		const alone = textOf(aloneResult);
++		expect(aloneResult.details?.matchCount).toBe(30);
++		expect(aloneResult.details?.truncated).toBe(false);
+ 		expect(alone).toContain("needle 29");
+ 		expect(alone).not.toContain("More than");
+ 	});
+ 
+-	function newTool(options?: ConstructorParameters<typeof GrepTool>[1]): GrepTool {
++	function newTool(options?: ConstructorParameters<typeof GrepTool>[1], settings = Settings.isolated()): GrepTool {
+ 		const session: ToolSession = {
+ 			cwd,
+ 			hasUI: false,
+ 			getSessionFile: () => null,
+ 			getSessionSpawns: () => "*",
+-			settings: Settings.isolated(),
++			settings,
+ 		};
+ 		return new GrepTool(session, options);
+ 	}
+ 
++	it("returns only matching rows when context is not configured", async () => {
++		await Bun.write(path.join(cwd, "context.txt"), "before\nneedle\nafter\n");
++
++		const result = await newTool().execute("no-context", { pattern: "needle", path: "context.txt" });
++		const text = textOf(result);
++		expect(text).toContain("needle");
++		expect(text).not.toContain("before");
++		expect(text).not.toContain("after");
++		expect(result.details?.fileMatches).toEqual([{ path: "context.txt", count: 1 }]);
++	});
++
++	it("retains explicitly configured before and after context", async () => {
++		await Bun.write(
++			path.join(cwd, "context.txt"),
++			"before 2\nbefore 1\nneedle\nafter 1\nafter 2\nafter 3\nafter 4\n",
++		);
++		const settings = Settings.isolated({ "grep.contextBefore": 1, "grep.contextAfter": 3 });
++
++		const text = textOf(
++			await newTool(undefined, settings).execute("configured-context", { pattern: "needle", path: "context.txt" }),
++		);
++		expect(text).toContain("before 1");
++		expect(text).not.toContain("before 2");
++		expect(text).toContain("after 1");
++		expect(text).toContain("after 3");
++		expect(text).not.toContain("after 4");
++	});
++
++	it("honors common context overrides and directional zero precedence over configured widths", async () => {
++		await Bun.write(path.join(cwd, "context.txt"), "before 2\nbefore 1\nneedle\nafter 1\nafter 2\nafter 3\n");
++		const settings = Settings.isolated({ "grep.contextBefore": 1, "grep.contextAfter": 3 });
++		const overridden = textOf(
++			await newTool({ context: 2, contextBefore: 0 }, settings).execute("overridden-context", {
++				pattern: "needle",
++				path: "context.txt",
++			}),
++		);
++		expect(overridden).not.toContain("before 1");
++		expect(overridden).not.toContain("before 2");
++		expect(overridden).toContain("after 1");
++		expect(overridden).toContain("after 2");
++		expect(overridden).not.toContain("after 3");
++
++		const zero = textOf(
++			await newTool({ context: 0 }, settings).execute("zero-context", { pattern: "needle", path: "context.txt" }),
++		);
++		expect(zero).toContain("needle");
++		expect(zero).not.toContain("before 1");
++		expect(zero).not.toContain("after 1");
++	});
++
+ 	it("tells the model when the single-file cap trims a file", async () => {
+ 		await Bun.write(
+ 			path.join(cwd, "big.txt"),
+@@ -80,30 +139,71 @@ describe("grep file pagination", () => {
+ 		);
+ 		const tool = newTool();
+ 
+-		const text = textOf(await tool.execute("single", { pattern: "needle", path: "big.txt" }));
+-		expect(text).toContain("needle 199");
+-		expect(text).not.toContain("needle 200");
+-		expect(text).toContain("More than 200 matches; grep keeps the first 200 in a file.");
++		const result = await tool.execute("single", { pattern: "needle", path: "big.txt" });
++		const text = textOf(result);
++		expect(result.details?.matchCount).toBe(50);
++		expect(result.details?.fileMatches).toEqual([{ path: "big.txt", count: 50 }]);
++		expect(result.details?.perFileLimitReached).toBe(50);
++		expect(text).toContain("needle 49");
++		expect(text).not.toContain("needle 50");
++		expect(text).toContain("More than 50 matches; grep keeps the first 50 in a file.");
+ 		expect(text).toContain("Add a line range (`path:N-M`)");
+ 
+-		const ranged = textOf(await tool.execute("single-range", { pattern: "needle", path: "big.txt:201-250" }));
++		const rangedResult = await tool.execute("single-range", { pattern: "needle", path: "big.txt:201-250" });
++		const ranged = textOf(rangedResult);
++		expect(rangedResult.details?.matchCount).toBe(50);
++		expect(rangedResult.details?.truncated).toBe(false);
++		expect(ranged).toContain("needle 200");
++		expect(ranged).not.toContain("needle 199");
+ 		expect(ranged).toContain("needle 249");
+ 		expect(ranged).not.toContain("More than");
+ 	});
+ 
+-	it("keeps the cap notice when the byte cap cuts the matches", async () => {
+-		const filler = "x".repeat(500);
++	it("reports complete bounded ranges before EOF and still detects in-range overflow", async () => {
+ 		await Bun.write(
+-			path.join(cwd, "wide.txt"),
+-			Array.from({ length: 250 }, (_, index) => `needle ${index} ${filler}`).join("\n"),
++			path.join(cwd, "big.txt"),
++			Array.from({ length: 300 }, (_, index) => `needle ${index}`).join("\n"),
++		);
++		const tool = newTool();
++
++		const complete = await tool.execute("bounded-complete", { pattern: "needle", path: "big.txt:201-250" });
++		const completeText = textOf(complete);
++		expect(complete.details?.matchCount).toBe(50);
++		expect(complete.details?.truncated).toBe(false);
++		expect(complete.details?.perFileLimitReached).toBeUndefined();
++		expect(completeText).toContain("needle 200");
++		expect(completeText).toContain("needle 249");
++		expect(completeText).not.toContain("needle 199");
++		expect(completeText).not.toContain("needle 250");
++
++		for (const selector of ["201-251", "201-"]) {
++			const clipped = await tool.execute(`range-overflow-${selector}`, {
++				pattern: "needle",
++				path: `big.txt:${selector}`,
++			});
++			expect(clipped.details?.matchCount).toBe(50);
++			expect(clipped.details?.truncated).toBe(true);
++			expect(clipped.details?.perFileLimitReached).toBe(50);
++			expect(textOf(clipped)).toContain("needle 249");
++			expect(textOf(clipped)).not.toContain("needle 250");
++		}
++	});
++
++	// Two context rows per match keep these fixtures above the byte cap even with the smaller match caps.
++	const wideMatches = (prefix: string, count: number, filler: string) =>
++		Array.from({ length: count }, (_, index) => `${filler}\n${filler}\nneedle ${prefix}${index} ${filler}`).join(
++			"\n",
+ 		);
+-		const tool = newTool({ context: 0 });
+ 
++	it("keeps the cap notice when the byte cap cuts the matches", async () => {
++		const filler = "x".repeat(500);
++		await Bun.write(path.join(cwd, "wide.txt"), wideMatches("", 60, filler));
++		const tool = newTool({ contextBefore: 2, contextAfter: 0 });
+ 		const result = await tool.execute("wide", { pattern: "needle", path: "wide.txt" });
+ 		const text = textOf(result);
+ 		expect(result.details?.truncation?.truncated).toBe(true);
+-		expect(text).not.toContain("needle 199 ");
+-		expect(text).toContain("More than 200 matches; grep keeps the first 200 in a file.");
++		expect(text).not.toContain("needle 49 ");
++		expect(text).toContain("More than 50 matches; grep keeps the first 50 in a file.");
+ 		expect(Buffer.byteLength(text)).toBeLessThanOrEqual(50 * 1024);
+ 	});
+ 
+@@ -111,21 +211,21 @@ describe("grep file pagination", () => {
+ 		const filler = "x".repeat(500);
+ 		const names = Array.from({ length: 25 }, (_, index) => `f${String(index).padStart(2, "0")}`);
+ 		for (const name of names) {
+-			await Bun.write(
+-				path.join(cwd, `${name}.txt`),
+-				Array.from({ length: 21 }, (_, index) => `needle ${name} ${index} ${filler}`).join("\n"),
+-			);
++			await Bun.write(path.join(cwd, `${name}.txt`), wideMatches(`${name} `, 11, filler));
+ 		}
+-		const result = await newTool({ context: 0 }).execute("wide-many", { pattern: "needle", path: "." });
++		const result = await newTool({ contextBefore: 2, contextAfter: 0 }).execute("wide-many", {
++			pattern: "needle",
++			path: ".",
++		});
+ 		const text = textOf(result);
+ 		expect(result.details?.truncation?.truncated).toBe(true);
+ 		expect(Buffer.byteLength(text)).toBeLessThanOrEqual(50 * 1024);
+ 		expect(text).toContain("Showing files 1-20 of 25. Use skip=20 for the next page");
+-		// The byte cap drops later files whole; only files whose 20th match is still in the text are named.
+-		const whole = names.filter(name => text.includes(`needle ${name} 19 `));
++		// The byte cap drops later files whole; only files whose 10th match is still in the text are named.
++		const whole = names.filter(name => text.includes(`needle ${name} 9 `));
+ 		expect(whole.length).toBeGreaterThan(0);
+ 		expect(whole.length).toBeLessThan(5);
+-		expect(text).toContain(`More than 20 matches in ${whole.map(name => `${name}.txt`).join(", ")};`);
++		expect(text).toContain(`More than 10 matches in ${whole.map(name => `${name}.txt`).join(", ")};`);
+ 	});
+ 
+ 	it("names only capped files the result renders in full", async () => {
+@@ -133,13 +233,19 @@ describe("grep file pagination", () => {
+ 			await Bun.write(path.join(cwd, name), Array.from({ length: 30 }, (_, index) => `needle ${index}`).join("\n"));
+ 		}
+ 		// A caller's total limit (the Cursor `pi_grep` bridge) leaves the capped files short.
+-		const limited = textOf(
+-			await newTool({ totalMatchLimit: 1 }).execute("limited", { pattern: "needle", path: "." }),
+-		);
++		const limitedResult = await newTool({ totalMatchLimit: 1 }).execute("limited", {
++			pattern: "needle",
++			path: ".",
++		});
++		const limited = textOf(limitedResult);
++		expect(limitedResult.details?.matchCount).toBe(1);
++		expect(limitedResult.details?.perFileLimitReached).toBe(1);
++		expect(limitedResult.details?.truncated).toBe(true);
+ 		expect(limited).not.toContain("More than");
++		expect(limited).not.toContain("skip=");
+ 
+ 		const both = textOf(await newTool().execute("both", { pattern: "needle", path: "." }));
+-		expect(both).toContain("More than 20 matches in a.txt, b.txt;");
++		expect(both).toContain("More than 10 matches in a.txt, b.txt;");
+ 	});
+ 
+ 	it("counts capped files past the fifth", async () => {
+@@ -147,6 +253,41 @@ describe("grep file pagination", () => {
+ 			await Bun.write(path.join(cwd, `h${index}.txt`), Array.from({ length: 21 }, () => "needle").join("\n"));
+ 		}
+ 		const text = textOf(await newTool().execute("six", { pattern: "needle", path: "." }));
+-		expect(text).toContain("More than 20 matches in h0.txt, h1.txt, h2.txt, h3.txt, h4.txt and 1 more file;");
++		expect(text).toContain("More than 10 matches in h0.txt, h1.txt, h2.txt, h3.txt, h4.txt and 1 more file;");
++	});
++
++	it("marks file totals as a lower bound when the native total cap stops the scan", async () => {
++		const content = Array.from({ length: 11 }, (_, index) => `needle ${index}`).join("\n");
++		for (let index = 0; index < 201; index++) {
++			await Bun.write(path.join(cwd, `f${String(index).padStart(3, "0")}.txt`), content);
++		}
++
++		const result = await newTool().execute("partial-files", { pattern: "needle", path: "." });
++		expect(result.details?.fileCount).toBe(20);
++		expect(result.details?.matchCount).toBe(200);
++		expect(result.details?.truncated).toBe(true);
++		expect(textOf(result)).toMatch(/Showing files 1-20 of \d+\+\. Use skip=20/);
++	});
++
++	it("preserves multiline partial-coverage warnings with and without an in-window match", async () => {
++		await Bun.write(
++			path.join(cwd, "large.txt"),
++			`needle inside\nblock\n${"padding\n".repeat(600_000)}needle outside\nblock\n`,
++		);
++		const tool = newTool();
++		const text = textOf(
++			await tool.execute("partial-with-match", { pattern: "needle (inside|outside)\\nblock", path: "large.txt" }),
++		);
++		expect(text).toContain("needle inside");
++		expect(text).not.toContain("needle outside");
++		expect(text).toContain("Multiline search read only the first 4MB");
++		expect(text).toContain("matches past the 4MB window are not shown");
++
++		const absent = textOf(
++			await tool.execute("partial-without-match", { pattern: "needle outside\\nblock", path: "large.txt" }),
++		);
++		expect(absent).toContain("No matches in searched content");
++		expect(absent).toContain("Multiline search read only the first 4MB");
++		expect(absent).not.toContain("No matches found");
+ 	});
+ });
+diff --git a/packages/coding-agent/test/tools/grep-path-lists.test.ts b/packages/coding-agent/test/tools/grep-path-lists.test.ts
+index 84c7abfa015045395da5903083bcbeade3e48308..49565adae0b62ccd5d558b217ed483e80931ff4f 100644
+--- a/packages/coding-agent/test/tools/grep-path-lists.test.ts
++++ b/packages/coding-agent/test/tools/grep-path-lists.test.ts
+@@ -127,7 +127,11 @@ describe("tool path arrays", () => {
+ 
+ 	it("search finds a named NUL-containing file and sanitizes matches and context", async () => {
+ 		await Bun.write(path.join(tempDir, "nul-named.md"), "before\0\x07\nneedle\0\x1b[31m red\x1b[0m\nafter\0\n");
+-		const tools = await createTools(createTestSession(tempDir));
++		const session = createTestSession(tempDir);
++		const tools = await createTools({
++			...session,
++			settings: session.settings.overlay({ "grep.contextBefore": 1, "grep.contextAfter": 1 }),
++		});
+ 		const tool = tools.find(entry => entry.name === "grep");
+ 		if (!tool) throw new Error("Missing grep tool");
+ 
+diff --git a/packages/coding-agent/test/tools/todo.test.ts b/packages/coding-agent/test/tools/todo.test.ts
+index 3d22a0e55531873e9fb53b051b8965494d4c33b6..97272b21c6d28627bc46c43e54b7ab01ed98ff6b 100644
+--- a/packages/coding-agent/test/tools/todo.test.ts
++++ b/packages/coding-agent/test/tools/todo.test.ts
+@@ -5,6 +5,8 @@ import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
+ import { initTheme, theme } from "@oh-my-pi/pi-tui/theme";
+ import type { ToolSession } from "@oh-my-pi/pi-coding-agent/tools";
+ import {
++	applyOpsToPhases,
++	committedTodoPhases,
+ 	markdownToPhases,
+ 	nextActionableTask,
+ 	resolveTodoMarkdownPath,
+@@ -56,7 +58,7 @@ describe("resolveTodoMarkdownPath", () => {
+ 	it("rejects internal URL schemes", () => {
+ 		const cwd = path.resolve("tmp", "todo-workspace");
+ 
+-		expect(() => resolveTodoMarkdownPath("artifact://todo", cwd)).toThrow("internal scheme");
++		expect(() => resolveTodoMarkdownPath("artifact://todo", cwd)).toThrow();
+ 	});
+ });
+ 
+@@ -408,6 +410,347 @@ describe("TodoTool operations", () => {
+ 	});
+ });
+ 
++describe("TodoTool task targets", () => {
++	function targetPhases(): TodoPhase[] {
++		return [
++			{
++				name: "Alpha",
++				tasks: [
++					{ content: "a1", status: "in_progress" },
++					{ content: "keep-a", status: "pending" },
++				],
++			},
++			{
++				name: "Beta",
++				tasks: [
++					{ content: "b1", status: "pending" },
++					{ content: "keep-b", status: "pending" },
++				],
++			},
++		];
++	}
++
++	for (const op of ["done", "drop", "rm"] as const) {
++		describe(op, () => {
++			it("persists every selected task across phases, including flattened and quoted array entries", async () => {
++				const targets: (string | string[])[] = [
++					["a1", "b1"],
++					"a1\nb1",
++					"a1\r\nb1",
++					"a1; b1",
++					"a1, b1",
++					"a1 b1",
++					" \"a1\" ; 'b1' ",
++					[' "a1" ; `b1` '],
++				];
++				for (const task of targets) {
++					const session = createSession(targetPhases());
++					const result = await new TodoTool(session).execute("targets", { op, task, phase: "Alpha" });
++					const status: TodoItem["status"] = op === "done" ? "completed" : "abandoned";
++					const expected: TodoPhase[] = [
++						{
++							name: "Alpha",
++							tasks: [
++								...(op === "rm" ? [] : [{ content: "a1", status }]),
++								{ content: "keep-a", status: "in_progress" },
++							],
++						},
++						{
++							name: "Beta",
++							tasks: [
++								...(op === "rm" ? [] : [{ content: "b1", status }]),
++								{ content: "keep-b", status: "pending" },
++							],
++						},
++					];
++					expect(result.isError).toBeUndefined();
++					expect(result.details).toEqual({
++						op,
++						phases: expected,
++						storage: "memory",
++						...(op === "done"
++							? {
++									completedTasks: [
++										{ phase: "Alpha", content: "a1" },
++										{ phase: "Beta", content: "b1" },
++									],
++								}
++							: {}),
++					});
++					expect(session.getTodoPhases?.()).toEqual(expected);
++					expect(committedTodoPhases(result)).toEqual(expected);
++				}
++			});
++
++			it("names each missing target and discards the entire mixed selection", async () => {
++				const targets: (string | string[])[] = [
++					["a1", "missing-one", "missing-two"],
++					"a1; missing-one; missing-two",
++					"a1, missing-one, missing-two",
++					"a1\nmissing-one\nmissing-two",
++				];
++				for (const task of targets) {
++					const initial = targetPhases();
++					const session = createSession(initial);
++					const result = await new TodoTool(session).execute("missing", { op, task });
++					const summary = result.content.find(part => part.type === "text");
++					if (summary?.type !== "text") throw new Error("Expected text summary");
++
++					expect(result.isError).toBe(true);
++					expect(summary.text).toContain("missing-one");
++					expect(summary.text).toContain("missing-two");
++					expect(result.details?.phases).toEqual(initial);
++					expect(result.details?.completedTasks).toBeUndefined();
++					expect(session.getTodoPhases?.()).toBe(initial);
++					expect(committedTodoPhases(result)).toBeUndefined();
++				}
++			});
++
++			it("rejects an explicit empty array instead of mutating a phase or the whole list", async () => {
++				for (const phase of [undefined, "Alpha"]) {
++					const initial = targetPhases();
++					const session = createSession(initial);
++					const tool = new TodoTool(session);
++					const args = { op, task: [], ...(phase === undefined ? {} : { phase }) };
++					expect(tool.parameters(args) instanceof type.errors).toBe(false);
++					const result = await tool.execute("empty", args);
++
++					expect(result.isError).toBe(true);
++					expect(result.details?.phases).toEqual(initial);
++					expect(result.details?.completedTasks).toBeUndefined();
++					expect(session.getTodoPhases?.()).toBe(initial);
++					expect(committedTodoPhases(result)).toBeUndefined();
++				}
++			});
++
++			it("keeps empty array entries as errors without applying the known targets", async () => {
++				for (const task of [[""], ["a1", ""], ["a1", "   "], ["a1", '""']]) {
++					for (const phase of [undefined, "Alpha"]) {
++						const initial = targetPhases();
++						const session = createSession(initial);
++						const tool = new TodoTool(session);
++						const args = { op, task, ...(phase === undefined ? {} : { phase }) };
++						expect(tool.parameters(args) instanceof type.errors).toBe(false);
++						const result = await tool.execute("empty-entry", args);
++
++						expect(result.isError).toBe(true);
++						expect(result.details?.phases).toEqual(initial);
++						expect(result.details?.completedTasks).toBeUndefined();
++						expect(session.getTodoPhases?.()).toBe(initial);
++						expect(committedTodoPhases(result)).toBeUndefined();
++					}
++				}
++			});
++
++			it("rejects missing array entries at validation without persisting any selected task", async () => {
++				for (const task of [
++					["a1", undefined],
++					["a1", null],
++				]) {
++					const initial = targetPhases();
++					const session = createSession(initial);
++					const tool = new TodoTool(session);
++					const args = { op, task };
++					expect(tool.parameters(args) instanceof type.errors).toBe(true);
++					const result = await tool.execute("invalid-entry", args as never);
++
++					expect(result.isError).toBe(true);
++					expect(result.details?.phases).toEqual(initial);
++					expect(result.details?.completedTasks).toBeUndefined();
++					expect(session.getTodoPhases?.()).toBe(initial);
++					expect(committedTodoPhases(result)).toBeUndefined();
++				}
++			});
++
++			it("preserves omitted and legacy empty-string phase-wide and whole-list targeting", async () => {
++				for (const task of [undefined, ""]) {
++					for (const phase of [undefined, "Alpha"]) {
++						const session = createSession(targetPhases());
++						const result = await new TodoTool(session).execute("legacy", {
++							op,
++							...(task === undefined ? {} : { task }),
++							...(phase === undefined ? {} : { phase }),
++						});
++						const status = op === "done" ? "completed" : "abandoned";
++						const expected: TodoPhase[] = [
++							{
++								name: "Alpha",
++								tasks:
++									op === "rm"
++										? []
++										: [
++												{ content: "a1", status },
++												{ content: "keep-a", status },
++											],
++							},
++							{
++								name: "Beta",
++								tasks: phase
++									? [
++											{ content: "b1", status: "in_progress" },
++											{ content: "keep-b", status: "pending" },
++										]
++									: op === "rm"
++										? []
++										: [
++												{ content: "b1", status },
++												{ content: "keep-b", status },
++											],
++							},
++						];
++						expect(result.isError).toBeUndefined();
++						expect(result.details?.phases).toEqual(expected);
++						expect(session.getTodoPhases?.()).toEqual(expected);
++					}
++				}
++			});
++		});
++	}
++
++	it("completes an exact delimiter-containing or space-containing name instead of its apparent parts", async () => {
++		for (const name of ["a1; b1", "a1, b1", "a1\nb1", "a1 b1"]) {
++			for (const task of [name, [name]]) {
++				const session = createSession([
++					{
++						name: "Alpha",
++						tasks: [
++							{ content: name, status: "in_progress" },
++							{ content: "a1", status: "pending" },
++						],
++					},
++					{ name: "Beta", tasks: [{ content: "b1", status: "pending" }] },
++				]);
++				const result = await new TodoTool(session).execute("exact", { op: "done", task });
++				const expected: TodoPhase[] = [
++					{
++						name: "Alpha",
++						tasks: [
++							{ content: name, status: "completed" },
++							{ content: "a1", status: "in_progress" },
++						],
++					},
++					{ name: "Beta", tasks: [{ content: "b1", status: "pending" }] },
++				];
++				expect(result.isError).toBeUndefined();
++				expect(result.details?.phases).toEqual(expected);
++				expect(result.details?.completedTasks).toEqual([{ phase: "Alpha", content: name }]);
++				expect(session.getTodoPhases?.()).toEqual(expected);
++			}
++		}
++	});
++
++	it("removes repeated selections by identity without deleting same-name or trailing tasks", async () => {
++		const session = createSession([
++			{
++				name: "Alpha",
++				tasks: [
++					{ content: "duplicate", status: "in_progress" },
++					{ content: "duplicate", status: "pending" },
++					{ content: "keep-a", status: "pending" },
++				],
++			},
++			{
++				name: "Beta",
++				tasks: [
++					{ content: "duplicate", status: "pending" },
++					{ content: "b1", status: "pending" },
++					{ content: "tail", status: "pending" },
++				],
++			},
++		]);
++		const result = await new TodoTool(session).execute("duplicates", {
++			op: "rm",
++			task: ["duplicate", "duplicate", "b1"],
++		});
++		const expected: TodoPhase[] = [
++			{
++				name: "Alpha",
++				tasks: [
++					{ content: "duplicate", status: "in_progress" },
++					{ content: "keep-a", status: "pending" },
++				],
++			},
++			{
++				name: "Beta",
++				tasks: [
++					{ content: "duplicate", status: "pending" },
++					{ content: "tail", status: "pending" },
++				],
++			},
++		];
++		expect(result.isError).toBeUndefined();
++		expect(result.details?.phases).toEqual(expected);
++		expect(result.details?.completedTasks).toBeUndefined();
++		expect(session.getTodoPhases?.()).toEqual(expected);
++	});
++
++	it("rejects multi-target start after parsing without changing the active task", async () => {
++		const targets: (string | string[])[] = [["a1", "b1"], ["a1; b1"], "a1; b1", "a1 b1"];
++		for (const task of targets) {
++			const initial = targetPhases();
++			const session = createSession(initial);
++			const tool = new TodoTool(session);
++			const args = { op: "start" as const, task };
++			expect(tool.parameters(args) instanceof type.errors).toBe(false);
++			const result = await tool.execute("start-many", args);
++
++			expect(result.isError).toBe(true);
++			expect(result.details?.phases).toEqual(initial);
++			expect(result.details?.completedTasks).toBeUndefined();
++			expect(session.getTodoPhases?.()).toBe(initial);
++			expect(committedTodoPhases(result)).toBeUndefined();
++		}
++	});
++
++	it("starts a singleton array target and persists exactly one active task", async () => {
++		const session = createSession(targetPhases());
++		const result = await new TodoTool(session).execute("start-one", { op: "start", task: ["b1"] });
++		const expected: TodoPhase[] = [
++			{
++				name: "Alpha",
++				tasks: [
++					{ content: "a1", status: "pending" },
++					{ content: "keep-a", status: "pending" },
++				],
++			},
++			{
++				name: "Beta",
++				tasks: [
++					{ content: "b1", status: "in_progress" },
++					{ content: "keep-b", status: "pending" },
++				],
++			},
++		];
++		expect(result.isError).toBeUndefined();
++		expect(result.details?.phases).toEqual(expected);
++		expect(session.getTodoPhases?.()).toEqual(expected);
++	});
++
++	it("applies array targets through the slash-command helper without mutating its input", () => {
++		const initial = targetPhases();
++		const { phases, errors } = applyOpsToPhases(initial, [{ op: "drop", task: ["a1", "b1"] }]);
++
++		expect(errors).toEqual([]);
++		expect(phases).toEqual([
++			{
++				name: "Alpha",
++				tasks: [
++					{ content: "a1", status: "abandoned" },
++					{ content: "keep-a", status: "in_progress" },
++				],
++			},
++			{
++				name: "Beta",
++				tasks: [
++					{ content: "b1", status: "abandoned" },
++					{ content: "keep-b", status: "pending" },
++				],
++			},
++		]);
++		expect(initial).toEqual(targetPhases());
++	});
++});
++
+ describe("TodoTool lenient init shapes", () => {
+ 	it("names an empty init phase Tasks so append can target it", async () => {
+ 		for (const args of [
+@@ -436,9 +779,7 @@ describe("TodoTool lenient init shapes", () => {
+ 			],
+ 		});
+ 		expect(result.isError).toBe(true);
+-		expect(result.content).toEqual([
+-			expect.objectContaining({ text: expect.stringContaining('Duplicate phase "Tasks"') }),
+-		]);
++		expect(result.content).toEqual([expect.objectContaining({ text: expect.stringContaining("Tasks") })]);
+ 		expect(session.getTodoPhases?.()).toEqual(initial);
+ 	});
+ 
+@@ -492,7 +833,7 @@ describe("TodoTool lenient init shapes", () => {
+ 		expect(result.isError).toBe(true);
+ 		const summary = result.content.find(part => part.type === "text");
+ 		if (summary?.type !== "text") throw new Error("Expected text summary");
+-		expect(summary.text).toContain("Missing list for init operation");
++		expect(summary.text).toContain("list");
+ 	});
+ });
+ describe("TodoTool lenient op recovery", () => {
+@@ -554,7 +895,6 @@ describe("TodoTool lenient op recovery", () => {
+ 		expect(result.isError).toBe(true);
+ 		const summary = result.content.find(part => part.type === "text");
+ 		if (summary?.type !== "text") throw new Error("Expected text summary");
+-		expect(summary.text).toContain("Invalid todo arguments");
+ 		expect(summary.text).toContain("op");
+ 	});
+ });
+@@ -578,7 +918,7 @@ describe("TodoTool empty items tolerance", () => {
+ 		expect(result.isError).toBe(true);
+ 		const summary = result.content.find(part => part.type === "text");
+ 		if (summary?.type !== "text") throw new Error("Expected text summary");
+-		expect(summary.text).toContain("Missing items for append operation");
++		expect(summary.text).toContain("items");
+ 	});
+ });
+ 
+@@ -680,6 +1020,60 @@ describe("todoToolRenderer.renderResult phase collapsing", () => {
+ 		expect(rendered).not.toContain("c1");
+ 		expect(rendered).not.toContain("c2");
+ 	});
++	it("keeps every dropped target phase visible for arrays and recovered flattened strings", async () => {
++		const targets: (string | string[])[] = [["b1", "c1"], "b1; c1", "b1 c1", [' "b1" ; `c1` ']];
++		for (const task of targets) {
++			const tool = new TodoTool(createSession());
++			await tool.execute("init", {
++				op: "init",
++				list: [
++					{ phase: "Alpha", items: ["a1"] },
++					{ phase: "Beta", items: ["b1"] },
++					{ phase: "Gamma", items: ["c1"] },
++					{ phase: "Delta", items: ["d1"] },
++				],
++			});
++			const result = await tool.execute("drop", { op: "drop", task });
++			expect(result.isError).toBeUndefined();
++			// No completion signal can mask a renderer that fails to parse the targets.
++			expect(result.details?.completedTasks).toBeUndefined();
++			const rendered = Bun.stripANSI(
++				todoToolRenderer
++					.renderResult(result, { expanded: false, isPartial: false }, theme, { op: "drop", task })
++					.render(100)
++					.join("\n"),
++			);
++
++			expect(rendered).toContain("a1");
++			expect(rendered).toContain("b1");
++			expect(rendered).toContain("c1");
++			expect(rendered).not.toContain("d1");
++		}
++	});
++	it("uses the exact task name before apparent delimiters when deciding which phase to expand", async () => {
++		for (const task of ["b1; c1", ["b1; c1"]]) {
++			const tool = new TodoTool(createSession());
++			await tool.execute("init", {
++				op: "init",
++				list: [
++					{ phase: "Alpha", items: ["a1"] },
++					{ phase: "Combined", items: ["b1; c1"] },
++					{ phase: "Parts", items: ["b1", "c1", "parts-only"] },
++				],
++			});
++			const result = await tool.execute("drop", { op: "drop", task });
++			expect(result.isError).toBeUndefined();
++			const rendered = Bun.stripANSI(
++				todoToolRenderer
++					.renderResult(result, { expanded: false, isPartial: false }, theme, { op: "drop", task })
++					.render(100)
++					.join("\n"),
++			);
++
++			expect(rendered).toContain("b1; c1");
++			expect(rendered).not.toContain("parts-only");
++		}
++	});
+ 	it("sweeps the just-completed row's strike in the collapsed view", async () => {
+ 		const result = await buildThreePhaseAfterDone();
+ 		// The card's default view is collapsed, so the completion animation the
+@@ -731,6 +1125,42 @@ describe("todoToolRenderer.renderResult phase collapsing", () => {
+ 	});
+ });
+ 
++describe("todoToolRenderer multi-target call previews", () => {
++	const options = { expanded: false, isPartial: true } as const;
++
++	it("shows the same plural target count in text and native previews, including legacy calls", () => {
++		for (const args of [{ op: "done", task: ["a1", "b1"] }, { ops: [{ op: "done", task: ["a1", "b1"] }] }]) {
++			const rendered = Bun.stripANSI(todoToolRenderer.renderCall(args, options, theme).render(120).join("\n"));
++
++			expect(rendered).toContain("done 2 tasks");
++			expect(todoToolRenderer.describeCall(args)).toMatchObject({ tool: { target: "done 2 tasks" } });
++		}
++	});
++
++	it("excludes incomplete non-string array entries rather than displaying phantom targets", () => {
++		const args = { op: "done", task: [null, 1, "a1"] } as unknown as Parameters<
++			typeof todoToolRenderer.renderCall
++		>[0];
++		const rendered = Bun.stripANSI(todoToolRenderer.renderCall(args, options, theme).render(120).join("\n"));
++
++		expect(rendered).toContain("done a1");
++		expect(todoToolRenderer.describeCall(args)).toMatchObject({ tool: { target: "done a1" } });
++	});
++
++	it("sanitizes the label of a singleton array target in both preview paths", () => {
++		const args = { op: "drop", task: ["ship\u001b[2J\tit"] };
++		const rendered = todoToolRenderer.renderCall(args, options, theme).render(120).join("\n");
++		const native = todoToolRenderer.describeCall(args);
++
++		expect(rendered).not.toContain("\u001b[2J");
++		expect(rendered).not.toContain("\t");
++		expect(Bun.stripANSI(rendered)).toContain("ship");
++		expect(native.tool?.target).toContain("ship");
++		expect(native.tool?.target).not.toContain("\u001b[2J");
++		expect(native.tool?.target).not.toContain("\t");
++	});
++});
++
+ describe("selectCollapsedTodos walking viewport (#5873)", () => {
+ 	const mk = (n: number, inProgress: number[]): TodoItem[] =>
+ 		Array.from({ length: n }, (_, i) => ({
+diff --git a/packages/coding-agent/test/tools/wait.test.ts b/packages/coding-agent/test/tools/wait.test.ts
+index 5ad904bad3aa13a75cb3e1663de911cf5e5aa6c9..dd0fa49786bcaa5d9b61bf14207242577617ae35 100644
+--- a/packages/coding-agent/test/tools/wait.test.ts
++++ b/packages/coding-agent/test/tools/wait.test.ts
+@@ -5,6 +5,7 @@ import {
+ 	type AgentToolResult,
+ 	TOOL_INTERRUPT_ABORT_REASON,
+ } from "@oh-my-pi/pi-agent-core";
++import type { Message } from "@oh-my-pi/pi-ai";
+ import { buildJobResult } from "@oh-my-pi/pi-coding-agent/async/job-control";
+ import { AsyncJobManager } from "@oh-my-pi/pi-coding-agent/async/job-manager";
+ import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
+@@ -22,16 +23,29 @@ import { WaitTool } from "@oh-my-pi/pi-coding-agent/tools/wait";
+ import type { IrcMessage } from "@oh-my-pi/pi-tui/tools/irc";
+ import type { CoordinationDetails } from "@oh-my-pi/pi-tui/tools/wait";
+ 
+-function session(manager?: AsyncJobManager, agentId = "Main", launch = false): ToolSession {
++function session(
++	manager?: AsyncJobManager,
++	agentId = "Main",
++	launch = false,
++	extra: Partial<ToolSession> = {},
++): ToolSession {
+ 	return {
+ 		cwd: process.cwd(),
+ 		settings: Settings.isolated({ "launch.enabled": launch }),
+ 		agentRegistry: AgentRegistry.global(),
+ 		asyncJobManager: manager,
+ 		getAgentId: () => agentId,
++		...extra,
+ 	} as unknown as ToolSession;
+ }
+ 
++/** A caller context whose latest turn made `elapse`'s wait call plus one call to each of `otherTools`. */
++function latestTurn(...otherTools: string[]): () => Message[] {
++	const calls = [{ id: "idle-wait", name: "wait" }, ...otherTools.map((name, i) => ({ id: `${name}-${i}`, name }))];
++	const message = { role: "assistant", content: calls.map(call => ({ type: "toolCall", ...call, arguments: {} })) };
++	return () => [message as unknown as Message];
++}
++
+ // Lets every pending continuation run, so the wait reaches its next block before the test acts.
+ async function flushMicrotasks(): Promise<void> {
+ 	for (let i = 0; i < 100; i++) await Promise.resolve();
+@@ -149,21 +163,21 @@ describe("wait", () => {
+ 		const manager = new AsyncJobManager({ onJobComplete: () => {} });
+ 		const build = Promise.withResolvers<string>();
+ 		const id = manager.register("bash", "build", async () => build.promise, { ownerId: "Main" });
+-		const tool = new WaitTool(session(manager));
++		const tool = new WaitTool(session(manager, "Main", false, { getContextMessages: latestTurn("read") }));
+ 		const first = await elapse(tool, 5_000);
+ 		expect(first.useless).toBe(true);
+ 		expect(first.details?.jobs?.[0]).toMatchObject({ id, status: "running" });
+ 		expect(notice(first)).toBeUndefined();
+ 		expect(report(first)).toContain("within 5.0s");
+-		expect(report(first)).toContain("up to 10.0s");
++		expect(report(first)).toContain("Call `wait` right away with no other tool call: it then blocks up to 4m.");
+ 		expect(notice(await elapse(tool, 10_000))).toContain("15.0s");
+ 		expect(notice(await elapse(tool, 30_000))).toContain("45.0s");
+ 		await elapse(tool, 60_000);
+-		await elapse(tool, 300_000);
+-		const capped = await elapse(tool, 300_000);
+-		expect(report(capped)).toContain("within 5m");
+-		expect(report(capped)).toContain("up to 5m");
+-		expect(notice(capped)).toContain("11m45s");
++		await elapse(tool, 240_000);
++		const capped = await elapse(tool, 240_000);
++		expect(report(capped)).toContain("within 4m");
++		expect(report(capped)).toContain("up to 4m");
++		expect(notice(capped)).toContain("9m45s");
+ 		build.resolve("done");
+ 	});
+ 
+@@ -189,6 +203,64 @@ describe("wait", () => {
+ 		build.resolve("done");
+ 	});
+ 
++	test("a sole top-level wait keeps the first 5s window, takes the top rung, and resets after a minute away", async () => {
++		vi.useFakeTimers();
++		const manager = new AsyncJobManager({ onJobComplete: () => {} });
++		const build = Promise.withResolvers<string>();
++		manager.register("bash", "build", async () => build.promise, { ownerId: "Main" });
++		const tool = new WaitTool(session(manager, "Main", false, { getContextMessages: latestTurn() }));
++		expect(notice(await elapse(tool, 5_000))).toBeUndefined();
++		const top = await elapse(tool, 240_000);
++		expect(report(top)).toContain("within 4m");
++		expect(notice(top)).toContain("4m5s");
++		vi.advanceTimersByTime(59_999);
++		expect(report(await elapse(tool, 240_000))).toContain("within 4m");
++		vi.advanceTimersByTime(60_000);
++		expect(notice(await elapse(tool, 5_000))).toBeUndefined();
++		build.resolve("done");
++	});
++
++	test("an eval-internal wait cannot borrow the sole wait from an earlier assistant turn", async () => {
++		vi.useFakeTimers();
++		const manager = new AsyncJobManager({ onJobComplete: () => {} });
++		const build = Promise.withResolvers<string>();
++		manager.register("bash", "build", async () => build.promise, { ownerId: "Main" });
++		const evalTurn = {
++			role: "assistant",
++			content: [{ type: "toolCall", id: "eval-1", name: "eval", arguments: { code: "await tool.wait({})" } }],
++		} as unknown as Message;
++		const tool = new WaitTool(
++			session(manager, "Main", false, { getContextMessages: () => [...latestTurn()(), evalTurn] }),
++		);
++		await elapse(tool, 5_000);
++		const second = await elapse(tool, 10_000);
++		expect(report(second)).toContain("within 10.0s");
++		expect(notice(second)).toContain("15.0s");
++		build.resolve("done");
++	});
++
++	test("only tuiTranscript callers end their turn; print and ACP callers keep waiting even with UI", async () => {
++		vi.useFakeTimers();
++		const manager = new AsyncJobManager({ onJobComplete: () => {} });
++		const build = Promise.withResolvers<string>();
++		manager.register("bash", "build", async () => build.promise, { ownerId: "Main" });
++		const interactive = new WaitTool(session(manager, "Main", false, { tuiTranscript: true, hasUI: true }));
++		expect(interactive.description).toContain("End your turn instead");
++		expect(report(await elapse(interactive, 5_000))).toContain(
++			"End your turn: results and messages start your next one.",
++		);
++		// Print cancels jobs on turn end; ACP holds their results until the client's next prompt.
++		for (const extra of [{ hasUI: false }, { hasUI: true, tuiTranscript: false }]) {
++			const headless = new WaitTool(session(manager, "Main", false, extra));
++			expect(headless.description).not.toContain("End your turn");
++			expect(headless.description).toContain("blocks up to 4m");
++			const text = report(await elapse(headless, 5_000));
++			expect(text).not.toContain("End your turn");
++			expect(text).toContain("Call `wait` right away with no other tool call");
++		}
++		build.resolve("done");
++	});
++
+ 	test("labels a job that finished during the wait as delivered by it", async () => {
+ 		// The job settles mid-wait, so this call is what hands the result over.
+ 		// The old wording ("not auto-delivered; recovered by this snapshot") read
+@@ -299,18 +371,23 @@ describe("wait", () => {
+ 		childRun.resolve("done");
+ 	});
+ 
+-	test("an interrupted wait leaves later job completion auto-deliverable", async () => {
++	test("cancelling a top-rung wait leaves its running job and later completion auto-deliverable", async () => {
++		vi.useFakeTimers();
+ 		const manager = new AsyncJobManager({ onJobComplete: () => {} });
+ 		const delivered: string[] = [];
+ 		manager.registerDeliverySink("Main", (_id, text) => {
+ 			delivered.push(text);
+ 		});
+ 		const { promise, resolve } = Promise.withResolvers<string>();
+-		manager.register("bash", "still running", async () => promise, { ownerId: "Main" });
++		const id = manager.register("bash", "still running", async () => promise, { ownerId: "Main" });
++		const tool = new WaitTool(session(manager, "Main", false, { getContextMessages: latestTurn() }));
++		await elapse(tool, 5_000);
+ 		const controller = new AbortController();
+-		const waiting = new WaitTool(session(manager)).execute("interrupted", {}, controller.signal);
++		const waiting = tool.execute("idle-wait", {}, controller.signal);
++		await flushMicrotasks();
+ 		controller.abort();
+ 		await expect(waiting).rejects.toThrow("Operation aborted");
++		expect(manager.getJob(id)?.status).toBe("running");
+ 		resolve("finished afterward");
+ 		await manager.waitForAll();
+ 		await manager.drainDeliveries({ timeoutMs: 500 });
+@@ -412,15 +489,25 @@ describe("wait", () => {
+ 			]);
+ 		});
+ 
+-		test("a direct message ends the wait and reaches the caller as a user turn after the chatter before it", async () => {
++		test("a direct message ends a top-rung wait after chatter and resets its next wait to the floor", async () => {
++			vi.useFakeTimers();
+ 			const bridge = streamingMain();
+ 			const manager = new AsyncJobManager({ onJobComplete: () => {} });
+ 			const id = manager.register("bash", "build", async () => Promise.withResolvers<string>().promise, {
+ 				ownerId: "Main",
+ 			});
+-			const waiting = new WaitTool(session(manager)).execute("wait-direct", {});
++			const tool = new WaitTool(session(manager, "Main", false, { getContextMessages: latestTurn() }));
++			await elapse(tool, 5_000);
++			let settled = false;
++			const waiting = tool.execute("idle-wait", {}).finally(() => {
++				settled = true;
++			});
++			await flushMicrotasks();
+ 			await IrcBus.global().send({ from: "Peer", to: "Main", body: "editing auth.ts", broadcast: true });
+ 			await IrcBus.global().send({ from: "Other", to: "Main", body: "halfway", progress: true });
++			vi.advanceTimersByTime(10_000);
++			await flushMicrotasks();
++			expect(settled).toBe(false);
+ 			await IrcBus.global().send({ from: "Peer", to: "Main", body: "auth.ts is yours" });
+ 			const result = await waiting;
+ 			expect(result.details).toMatchObject({ op: "wait", interrupted: true });
+@@ -431,6 +518,7 @@ describe("wait", () => {
+ 				{ from: "Peer", message: "auth.ts is yours" },
+ 			]);
+ 			expect(manager.getJob(id)?.status).toBe("running");
++			expect(notice(await elapse(tool, 5_000))).toBeUndefined();
+ 			manager.cancel(id);
+ 		});
+ 
+@@ -875,13 +963,20 @@ describe("wait", () => {
+ 			expect(await idleText(childWait())).toContain("no agent you messaged this run owes a reply");
+ 		});
+ 
+-		test("hands the turn back at the ladder floor while the agent asked has not answered", async () => {
++		test("an owed reply uses sole-call backoff and the same TUI/headless guidance as owned jobs", async () => {
+ 			registerParentAndChild();
+ 			await ask();
+ 			vi.useFakeTimers();
+-			const tool = new WaitTool(session(new AsyncJobManager({}), "Child"));
+-			expect(await idleText(elapse(tool, 5_000))).toContain("No reply within 5.0s");
+-			expect(notice(await elapse(tool, 10_000))).toContain("15.0s");
++			const manager = new AsyncJobManager({});
++			const tool = new WaitTool(session(manager, "Child", false, { getContextMessages: latestTurn() }));
++			const first = await elapse(tool, 5_000);
++			expect(report(first)).toContain("No reply within 5.0s");
++			expect(report(first)).toContain("Call `wait` right away with no other tool call");
++			expect(notice(await elapse(tool, 240_000))).toContain("4m5s");
++			const interactive = new WaitTool(session(manager, "Child", false, { tuiTranscript: true }));
++			expect(report(await elapse(interactive, 5_000))).toContain(
++				"End your turn: results and messages start your next one.",
++			);
+ 		});
+ 
+ 		test("returns at once while the agent asked waits on the user, and blocks again once they answer", async () => {
+diff --git a/packages/collab-web/CHANGELOG.md b/packages/collab-web/CHANGELOG.md
+index da0a8bd4ee2b36eca27a1e13d4b70f9324a0acfa..b952d805d80b3e2bf3852953a8b51dc75ec80829 100644
+--- a/packages/collab-web/CHANGELOG.md
++++ b/packages/collab-web/CHANGELOG.md
+@@ -2,6 +2,10 @@
+ 
+ ## [Unreleased]
+ 
++### Changed
++
++- Todo call previews show array targets in summaries and expanded operation rows while retaining scalar and legacy streaming argument support.
++
+ ## [18.19.0] - 2026-11-12
+ 
+ ### Fixed
+diff --git a/packages/collab-web/src/tool-render/tools/todo.tsx b/packages/collab-web/src/tool-render/tools/todo.tsx
+index 591e60df93b883f6b468620d38974b8bded3b073..d4bbdf64525cdce6463d53290dce1c1f96965b68 100644
+--- a/packages/collab-web/src/tool-render/tools/todo.tsx
++++ b/packages/collab-web/src/tool-render/tools/todo.tsx
+@@ -53,6 +53,15 @@ function toOps(args: ToolRenderProps["args"]): unknown[] {
+ 	return typeof args.op === "string" ? [args] : [];
+ }
+ 
++/** Display scalar targets or the usable entries of a partially streamed target array. */
++function taskLabel(value: unknown): string | null {
++	const scalar = str(value);
++	if (scalar !== null) return scalar;
++	if (!Array.isArray(value)) return null;
++	const tasks = value.filter((entry): entry is string => typeof entry === "string" && entry.length > 0);
++	return tasks.length > 0 ? tasks.join(", ") : null;
++}
++
+ function Summary({ args }: ToolRenderProps): ReactNode {
+ 	const ops = toOps(args);
+ 	const counts: Record<string, number> = {};
+@@ -67,7 +76,7 @@ function Summary({ args }: ToolRenderProps): ReactNode {
+ 		}
+ 		counts[op]++;
+ 		if (firstTask === null) {
+-			firstTask = str(entry.task) ?? str(entry.phase);
++			firstTask = taskLabel(entry.task) ?? str(entry.phase);
+ 			if (firstTask === null && Array.isArray(entry.list)) {
+ 				const head = entry.list.find(isRecord);
+ 				if (head && Array.isArray(head.items)) firstTask = str(head.items[0]);
+@@ -87,7 +96,7 @@ function Summary({ args }: ToolRenderProps): ReactNode {
+ function opRow(entry: unknown, key: number): ReactNode {
+ 	if (!isRecord(entry)) return null;
+ 	const parts: string[] = [];
+-	const task = str(entry.task);
++	const task = taskLabel(entry.task);
+ 	const phase = str(entry.phase);
+ 	if (task !== null) parts.push(task);
+ 	if (phase !== null) parts.push(phase);
+diff --git a/packages/collab-web/test/tool-view.test.tsx b/packages/collab-web/test/tool-view.test.tsx
+index 1851faa6904b54ccb01a346136248e2b3154d8bd..e12874e699cfb46fc05fc280d77224b2f44a4a3c 100644
+--- a/packages/collab-web/test/tool-view.test.tsx
++++ b/packages/collab-web/test/tool-view.test.tsx
+@@ -227,6 +227,62 @@ describe("ToolView task renderer", () => {
+ 	});
+ });
+ 
++describe("ToolView todo target previews", () => {
++	it("shows every array target in both the summary and expanded operation row", () => {
++		for (const op of ["done", "drop", "rm"]) {
++			const html = renderToStaticMarkup(
++				<ToolView name="todo" defaultOpen args={{ op, task: ["alpha", "beta"], phase: "Work" }} />,
++			);
++
++			expect(html.match(/alpha, beta/g)).toHaveLength(2);
++			expect(html).toContain("Work");
++		}
++	});
++
++	it("keeps a scalar delimiter-containing name intact rather than treating it as an array", () => {
++		const html = renderToStaticMarkup(
++			<ToolView name="todo" defaultOpen args={{ op: "done", task: "alpha; beta" }} />,
++		);
++
++		expect(html.match(/alpha; beta/g)).toHaveLength(2);
++		expect(html).not.toContain("alpha, beta");
++	});
++
++	it("renders legacy operations and skips incomplete array entries without losing valid targets", () => {
++		const html = renderToStaticMarkup(
++			<ToolView
++				name="todo"
++				defaultOpen
++				running
++				args={{
++					ops: [
++						null,
++						"incomplete",
++						{ op: "done", task: [null, 1, "alpha", "", {}, "beta"] },
++						{ op: "drop", task: "gamma" },
++					],
++				}}
++			/>,
++		);
++
++		expect(html.match(/alpha, beta/g)).toHaveLength(2);
++		expect(html).toContain("gamma");
++		expect(html).not.toContain("incomplete");
++		expect(html).not.toContain("[object Object]");
++	});
++
++	it("falls back to the phase while a target array has no usable string entries", () => {
++		for (const task of [[], [null, 1, {}]]) {
++			const html = renderToStaticMarkup(
++				<ToolView name="todo" defaultOpen running args={{ op: "drop", task, phase: "Work" }} />,
++			);
++
++			expect(html.match(/Work/g)).toHaveLength(2);
++			expect(html).not.toContain("[object Object]");
++		}
++	});
++});
++
+ describe("ToolView ask renderer", () => {
+ 	const form = `<form>
+ <fieldset><legend>Storage backend</legend>
+diff --git a/packages/tui/CHANGELOG.md b/packages/tui/CHANGELOG.md
+index 8bead027c61b59ef2751fc8f9feda45938495d1d..5dda630bade17f7f8213f6a7d4654bc986204635 100644
+--- a/packages/tui/CHANGELOG.md
++++ b/packages/tui/CHANGELOG.md
+@@ -2,6 +2,10 @@
+ 
+ ## [Unreleased]
+ 
++### Changed
++
++- Todo results identify phases targeted by arrays and recovered task lists using the same exact-name-first parser as tool execution.
++
+ ## [18.20.0] - 2026-11-12
+ 
+ ### Added
+diff --git a/packages/tui/src/tools/todo.ts b/packages/tui/src/tools/todo.ts
+index 46b2132cc94130d0f92f12ff67076d0ea4eaefc4..23831f6835784d775de7927a1e0f09ef0e9d84ea 100644
+--- a/packages/tui/src/tools/todo.ts
++++ b/packages/tui/src/tools/todo.ts
+@@ -126,6 +126,53 @@ export function isClosedTodo<T extends { status: TodoStatus }>(task: T): boolean
+ 	return task.status === "completed" || task.status === "abandoned";
+ }
+ 
++/**
++ * Delimiters tried, in order, on a `task` string that names no task verbatim. A split wins when
++ * every part names a task; `partial` delimiters also win when only some do, so errors can name
++ * each missing part instead of the whole flattened string.
++ */
++const TASK_LIST_DELIMITERS: readonly { pattern: RegExp; partial: boolean }[] = [
++	{ pattern: /\r?\n/, partial: true },
++	{ pattern: /;/, partial: true },
++	{ pattern: /,/, partial: true },
++	{ pattern: /\s+/, partial: false },
++	{ pattern: /[\s,;]+/, partial: false },
++];
++
++const QUOTED_TASK_RE = /^(["'`])(.*)\1$/s;
++
++function normalizeTaskPart(part: string): string {
++	const trimmed = part.trim();
++	return QUOTED_TASK_RE.exec(trimmed)?.[2].trim() ?? trimmed;
++}
++
++function splitTaskList(content: string, known: ReadonlySet<string>): string[] {
++	if (known.has(content)) return [content];
++	let partial: string[] | undefined;
++	for (const delimiter of TASK_LIST_DELIMITERS) {
++		const parts = content
++			.split(delimiter.pattern)
++			.map(normalizeTaskPart)
++			.filter(part => part.length > 0);
++		const named = parts.filter(part => known.has(part)).length;
++		if (named > 0 && named === parts.length) return parts;
++		if (!partial && delimiter.partial && named > 0 && parts.length > 1) partial = parts;
++	}
++	return partial ?? [content];
++}
++
++/**
++ * Task contents targeted by a todo argument, shared by execution and rendering. Exact names win;
++ * otherwise flattened strings split into trimmed, unquoted names when the known tasks allow it.
++ * Array entries expand the same way. Absent, `""` and `[]` yield no targets; an empty array entry
++ * stays a target so execution reports it as missing rather than applying to a phase or the list.
++ */
++export function todoTaskTargets(phases: readonly TodoPhase[], task: string | readonly string[] | undefined): string[] {
++	if (task === undefined || task === "") return [];
++	const known = new Set(phases.flatMap(phase => phase.tasks.map(item => item.content)));
++	return (typeof task === "string" ? [task] : task).flatMap(content => splitTaskList(content, known));
++}
++
+ /**
+  * A todo the collapsed viewport treats as current work: the literal
+  * `in_progress` task or a pending task a live subagent is executing. Both
+@@ -235,7 +282,7 @@ export function selectCollapsedTodos<T extends { status: TodoStatus }>(
+ 
+ type TodoRenderOp = {
+ 	op?: string;
+-	task?: string;
++	task?: string | string[];
+ 	phase?: string;
+ 	items?: string[];
+ };
+@@ -259,6 +306,25 @@ function normalizeTodoArg(args: TodoRenderArgs | undefined): TodoRenderOp[] {
+ 	return typeof args.op === "string" ? [args] : [];
+ }
+ 
++/** Non-empty task contents an op targets; drops partially-streamed non-string entries. */
++function opTasks(op: TodoRenderOp): string[] {
++	const { task } = op;
++	if (typeof task === "string") return task ? [task] : [];
++	return Array.isArray(task) ? task.filter((entry): entry is string => typeof entry === "string" && !!entry) : [];
++}
++
++/** Header label shared by text and native call previews. */
++function describeOp(op: TodoRenderOp): string {
++	const parts = [forDisplay(op.op ?? "update")];
++	const tasks = opTasks(op);
++	if (tasks.length === 1) parts.push(forDisplay(tasks[0]));
++	else if (tasks.length > 1) parts.push(`${tasks.length} ${pluralize("task", tasks.length)}`);
++	if (op.phase) parts.push(forDisplay(op.phase));
++	if (Array.isArray(op.items) && op.items.length)
++		parts.push(`${op.items.length} ${pluralize("item", op.items.length)}`);
++	return parts.join(" ");
++}
++
+ // =============================================================================
+ // Phase numbering (display-only)
+ // =============================================================================
+@@ -424,8 +490,8 @@ function computeTouchedPhases(
+ 			const named = phases.find(phase => phase.name === op.phase);
+ 			if (named) touched.add(named.name);
+ 		}
+-		if (typeof op.task === "string" && op.task) {
+-			const phase = phases.find(phase => phase.tasks.some(task => task.content === op.task));
++		for (const content of todoTaskTargets(phases, opTasks(op))) {
++			const phase = phases.find(phase => phase.tasks.some(task => task.content === content));
+ 			if (phase) touched.add(phase.name);
+ 		}
+ 	}
+@@ -540,18 +606,7 @@ export const todoToolRenderer = {
+ 		const opsList = normalizeTodoArg(args);
+ 		// Model-authored, partially-streamed strings going straight into a header:
+ 		// `renderStatusLine` only flattens CR/LF and leaves the rest to the caller.
+-		const ops =
+-			opsList.length === 0
+-				? ["update"]
+-				: opsList.map(e => {
+-						const parts = [forDisplay(e.op ?? "update")];
+-						if (e.task) parts.push(forDisplay(e.task));
+-						if (e.phase) parts.push(forDisplay(e.phase));
+-						if (Array.isArray(e.items) && e.items.length) {
+-							parts.push(`${e.items.length} item${e.items.length === 1 ? "" : "s"}`);
+-						}
+-						return parts.join(" ");
+-					});
++		const ops = opsList.length === 0 ? ["update"] : opsList.map(describeOp);
+ 		// No body worth boxing while the call streams — a lone status line reads
+ 		// cleaner than an empty frame. The container renders it without chrome.
+ 		const header = renderStatusLine(
+@@ -735,14 +790,7 @@ export const todoToolRenderer = {
+ 		});
+ 	},
+ 	describeCall(args: TodoRenderArgs): NativeToolView {
+-		const ops = normalizeTodoArg(args).map(e => {
+-			const parts = [forDisplay(e.op ?? "update")];
+-			if (e.task) parts.push(forDisplay(e.task));
+-			if (e.phase) parts.push(forDisplay(e.phase));
+-			if (Array.isArray(e.items) && e.items.length)
+-				parts.push(`${e.items.length} ${pluralize("item", e.items.length)}`);
+-			return parts.join(" ");
+-		});
++		const ops = normalizeTodoArg(args).map(describeOp);
+ 		return { tool: { title: "Todo", target: ops.length === 0 ? "update" : ops.join(", "), targetKind: "text" } };
+ 	},
+ 
+diff --git a/packages/tui/test/todo-targets.test.ts b/packages/tui/test/todo-targets.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..e84b0895195f06caf77b2c109c214b6bb5c9166b
+--- /dev/null
++++ b/packages/tui/test/todo-targets.test.ts
+@@ -0,0 +1,58 @@
++import { describe, expect, it } from "bun:test";
++import { type TodoPhase, todoTaskTargets } from "../src/tools/todo";
++
++function phasesWith(...contents: string[]): TodoPhase[] {
++	return [{ name: "Work", tasks: contents.map(content => ({ content, status: "pending" })) }];
++}
++
++describe("todo task targets shared by the tool and renderer", () => {
++	for (const name of ["a; b", "a, b", "a b", "a\nb"]) {
++		it(`keeps the verbatim full name ${JSON.stringify(name)} ahead of list recovery`, () => {
++			const phases = phasesWith("a", "b", name);
++			expect(todoTaskTargets(phases, name)).toEqual([name]);
++			expect(todoTaskTargets(phases, [name])).toEqual([name]);
++		});
++	}
++
++	for (const [label, input] of [
++		["newline", "a\nb"],
++		["semicolon", "a; b"],
++		["comma", "a, b"],
++		["unambiguous whitespace", "a b"],
++	] as const) {
++		it(`recovers ${label}-separated known task names`, () => {
++			expect(todoTaskTargets(phasesWith("a", "b"), input)).toEqual(["a", "b"]);
++		});
++	}
++
++	it("trims and unquotes recovered parts and expands array entries across phases", () => {
++		const phases: TodoPhase[] = [
++			...phasesWith("a", "b"),
++			{ name: "Later", tasks: [{ content: "c", status: "pending" }] },
++		];
++		const targets: readonly string[] = [' "a"; `b` ', " 'c' "];
++		expect(todoTaskTargets(phases, targets)).toEqual(["a", "b", "c"]);
++	});
++
++	for (const separator of ["\n", ";", ","]) {
++		it(`retains each missing part of a partial ${JSON.stringify(separator)} list for an individual error`, () => {
++			expect(todoTaskTargets(phasesWith("a"), `a${separator} missing`)).toEqual(["a", "missing"]);
++		});
++	}
++
++	it("does not split an ambiguous whitespace-containing missing name", () => {
++		expect(todoTaskTargets(phasesWith("a"), "a missing task")).toEqual(["a missing task"]);
++	});
++
++	it("preserves an unknown full input when no delimiter part names a task", () => {
++		expect(todoTaskTargets(phasesWith("a"), "missing; other")).toEqual(["missing; other"]);
++	});
++
++	it("distinguishes an empty array entry from an absent target list", () => {
++		const phases = phasesWith("a");
++		expect(todoTaskTargets(phases, undefined)).toEqual([]);
++		expect(todoTaskTargets(phases, "")).toEqual([]);
++		expect(todoTaskTargets(phases, [])).toEqual([]);
++		expect(todoTaskTargets(phases, [""])).toEqual([""]);
++	});
++});

@@ -1,8 +1,10 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, readlinkSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { DeploymentConfig, ProcessIdentity, ToolchainReceipt } from "./deployment-types.ts";
+import { runtimeBinary } from "./deployment-config.ts";
+import { bootId, procExe, procExeTarget, procStat } from "./proc.ts";
 
 export class DeploymentHeld extends Error {}
 export class DeploymentBusy extends DeploymentHeld {}
@@ -10,16 +12,14 @@ export class DeploymentRetryable extends DeploymentHeld {}
 export const processIdentity = (pid: number): ProcessIdentity | undefined => {
   if (!Number.isSafeInteger(pid) || pid <= 0) return undefined;
   try {
-    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
-    const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
-    const startTicks = fields[19];
-    if (!startTicks || !/^\d+$/.test(startTicks) || fields[0] === "Z") return undefined;
-    const image = statSync(`/proc/${pid}/exe`, { bigint: true });
+    const { startTicks, zombie } = procStat(pid);
+    if (!startTicks || !/^\d+$/.test(startTicks) || zombie) return undefined;
+    const image = statSync(procExe(pid), { bigint: true });
     return {
       pid,
       startTicks,
-      bootId: readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim(),
-      executable: readlinkSync(`/proc/${pid}/exe`),
+      bootId: bootId(),
+      executable: procExeTarget(pid),
       imageDev: image.dev.toString(),
       imageIno: image.ino.toString(),
     };
@@ -47,13 +47,24 @@ export function underProcess(pid: number, root: number): boolean {
     for (let at = pid; at > 1 && !seen.has(at); ) {
       if (at === root) return true;
       seen.add(at);
-      const stat = readFileSync(`/proc/${at}/stat`, "utf8");
-      at = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]);
+      at = procStat(at).ppid;
     }
   } catch {
     return false;
   }
   return false;
+}
+
+/** The prepared parent and its descendants use the same fence and pinned Dori extension. */
+export function managedOmpCommand(toolchain: ToolchainReceipt, source: string | undefined): readonly string[] {
+  if (toolchain.ompUlw && source !== toolchain.ompUlw.source)
+    throw new DeploymentHeld("managed extension source differs from its prepared toolchain");
+  return [
+    toolchain.omp,
+    "--config",
+    toolchain.nativeConfig,
+    ...(toolchain.ompUlw ? ["--no-extensions", "-e", join(source!, "extension")] : []),
+  ];
 }
 
 /** No caller environment, tokens, sudo context or global Bun policy enters a prepared release/native actor. */
@@ -62,8 +73,8 @@ export function actorEnv(config: DeploymentConfig, toolchain?: ToolchainReceipt)
     HOME: config.home,
     PATH: [
       dirname(toolchain?.bun ?? config.bun),
-      dirname(toolchain?.omp ?? config.omp),
-      dirname(config.herdr),
+      dirname(toolchain?.omp ?? config.omp ?? join(config.doriHome, "bin/omp")),
+      dirname(runtimeBinary(config)),
       join(config.doriHome, "bin"),
       join(config.home, ".bun", "bin"),
       "/usr/bin",
@@ -74,9 +85,20 @@ export function actorEnv(config: DeploymentConfig, toolchain?: ToolchainReceipt)
     DORI_HOME: config.doriHome,
     DORI_CONFIG: config.doriConfig,
     DORI_STATE_DIR: config.stateDir,
-    HERDR_PANE_ID: config.pane,
-    HERDR_WORKSPACE_ID: config.pane.slice(0, config.pane.indexOf(":")),
-    ...(config.herdrSession ? { DORI_HERDR_SESSION: config.herdrSession } : {}),
+    ...(toolchain?.nativeSource || toolchain?.nativeOverride
+      ? { DORI_AGENT_ARGV: JSON.stringify(managedOmpCommand(toolchain, toolchain.ompUlw?.source)) }
+      : {}),
+    ...(toolchain?.ompUlw ? { DORI_OMP_ULW_PATH: join(toolchain.ompUlw.directory, "index.ts") } : {}),
+    ...(process.env["OMP_ULW_SCOPE_FILE"] === undefined
+      ? {}
+      : { OMP_ULW_SCOPE_FILE: process.env["OMP_ULW_SCOPE_FILE"] }),
+    ...(config.runtime === "hc"
+      ? { HC_TERMINAL_ID: config.pane, ...(config.hcSession ? { HC_SESSION: config.hcSession } : {}) }
+      : {
+          HERDR_PANE_ID: config.pane,
+          HERDR_WORKSPACE_ID: config.pane.slice(0, config.pane.indexOf(":")),
+          ...(config.herdrSession ? { DORI_HERDR_SESSION: config.herdrSession } : {}),
+        }),
     DORI_TELEMETRY: "0",
     DO_NOT_TRACK: "1",
   };

@@ -1,3 +1,4 @@
+import type { NativeReceipt } from "../release/native.ts";
 import type { SourceManifest } from "./types.ts";
 
 export type DeploymentConfig = {
@@ -9,10 +10,15 @@ export type DeploymentConfig = {
   /** Dori's pane/monitor metadata root; native session files stay where they are. */
   readonly stateDir: string;
   readonly bun: string;
-  readonly omp: string;
+  /** Omitted selects the release-bound native source; an absolute path is an explicit external-toolchain override. */
+  readonly omp?: string;
   readonly legacyOmp?: string;
-  readonly herdr: string;
+  /** Absent runtime remains herdr and retains legacy journal hashes; hc opts into its own binary and terminal. */
+  readonly runtime?: "herdr" | "hc";
+  readonly herdr?: string;
   readonly herdrSession?: string;
+  readonly hc?: string;
+  readonly hcSession?: string;
   readonly pane: string;
   readonly sessionId: string;
   readonly model: string;
@@ -21,6 +27,7 @@ export type DeploymentConfig = {
   readonly launcherPath: string;
   readonly healthTimeoutMs: number;
   readonly stopTimeoutMs: number;
+  readonly nativeStopMode?: "ui" | "signal";
   readonly monitorBootstrapFile?: string;
   readonly quiesceCheckpointFile?: string;
   readonly shims: readonly { readonly path: string; readonly source: string }[];
@@ -62,6 +69,9 @@ export type ToolchainReceipt = {
   readonly ompEntryHash: string;
   readonly bunHash: string;
   readonly nativeConfig: string;
+  readonly nativeSource?: NativeReceipt;
+  readonly nativeOverride?: true;
+  readonly ompUlw?: { readonly source: string; readonly identity: string; readonly directory: string };
   readonly nativeConfigHash: string;
 };
 export type MonitorSpec = {
@@ -133,6 +143,7 @@ export type DeploymentRecord = {
   quiesceHash?: string;
   pointers?: readonly PointerRecord[];
   stopRequestedAt?: string;
+  nativeUiExitRequestedAt?: string;
   launchRequestedAt?: string;
   runtime?: RuntimeIdentity;
   launchProcess?: ProcessIdentity;
@@ -144,6 +155,7 @@ export type DeploymentRecord = {
   healthyAt?: string;
   rollbackHealthyAt?: string;
   error?: string;
+  rollbackError?: string;
 };
 export type RuntimeHealth = {
   readonly version: 1;

@@ -22,12 +22,14 @@ Compose's build context is the candidate root (`../..` relative to the compose f
 | hc (when `HC=1`) | `0.1.18` | Retained upstream version and per-architecture sha256 values; release [manifest](https://releases.herdr.dev/core/0.1.18/manifest.json) |
 | gh | `2.100.0` | Retained upstream version and per-architecture sha256 values |
 | agent-messenger | `2.40.0` | [Published npm metadata](https://registry.npmjs.org/agent-messenger/2.40.0), Node >=22.13.0 |
-| OMP | `@oh-my-pi/pi-coding-agent@18.18.8` | [Published npm metadata](https://registry.npmjs.org/@oh-my-pi/pi-coding-agent/18.18.8), `omp` bin, Bun >=1.4.4 |
-| omp-ulw | `d69ad5fbe032c8aa49098c1d599c20df232bc474` | Candidate `omp-ulw.lock`; [public source](https://github.com/dbc-hbin/omp-ulw/tree/d69ad5fbe032c8aa49098c1d599c20df232bc474) |
+| OMP | c308 / 18.20.0 + `native-omp.patch` | Exact `native-omp.lock` upstream/result identity; frozen official `@oh-my-pi/pi-natives@18.20.0` addon, no Cargo |
+| omp-ulw | b215 + `omp-ulw.patch` | Exact `omp-ulw.lock` base plus `omp-ulw.overlay.lock` result; upstream Git tree/gitlinks retained |
 
 Bun's new asset sha256 values are `bf8ccbfb2b0b80159e0f9a6d15c55317add8077534dbc6130a3edb52fccb395c` for `bun-linux-x64.zip` and `baa6bb36f51d6e58561e02bbea825038a9df454f673d6d776e8bbf86f8c7850e` for `bun-linux-aarch64.zip`. These were read from the release metadata, not guessed or calculated from a substituted package. The other binary hashes are retained from upstream `97d807b`'s recipe; this port has not downloaded those assets or revalidated their bytes.
 
-OMP and agent-messenger have exact top-level npm versions and use registry integrity metadata during installation. Their transitive ranges, the Ubuntu tag and apt packages are not a complete reproducibility lock; do not interpret the recipe as a bit-for-bit reproducible image. The public omp-ulw checkout is verified against the lock commit; that revision is TypeScript source without a package manifest and needs no separate package install. It remains outside Dori's license and keeps its own notices.
+The current recipe does not install a stock OMP package globally. It prepares both source bundles as the non-root `dori` user under `/home/dori/.cache/omp-dori` and links `omp` to the guarded source wrapper. The role-gated ULW import uses `/home/dori/.dori/omp-ulw`, which points to the bound cache. Rebuilding an image does not silently repair a custom or stale persistent-volume link; preserve that state and explicitly prepare/select the intended dependency. These are source contracts, not an observed image build or runtime pass.
+
+The native source and official addon use their frozen dependency locks; agent-messenger still has an exact top-level npm version with transitive ranges. The Ubuntu tag and apt packages are not a complete reproducibility lock, so this is not a bit-for-bit reproducible-image claim. ULW remains separately fetched source with its own upstream notices, verified against the exact base and reviewed overlay identities rather than a clean-stock checkout alone.
 
 ## Build
 
@@ -152,10 +154,10 @@ docker run --name omp-dori-source-smoke-herdr --network none --entrypoint /bin/s
   bun src/cli.ts --help
   test -L /home/dori/.omp/agent/extensions/omp-dori
   test -L /home/dori/.agents/skills/dori-mode
-  test "$(git -C /opt/omp-ulw rev-parse HEAD)" = "$(cat omp-ulw.lock)"
+  test "$(git -C /home/dori/.dori/omp-ulw rev-parse HEAD)" = "$(cat omp-ulw.lock)"
 '
 ```
 
-Expected: Bun 1.4.4, OMP 18.18.8, skill help including `harness`, complete root help through all three root entrypoints, existing extension/skill links and the lock-matching omp-ulw commit. Repeat using `omp-dori-candidate:hc` and name `omp-dori-source-smoke-hc` for the hc image. No assertion here is an observed pass.
+Expected for the current recipe: Bun 1.4.4, OMP 18.20.0 from the bound source launcher, skill help including `harness`, complete root help through all three root entrypoints, existing extension/skill links and the lock-matching ULW base with its exact staged overlay. Repeat for the hc variant. No assertion here is an observed pass or a binary-equivalence claim.
 
 Actual session QA then follows first-run setup with synthetic work, an isolated provider identity and a separate messenger thread/session: inspect role/session records, active/paused goal readback, approval-held delivery, monitor restoration, all four harness sessions, a restart and volume persistence. MAIN must observe one benign intake/reply before claiming messenger compatibility. No production cutover or production watcher activation is implied by these steps.

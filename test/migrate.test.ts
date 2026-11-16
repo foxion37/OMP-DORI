@@ -132,6 +132,35 @@ describe("dori migrate: one lane herdr -> hc", () => {
     expect(d.store.queued(newRef)[1]!.attempt?.state).toBe("ambiguous");
   });
 
+  test("an entry whose id was recorded as delivered stays delivered after the move; its id moves too", async () => {
+    const { d, opts } = migrateWorld();
+    // A pass that recorded the notice as delivered was stopped before it rewrote the old queue.
+    d.store.saveInbox(OLD, [{ ...msg("nudge", 1), id: "nudge:k:1:1" }, msg("one", 2)]);
+    writeFileSync(`${d.store.inboxPath(OLD)}.ids`, "nudge:k:1:1\n");
+    expect(await migrate(d, { lane: "k" }, opts())).toBe(0);
+    expect(d.store.queued(NEW).map((m) => m.text)).toEqual(["one"]);
+    expect(d.store.enqueueOnce(NEW, { at: 3, from: "duty", text: "nudge", id: "nudge:k:1:1" })).toBe(false);
+  });
+
+  test("distinct notice ids with the same timestamp and text survive migration and both reach the new pane", async () => {
+    const { w, d, opts } = migrateWorld();
+    const notice = { ...msg("[duty -> k] no progress", 1), from: "duty" };
+    d.store.saveInbox(OLD, [
+      { ...notice, id: "nudge:k:incarnation:0:1" },
+      { ...notice, id: "nudge:k:incarnation:1:1" },
+    ]);
+    expect(await migrate(d, { lane: "k" }, opts())).toBe(0);
+    expect(d.store.queued(NEW).map((m) => m.id)).toEqual(["nudge:k:incarnation:0:1", "nudge:k:incarnation:1:1"]);
+    expect(await flushInbox(d, NEW)).toBe("delivered");
+    const sent = w.hc.sent.at(-1)!.text;
+    expect(sent.split(notice.text)).toHaveLength(3);
+    const delivered = w.hc.sent.length;
+    expect(await flushInbox(d, NEW)).toBe("delivered");
+    expect(w.hc.sent.at(-1)!.text).toBe(sent);
+    expect(w.hc.sent).toHaveLength(delivered);
+    expect(d.store.queued(NEW)).toEqual([]);
+  });
+
   test("--dry-run prints the plan and writes nothing", async () => {
     const { w, d, lines, opts } = migrateWorld();
     d.store.saveInbox(OLD, [msg("one", 1)]);

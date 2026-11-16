@@ -1,5 +1,5 @@
 import { existsSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { appendQueue, readQueue } from "./inbox-files.ts";
+import { carryOver } from "./inbox-files.ts";
 import type { Deps } from "./harness.ts";
 import type { MigrateOpts } from "./migrate-capture.ts";
 import { refText } from "./refs.ts";
@@ -9,8 +9,6 @@ import type { QueuedMessage } from "./store-types.ts";
 const LOCK_TRIES = 30;
 const LOCK_RETRY_MS = 1_000;
 const GONE_INPUT = "typed into the session it was migrated from; that input is gone";
-
-const keyOf = (m: QueuedMessage): string => `${m.at}\u0000${m.from}\u0000${m.text}`;
 
 /** A typed attempt's input stays behind in the old session, so on the new one it is held like an ambiguous delivery. */
 const carried = (m: QueuedMessage): QueuedMessage =>
@@ -40,19 +38,13 @@ async function underLocks(d: Deps, refs: readonly SessionRef[], opts: MigrateOpt
 
 /**
  * Appends every entry of `src` (and a `.merging` copy a cut-short run left) to `dst`, never rename-overwriting `dst`.
- * The source is renamed aside first, so an append racing the move lands in a fresh source file for a later merge; an
- * entry `dst` already holds (keyed by at+from+text) is not added again, so a re-run after a crash adds no duplicates.
+ * The source is renamed aside first, so an append racing the move lands in a fresh source file for a later merge;
+ * `carryOver` skips what `dst` already holds and what `src` recorded as delivered, so a re-run adds no duplicates.
  */
 function mergeFile(src: string, dst: string, map: (m: QueuedMessage) => QueuedMessage): void {
   const aside = `${src}.merging`;
   if (!existsSync(aside) && existsSync(src)) renameSync(src, aside);
-  const seen = new Set(readQueue(dst).map(keyOf));
-  for (const m of readQueue(aside)) {
-    if (seen.has(keyOf(m))) continue;
-    seen.add(keyOf(m));
-    appendQueue(dst, map(m));
-  }
-  rmSync(aside, { force: true });
+  carryOver(aside, src, dst, map);
 }
 
 /**

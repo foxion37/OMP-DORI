@@ -3,8 +3,8 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, writeFile
 import { join } from "node:path";
 import { git, withUlwRemote } from "./install-setup.ts";
 
-test.each(["", "/../omp-ulw"])(
-  "selecting an existing side default%s clears the external choice and restores managed ref updates",
+test.each(["", "/../.omp-dori"])(
+  "selecting an existing side%s default clears the external choice and restores managed ref updates",
   (suffix) => {
     const { root, home, remote, first, commit, install } = withUlwRemote();
     const side = join(home, ".omp-dori");
@@ -15,13 +15,13 @@ test.each(["", "/../omp-ulw"])(
     git(root, "clone", "-q", remote, external);
     expect(install({ OMP_ULW_SRC: external }).code).toBe(0);
     expect(readlinkSync(retained)).toBe(external);
-    const latest = commit("u2");
+    commit("u2");
 
-    expect(install({ OMP_ULW_SRC: `${managed}${suffix}` }).code).toBe(0);
+    expect(install({ OMP_ULW_SRC: `${side}${suffix}/omp-ulw` }).code).toBe(0);
     expect(lstatSync(retained, { throwIfNoEntry: false })).toBeUndefined();
     expect(git(managed, "rev-parse", "HEAD")).toBe(first);
     expect(install().code).toBe(0);
-    expect(git(managed, "rev-parse", "HEAD")).toBe(latest);
+    expect(git(managed, "rev-parse", "HEAD")).toBe(first);
     expect(lstatSync(retained, { throwIfNoEntry: false })).toBeUndefined();
     expect(git(external, "rev-parse", "HEAD")).toBe(first);
     expect(install({ OMP_ULW_REF: "lock" }).code).toBe(0);
@@ -36,37 +36,38 @@ test.each(["", "/../omp-ulw"])(
 test.each([
   ["side repeated slash", "", "//", "side"],
   ["primary default with parent HOME", "/../home", "", "primary"],
-])("a legacy side config keeps implicit managed ref selection with %s", (_label, homeSuffix, sideSuffix, kind) => {
-  const { root, home, remote, first, commit, install } = withUlwRemote();
-  const side = join(home, ".omp-dori");
-  const managed = join(side, "omp-ulw");
-  mkdirSync(side);
-  git(root, "clone", "-q", remote, managed);
-  writeFileSync(join(side, ".omp-dori"), "side\n");
-  const rawHome = `${home}${homeSuffix}`;
-  const rawSide = `${rawHome}/.omp-dori${sideSuffix}`;
-  const options = { HOME: rawHome, OMP_DORI_HOME: homeSuffix ? "" : rawSide };
-  const configPath = join(side, "config.json");
-  const config = {
-    ompUlwPath: kind === "primary" ? join(home, ".dori/omp-ulw/index.ts") : `${rawSide}/omp-ulw/index.ts`,
-    defaultModel: "fixture/preserved",
-    agentCommand: ["fixture-omp", "{prompt}"],
-  };
-  writeFileSync(configPath, JSON.stringify(config));
-  const latest = commit("u2");
-
-  expect(install(options).code).toBe(0);
-  expect(git(managed, "rev-parse", "HEAD")).toBe(latest);
-  expect(lstatSync(join(side, ".omp-dori-ulw"), { throwIfNoEntry: false })).toBeUndefined();
-  expect(JSON.parse(readFileSync(configPath, "utf8"))).toEqual({ ...config, ompUlwPath: "" });
-  const saved = readFileSync(configPath, "utf8");
-  expect(install({ ...options, OMP_ULW_REF: "lock" }).code).toBe(0);
-  expect(git(managed, "rev-parse", "HEAD")).toBe(first);
-  expect(lstatSync(join(side, ".omp-dori-ulw"), { throwIfNoEntry: false })).toBeUndefined();
-  expect(readFileSync(configPath, "utf8")).toBe(saved);
-  expect(existsSync(join(home, ".dori"))).toBe(false);
-  expect(existsSync(join(home, "extensions"))).toBe(false);
-});
+])(
+  "a legacy unpatched default with %s is preserved rather than accepted as the bound overlay",
+  (_label, homeSuffix, sideSuffix, kind) => {
+    const { root, home, remote, first, commit, install } = withUlwRemote();
+    const side = join(home, ".omp-dori");
+    const managed = join(side, "omp-ulw");
+    mkdirSync(side);
+    git(root, "clone", "-q", remote, managed);
+    writeFileSync(join(side, ".omp-dori"), "side\n");
+    const rawHome = `${home}${homeSuffix}`;
+    const rawSide = `${rawHome}/.omp-dori${sideSuffix}`;
+    const options = { HOME: rawHome, OMP_DORI_HOME: homeSuffix ? "" : rawSide };
+    const configPath = join(side, "config.json");
+    const config = {
+      ompUlwPath: kind === "primary" ? join(home, ".dori/omp-ulw/index.ts") : `${rawSide}/omp-ulw/index.ts`,
+      defaultModel: "fixture/preserved",
+      agentCommand: ["fixture-omp", "{prompt}"],
+    };
+    writeFileSync(configPath, JSON.stringify(config));
+    commit("u2");
+    const saved = readFileSync(configPath, "utf8");
+    expect(install(options).code).not.toBe(0);
+    expect(git(managed, "rev-parse", "HEAD")).toBe(first);
+    expect(readFileSync(configPath, "utf8")).toBe(saved);
+    // The same checkout remains usable as an explicit external source, without a bundled-overlay claim.
+    expect(install({ ...options, OMP_ULW_SRC: managed }).code).toBe(0);
+    expect(git(managed, "rev-parse", "HEAD")).toBe(first);
+    expect(JSON.parse(readFileSync(configPath, "utf8"))).toEqual({ ...config, ompUlwPath: "" });
+    expect(existsSync(join(home, ".dori"))).toBe(false);
+    expect(existsSync(join(home, "extensions"))).toBe(false);
+  },
+);
 
 test("a non-normalized custom config retains its real checkout without fetching or selecting a managed ref", () => {
   const { root, home, remote, first, commit, install } = withUlwRemote();
@@ -89,7 +90,10 @@ test("a non-normalized custom config retains its real checkout without fetching 
   expect(readlinkSync(join(side, ".omp-dori-ulw"))).toBe(external);
   expect(git(external, "rev-parse", "HEAD")).toBe(first);
   expect(git(external, "remote", "get-url", "origin")).toBe(unreachable);
-  expect(JSON.parse(readFileSync(configPath, "utf8"))).toEqual({ ompUlwPath: "" });
+  expect(JSON.parse(readFileSync(configPath, "utf8"))).toEqual({
+    ompUlwPath: "",
+    agentCommand: [join(side, "bin/omp"), "--dori-role", "lane", "--model", "{model}", "{prompt}"],
+  });
   expect(existsSync(join(side, "omp-ulw"))).toBe(false);
 });
 
