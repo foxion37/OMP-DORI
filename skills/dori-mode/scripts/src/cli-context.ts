@@ -1,4 +1,5 @@
 /** What every dori command handler gets: the parsed flags, the config, the flow deps, and the small helpers. */
+import { readFileSync } from "node:fs";
 import type { DoriConfig } from "./config.ts";
 import type { FlowDeps } from "./done-flow.ts";
 import type { SlackAuth } from "./messenger/slack.ts";
@@ -26,12 +27,39 @@ export const envSlackToken = (): string | undefined => {
   }
 };
 
-export const every = async (minutes: number, tick: () => Promise<void>): Promise<void> => {
+export const every = async (
+  minutes: number,
+  tick: () => Promise<void>,
+  retryDelay?: (error: unknown, intervalMs: number) => number,
+): Promise<void> => {
+  const interval = minutes * 60_000;
   for (;;) {
-    await tick().catch((e: unknown) => console.log(`WARN ${e instanceof Error ? e.message : String(e)}`.slice(0, 300)));
+    let wait = interval;
+    await tick().catch((e: unknown) => {
+      wait = retryDelay?.(e, interval) ?? interval;
+      console.log(`WARN ${e instanceof Error ? e.message : String(e)}`.slice(0, 300));
+    });
     if (minutes <= 0) return;
-    await Bun.sleep(minutes * 60_000);
+    await Bun.sleep(wait);
   }
+};
+
+/**
+ * A message body: `--text`, or `--text-file PATH` read as UTF-8 (`-` reads standard input), never both. Either is
+ * trimmed, and an empty body is refused before any request.
+ */
+export const messageText = async ({ values, need }: Pick<Cli, "values" | "need">): Promise<string> => {
+  const file = values["text-file"];
+  if (file === undefined) return need("text");
+  if (values["text"] !== undefined) return die("choose --text or --text-file, not both");
+  if (typeof file !== "string" || file === "") return die("--text-file needs a path, or - for standard input");
+  let text: string;
+  try {
+    text = file === "-" ? await Bun.stdin.text() : readFileSync(file, "utf8");
+  } catch (e) {
+    return die(`--text-file ${file}: ${e instanceof Error && "code" in e ? String(e.code) : "unreadable"}`);
+  }
+  return text.trim() || die(`--text-file ${file} is empty`);
 };
 
 type FlagValues = Readonly<Record<string, string | boolean | (string | boolean)[] | undefined>>;

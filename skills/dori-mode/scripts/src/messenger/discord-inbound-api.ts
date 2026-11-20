@@ -1,6 +1,6 @@
 import type { Discord } from "./discord.ts";
 import { isDiscordSnowflake } from "./discord-inbound-state.ts";
-import { MessengerError } from "./http.ts";
+import { DeliveryUncertainError, MessengerError, RateLimitError } from "./http.ts";
 
 export type Message = {
   id: string;
@@ -11,9 +11,11 @@ export type Message = {
   content?: string;
   flags?: number;
   attachments?: unknown;
-  message_reference?: { message_id?: string };
+  /** `type` 0 (or absent) is a reply; 1 is a forward, which names a message but answers nothing. */
+  message_reference?: { message_id?: string; channel_id?: string; type?: number };
   /** Present on replies, or null when Discord could not load the target (for example, after deletion). */
-  referenced_message?: { id?: string; author?: { id?: string }; content?: string } | null;
+  referenced_message?: { id?: string; channel_id?: string; author?: { id?: string }; content?: string } | null;
+  message_snapshots?: unknown;
 };
 /** One owner attachment, retaining Discord field names and the exact expiring signed CDN URL. */
 type InboundAttachment = {
@@ -26,7 +28,12 @@ type InboundAttachment = {
   duration_secs?: number;
 };
 /** Reply context is data; compare the author ID with the owner and bot IDs from INBOUND_READY. */
-type InboundReply = { id: string; author: string; text: string };
+type InboundReply = {
+  id: string;
+  author: string | null;
+  text: string | null;
+  status?: "unresolved" | "unavailable";
+};
 export type DiscordInbound = {
   channel: string;
   message: string;
@@ -34,30 +41,54 @@ export type DiscordInbound = {
   text: string;
   replyTo: InboundReply | null;
   attachments: InboundAttachment[];
+  unreferencedText?: true;
 };
-export type Request = <T>(path: string, body?: Record<string, unknown>) => Promise<T>;
+/**
+ * Delivers one owner message; the cursor moves past it only after this returns or, when it returns a promise, after
+ * that resolves. Live intake supplies its lifecycle signal; callbacks that ignore it retain in-flight completion.
+ */
+export type Emit = (message: DiscordInbound, signal?: AbortSignal) => unknown;
+export type Request = <T>(path: string, body?: Record<string, unknown>, signal?: AbortSignal) => Promise<T>;
 
 const REQUEST_FAILED = "Discord inbound request failed; check the connection and Discord API availability";
+
+/** Compares two Discord snowflakes without losing precision above 2^53. */
+export const newer = (a: string, b: string): boolean => BigInt(a) > BigInt(b);
+
+/** A discovered target's lost access, which is skipped rather than fatal. */
+export const unavailable = (error: unknown): boolean =>
+  error instanceof MessengerError && (error.status === 403 || error.status === 404);
 
 /** A locally detected response fault; retrying it must not hold the live queue indefinitely. */
 export const inboundProtocolError = (message: string): MessengerError =>
   new MessengerError(message, 502, "DISCORD_INBOUND_PROTOCOL_ERROR");
 
-/** A rate limit, a server error or an unreachable API: worth retrying; anything else needs the operator. */
-export const isTransient = (error: unknown): boolean =>
-  error instanceof MessengerError &&
-  error.code !== "DISCORD_INBOUND_PROTOCOL_ERROR" &&
-  (error.status === 429 ||
-    error.status >= 500 ||
-    (error.status === 0 && error.code === "DISCORD_INBOUND_REQUEST_FAILED"));
+/** Only retry a known rejection or a read failure; keep any server rate-limit floor. */
+export const transientRetryDelay = (error: unknown, delay: number): number | undefined => {
+  if (!(error instanceof MessengerError) || error.outcome === "uncertain") return undefined;
+  if (error instanceof RateLimitError) {
+    return error.retryAfterMs <= error.waitLimitMs ? Math.max(delay, error.retryAfterMs) : undefined;
+  }
+  if (
+    error.code !== "DISCORD_INBOUND_PROTOCOL_ERROR" &&
+    (error.status === 429 ||
+      error.status >= 500 ||
+      (error.status === 0 && error.code === "DISCORD_INBOUND_REQUEST_FAILED"))
+  )
+    return delay;
+  return undefined;
+};
 
 /** Maps Discord failures to actionable errors that never echo a response body. */
 export const inboundRequest =
   (discord: Discord): Request =>
-  async <T>(path: string, body?: Record<string, unknown>): Promise<T> => {
+  async <T>(path: string, body?: Record<string, unknown>, signal?: AbortSignal): Promise<T> => {
     try {
-      return await discord.call<T>(body ? "POST" : "GET", path, body);
+      return await discord.call<T>(body ? "POST" : "GET", path, body, signal);
     } catch (error) {
+      if (signal?.aborted && error === signal.reason) throw error;
+      if (error instanceof Error && error.name === "AbortError") throw error;
+      if (error instanceof DeliveryUncertainError || error instanceof RateLimitError) throw error;
       if (error instanceof SyntaxError) throw inboundProtocolError("Discord inbound response is invalid");
       const status = error instanceof MessengerError ? error.status : 0;
       let message = REQUEST_FAILED;
@@ -112,22 +143,43 @@ export const toInbound = (message: Message): DiscordInbound => {
       403,
     );
   }
-  const reference = message.message_reference?.message_id;
-  const replied = message.referenced_message;
+  const isReply = (message.message_reference?.type ?? 0) === 0;
+  const reference = isReply ? message.message_reference?.message_id : undefined;
+  const replied = isReply ? message.referenced_message : undefined;
+  const referenceChannel = isReply ? message.message_reference?.channel_id : undefined;
+  if (referenceChannel !== undefined && referenceChannel !== message.channel_id)
+    throw inboundProtocolError("Discord inbound reply belongs to a different channel or thread");
+  if (
+    replied &&
+    ((replied.channel_id !== undefined && replied.channel_id !== message.channel_id) ||
+      (reference !== undefined && replied.id !== reference))
+  )
+    throw inboundProtocolError("Discord inbound reply snapshot does not match its message and channel");
+  let replyTo: InboundReply | null = null;
+  if (reference !== undefined) {
+    if (!isDiscordSnowflake(reference)) throw inboundProtocolError("Discord inbound reply reference is invalid");
+    replyTo = {
+      id: reference,
+      author: isDiscordSnowflake(replied?.author?.id) ? replied.author.id : null,
+      text: typeof replied?.content === "string" ? replied.content : null,
+    };
+    if (replied === undefined) replyTo.status = "unresolved";
+    else if (replied === null) replyTo.status = "unavailable";
+  }
   return {
     channel: message.channel_id,
     message: message.id,
-    reference: isDiscordSnowflake(reference) ? reference : null,
+    reference: reference ?? null,
     text: message.content,
-    replyTo:
-      replied && isDiscordSnowflake(replied.id) && isDiscordSnowflake(replied.author?.id)
-        ? {
-            id: replied.id,
-            author: replied.author.id,
-            text: typeof replied.content === "string" ? replied.content : "",
-          }
-        : null,
+    replyTo,
     attachments: toAttachments(message),
+    ...(message.type === 0 &&
+    message.message_reference === undefined &&
+    replied === undefined &&
+    message.message_snapshots === undefined &&
+    (message.attachments === undefined || (Array.isArray(message.attachments) && message.attachments.length === 0))
+      ? { unreferencedText: true }
+      : {}),
   };
 };
 

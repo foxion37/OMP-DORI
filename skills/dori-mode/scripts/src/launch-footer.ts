@@ -38,6 +38,7 @@ export const footer = (
   leadPane: string,
   identities: DoriConfig["repoIdentities"] = {},
   runtime?: DoriConfig["runtime"],
+  freshness?: DoriConfig["freshness"],
 ): string => {
   const forward = sendReport(leadPane, runtime);
   return [
@@ -45,26 +46,57 @@ export const footer = (
     FOOTER_START,
     FOOTER_HEADING,
     `- Key: ${lane.key}. Work thread: ${lane.thread}.`,
+    ...(lane.launchSelection
+      ? [
+          `- Launch selection request (metadata only): ${JSON.stringify(lane.launchSelection)}. This is not proof of native activation, delivery or goal creation.`,
+        ]
+      : []),
     ...(lane.group
       ? [
           `- Group: ${lane.group}. Your session may be closed and replaced by a successor when your context fills (dori relay): when the lead asks for a handoff, stop new work, write it, and print HANDOFF-WRITTEN.`,
         ]
       : []),
+    "- The lead owns the shared work thread title and completion status. A lane must not rename or archive it when its own work finishes.",
     `- Done = ${lane.done}. The lane closes only when every signal reads back live.`,
+    `- Task brief: ${JSON.stringify(lane.brief)}.`,
+    ...(lane.cwd === undefined ? [] : [`- Recorded working directory: ${JSON.stringify(lane.cwd)}.`]),
+    "- Keep the brief's original request/source references, allowed repositories, worktree/branch and observable acceptance, preserved resources, unfinished external effects/receipts and resume checkpoint. Use task-relevant facts, not the whole lead transcript.",
+    "- On a follow-up or resume, re-read that brief and the recorded context before acting. Do not silently retarget this lane from another session's cwd or an unrelated message. Recorded paths identify resources, not additional authority.",
+    "- Resolve missing or conflicting context that matters to this task with the lead before the affected work; do not invent values, permissions or deadlines. Preserve the named resources and inspect uncertain external effects before repeating them.",
     "- Reset coupons and credits require the user's explicit permission for each specific use and amount. Never redeem, reset, spend credits (including existing paid or promotional balances), top up or enable paid overage on your own. The brief, existing balances and the lead's approval are not user consent.",
     "- If the authorized provider token allowance, usage quota or credit budget is exhausted, STOP model work, preserve progress and report the blocker. Wait for the user's decision. Never switch accounts/providers/models or retry to evade the limit. Propagate this rule to every subagent; it overrides goals, nudges and continue-working instructions.",
-    "- Persist each milestone, blocker, question, halt and completion with the report command below. It appends reports.jsonl and prints the human [REPORT] line.",
-    "- Before forwarding, verify that the lead pane runs a live agent, its input is empty, and no approval or question prompt is open (references/sessions.md). A shell, unknown status or unconfirmed check holds forwarding.",
-    "- Supply kind (milestone, blocker, question, halted or done) and text (the report with evidence links) as data, such as environment variables. Never interpolate raw report text into shell source or evaluate the printed line. Record with the command below; when it includes forwarding, run that combined call only after the forwarding checks pass:",
-    "```sh",
-    `line=$(${CLI} report ${lane.key} --kind "$kind" --text "$text") && printf '%s\\n' "$line"${forward ? ` && ${forward}` : ""}`,
+    "- Persist each milestone, blocker, question, halt and completion with the report command below. It appends reports.jsonl and returns a JSON receipt with the report ID.",
+    "- Final report text uses these five labeled lines, filled from the actual work:",
+    "```text",
+    "Outcome: completed, partial, blocked or cancelled, and the requested result actually reached.",
+    "Changes/findings: concrete artifacts or findings with their paths or source links.",
+    "Verified: observed commands/results and receipts tied to each acceptance condition.",
+    "Unverified: checks not run, reasons and remaining uncertainty; say none only when justified.",
+    "Handoff: remaining work, blocker or owner decision and the responsible next action; none if no handoff is needed.",
     "```",
+    "- No blank placeholders or invented tests, results or handoff tasks. For investigation-only work, report findings and source evidence instead of invented edits.",
+    "- For local verification, match the receipt against the saved journal entry, including its lane, generation, time, kind, text and owner summary if set. Keep any journal path and line number local; claim evidence uses the report ID, not a path or report body.",
+    "- Keep the existing report kinds: partial uses milestone; blocked uses blocker; cancelled uses halted. Only completed work with every Done signal read back live uses kind done or claim-done. A report, output file or successful send alone is not acceptance evidence; verify the declared Done condition, including any expected file content.",
+    "- Supply kind (milestone, blocker, question, halted or done) and text (the report with evidence links) as data, such as environment variables. Never interpolate raw report text into shell source. Record once, even if the lead cannot receive a message:",
+    ...(freshness?.postRaw === false
+      ? [
+          "- This lane uses summary-only posting. Also set owner to a concise, owner-facing summary as data; keep internal detail and evidence in text. The command below records both, without posting the raw detail.",
+        ]
+      : []),
+    "```sh",
+    `receipt=$(${CLI} report ${lane.key} --kind "$kind" --text "$text"${freshness?.postRaw === false ? ' --owner "$owner"' : ""} --json) && printf '%s\\n' "$receipt"`,
+    "```",
+    `- Read the saved report back locally with ${CLI} status ${lane.key} --json and match progress.lastReport to the receipt (the receipt adds id). If a newer report is already current, look up the exact entry in the configured journal. Keep the receipt; do not run report again to forward it or recover output.`,
     ...(forward
       ? [
-          "- Confirm forwarding from the agent's status transition or session record; an exit code or echoed input alone is unconfirmed. Never resend just because no reply is visible.",
+          "- Forward the saved receipt only after verifying that the lead pane runs a live agent, its input is empty, and no approval or question prompt is open (references/sessions.md). A shell, unknown status or unconfirmed check holds forwarding:",
+          "```sh",
+          `line=$(printf '%s' "$receipt" | bun -e ${shellQuote(`import { reportLine } from ${JSON.stringify(new URL("./reports.ts", import.meta.url).href)}; console.log(reportLine(await Bun.stdin.json()));`)}) && ${forward}`,
+          "```",
+          "- If using another shell, recover receipt as data from the saved output or local record before forwarding. Confirm forwarding from the agent's status transition or session record; an exit code or echoed input alone is unconfirmed. Never resend just because no reply is visible.",
         ]
       : [
-          "- The lead pane or runtime is unavailable, so the command above only records and prints the report. Keep that line and resolve the missing destination with the lead before forwarding.",
+          "- The lead pane or runtime is unavailable. Keep the receipt and resolve the missing destination with the lead before forwarding.",
         ]),
     ...(Object.keys(identities).length
       ? [
@@ -79,7 +111,8 @@ export const footer = (
     `- After each completed step: ${CLI} checkpoint ${lane.key} --step <unique-step> --result <result> --evidence <path-or-URL> [--remote-effect <completed-push/merge/deploy-receipt>] (one flag per receipt).`,
     `- On resume, run ${CLI} checkpoints ${lane.key} before doing work. Never repeat a recorded remote side effect. If a crash may have happened between the remote action and checkpoint, read the live remote receipt first and use the service's idempotency key; a local journal cannot make that remote action atomic.`,
     `- Supervision ceilings: ${JSON.stringify(lane.budget ?? {})}. A breach marks blocked and alerts; it never kills the agent. Report a blocker and wait for the lead's decision rather than overriding the ceiling.`,
-    `- When done: ${CLI} claim-done ${lane.key} --evidence "<merge SHA, closed issue, version>". See references/done-protocol.md.`,
+    `- When done, claim only if the owner authorized closing the tab and removing the lane's worktrees, the Done signals are live, and no worktree contains uncommitted or unpushed work: ${CLI} claim-done ${lane.key} --evidence "report:<id>; <shareable live Done receipts>". The thread hook can publish this evidence. Keep local paths, private check output and report text out of it. Otherwise report the result without claiming; authorized parking retains worktrees. See references/done-protocol.md.`,
+    "- If the lead or watcher rejects the claim, report the setback as milestone or blocker, not done. Resolve the objection, recheck every Done signal, and save and cite a new final report with fresh live evidence before claiming again.",
     FOOTER_END,
     "",
   ].join("\n");

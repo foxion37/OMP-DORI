@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { interactiveShellInFront, SHELLS } from "../src/runtime/foreground.ts";
+import { interactiveShellInFront } from "../src/runtime/foreground.ts";
 import { Runtimes } from "../src/runtime/registry.ts";
 import type { CreateSpec, ForegroundProcess, RuntimeKind, SessionRef, SessionRuntime } from "../src/runtime/types.ts";
 import { formatRef, openSession, parseRef } from "../src/runtime/types.ts";
@@ -51,6 +51,7 @@ describe("interactiveShellInFront (#66), ported from the herdr parser", () => {
     ["interactive zsh by path, upper case", [p("/bin/ZSH", "/bin/zsh", "-i")], true],
     ["bash -C (noclobber) is still interactive", [p("bash", "bash", "-C")], true],
     ["busybox sh applet", [p("busybox", "busybox", "sh")], true],
+    ["bare busybox with no applet", [p("busybox", "busybox")], true],
     ["shell entry without argv", [p("fish")], true],
     ["agent with a sh -c child", [p("omo", "omo"), p("sh", "sh", "-c", "sleep 1")], false],
     ["shell running a script is held, the safe side", [p("bash", "bash", "tool.sh")], true],
@@ -69,6 +70,7 @@ describe("interactiveShellInFront (#66), ported from the herdr parser", () => {
     ["pwsh -noex -c keeps a prompt", [p("pwsh", "pwsh", "-noex", "-c", "ls")], true],
     ["pwsh --noexi -Command keeps a prompt", [p("pwsh", "pwsh", "--noexi", "-Command", "ls")], true],
     ["powershell -c", [p("powershell", "powershell", "-c", "ls")], false],
+    ["powershell -Interactive", [p("powershell", "powershell", "-Interactive")], true],
     ["pwsh -Command", [p("pwsh", "pwsh", "-Command", "ls")], false],
     ["exec'd agent", [p("bun", "bun", "omo.js")], false],
     ["busybox running a command applet: busybox sh -c", [p("busybox", "busybox", "sh", "-c", "x")], false],
@@ -81,12 +83,6 @@ describe("interactiveShellInFront (#66), ported from the herdr parser", () => {
   test("an empty or missing process list is doubt", () => {
     expect(interactiveShellInFront([])).toBe(true);
     expect(interactiveShellInFront(undefined)).toBe(true);
-  });
-
-  test("SHELLS covers the busybox and PowerShell names", () => {
-    for (const name of ["sh", "bash", "zsh", "fish", "busybox", "pwsh", "powershell"])
-      expect(SHELLS.has(name)).toBe(true);
-    expect(SHELLS.has("omo")).toBe(false);
   });
 });
 
@@ -147,7 +143,7 @@ describe("Runtimes.kinds and selfAny", () => {
     const runtimes = make();
     expect(runtimes.kinds()).toEqual([]);
     runtimes.for({ runtime: "hc", id: "t1" });
-    runtimes.default;
+    void runtimes.default;
     runtimes.for({ runtime: "hc", id: "t2" });
     expect(runtimes.kinds()).toEqual(["hc", "herdr"]);
   });

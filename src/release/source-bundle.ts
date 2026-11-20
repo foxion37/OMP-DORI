@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { lstatSync, readFileSync, readlinkSync } from "node:fs";
+import { copyFileSync, lstatSync, mkdtempSync, readFileSync, readlinkSync, rmSync } from "node:fs";
+import { availableParallelism, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { command } from "../update/deployment-process.ts";
 import { digest } from "../update/source.ts";
@@ -102,29 +103,75 @@ export const bundleEnv = (home: string, bun = process.execPath): Record<string, 
 export const bundleGit = (argv: readonly string[], cwd: string, home: string): Promise<string> =>
   command(["/bin/sh", "-c", 'umask 077; exec "$@"', "dori-source-git", ...args(argv)], cwd, bundleEnv(home), 300_000);
 
+function hashChunks(inputs: readonly string[], checkout: string, home: string): string {
+  // One synchronous Bun driver keeps admission synchronous while Git children hash in parallel.
+  const proc = Bun.spawnSync(
+    [
+      process.execPath,
+      "--eval",
+      `
+const { argv, inputs } = await Bun.stdin.json();
+const outputs = await Promise.all(inputs.map(async (input) => {
+  const child = Bun.spawn(argv, { stdin: Buffer.from(input), stdout: "pipe", stderr: "inherit" });
+  const [output, code] = await Promise.all([new Response(child.stdout).text(), child.exited]);
+  if (code !== 0) process.exitCode ||= code;
+  return output;
+}));
+if (!process.exitCode) process.stdout.write(outputs.join(""));
+`,
+    ],
+    {
+      cwd: checkout,
+      env: bundleEnv(home),
+      stdin: Buffer.from(JSON.stringify({ argv: args(["hash-object", "--stdin-paths"]), inputs })),
+      stdout: "pipe",
+      stderr: "pipe",
+    },
+  );
+  if (proc.exitCode !== 0)
+    throw new Error(
+      `Bound source Git command failed: git hash-object --stdin-paths exited ${proc.exitCode}: ${proc.stderr.toString().trim().split("\n", 1)[0]}`,
+    );
+  return proc.stdout.toString().trim();
+}
+
 /**
  * Synchronous admission also runs at launch; a version or a launcher hash alone is never a receipt.
- * Every tracked regular file's content is compared to its index blob through one batched attribute-aware
- * hash, so a legitimate checkout transform is admitted and any real content change is still rejected.
+ * Every tracked regular file's content is compared to its index blob through batched attribute-aware
+ * hashes, so a legitimate checkout transform is admitted and any real content change is still rejected.
  */
 export function assertSourceBundle(checkout: string, bundle: BoundBundle, home: string): void {
   realDirectory(checkout);
   owned(checkout);
   realDirectory(join(checkout, ".git"));
-  const git = (argv: readonly string[], input?: string): string => {
+  const git = (argv: readonly string[], input?: string, env = bundleEnv(home)): string => {
     const proc = Bun.spawnSync(args(argv), {
       cwd: checkout,
-      env: bundleEnv(home),
+      env,
       stdin: input === undefined ? "ignore" : Buffer.from(input),
       stdout: "pipe",
       stderr: "pipe",
     });
-    if (proc.exitCode !== 0) throw new Error("Bound source checkout changed or its Git identity is unavailable");
+    if (proc.exitCode !== 0)
+      throw new Error(
+        `Bound source Git command failed: git ${argv.join(" ")} exited ${proc.exitCode}: ${proc.stderr.toString().trim().split("\n", 1)[0]}`,
+      );
     return proc.stdout.toString().trim();
   };
+  const head = git(["rev-parse", "HEAD"]);
+  // write-tree locks its index even with GIT_OPTIONAL_LOCKS=0. Keep that write private to this admission.
+  const temporary = mkdtempSync(join(tmpdir(), "dori-source-index-"));
+  let tree: string;
+  try {
+    const index = join(temporary, "index");
+    copyFileSync(join(checkout, ".git/index"), index);
+    tree = git(["write-tree"], undefined, { ...bundleEnv(home), GIT_INDEX_FILE: index });
+  } finally {
+    rmSync(temporary, { recursive: true, force: true });
+  }
   if (
-    git(["rev-parse", "HEAD"]) !== bundle.lock.commit ||
-    git(["write-tree"]) !== bundle.lock.resultTree ||
+    head !== bundle.lock.commit ||
+    tree !== bundle.lock.resultTree ||
     git(["diff-files", "--ignore-submodules=none", "--name-only"]) !== ""
   )
     throw new Error("Bound source checkout differs from its upstream, patch or resulting tree");
@@ -157,12 +204,22 @@ export function assertSourceBundle(checkout: string, bundle: BoundBundle, home: 
       throw new Error(`Bound source tracked type or mode differs: ${match[3]}`);
     regular.push({ path: match[3], oid: match[2] });
   }
-  // One batched hash over the real paths, with filters enabled, applies each file's authenticated
-  // checkout attributes: `text eol=crlf` returns to its index blob, while mutated bytes never do.
+  // Bound concurrency, retain path order, and avoid driver overhead for small source bundles.
+  // Each Git process still applies checkout attributes, including `text eol=crlf`, to the real paths.
+  const count = regular.length < 1024 ? 1 : Math.min(4, availableParallelism());
+  const size = Math.ceil(regular.length / count);
+  const inputs = Array.from(
+    { length: count },
+    (_, chunk) =>
+      `${regular
+        .slice(chunk * size, (chunk + 1) * size)
+        .map((file) => file.path)
+        .join("\n")}\n`,
+  );
   const observed =
     regular.length === 0
       ? []
-      : git(["hash-object", "--stdin-paths"], `${regular.map((file) => file.path).join("\n")}\n`)
+      : (count === 1 ? git(["hash-object", "--stdin-paths"], inputs[0]) : hashChunks(inputs, checkout, home))
           .split("\n")
           .filter(Boolean);
   if (observed.length !== regular.length || regular.some((file, at) => observed[at] !== file.oid))

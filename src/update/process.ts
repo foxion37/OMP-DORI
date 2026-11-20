@@ -7,7 +7,7 @@ import { fill } from "../../skills/dori-mode/scripts/src/config.ts";
 import { recordCommandOutput } from "./command-output.ts";
 import { canonical, contains, UpdateError, UpdateInterrupted } from "./config.ts";
 import { type Capability, isolatedEnv } from "./environment.ts";
-import { nativeAgent } from "./load.ts";
+import { nativeAgent, ompPart } from "./load.ts";
 import { nativePromptOptions } from "./native-prompts.ts";
 import { readAgentResponse } from "./response.ts";
 import { REVIEW_TOOLS, readReviewScope } from "./reviewer-guard.ts";
@@ -34,14 +34,16 @@ function nativeLaunch(
   directory: string,
   env: Record<string, string>,
 ): { readonly argv: string[]; readonly guard: Guard } {
+  // OMP's own arguments, after any launcher prefix whose options (`stdbuf -e L`) are not OMP's.
+  const own = ompPart(argv);
   if (
-    argv.some((arg) =>
+    own.some((arg) =>
       /^(?:-e|--extension|--extensions|--trusted-extension|--hook|--profile|--dori-role)(?:=|$)/.test(arg),
     )
   ) {
     throw new UpdateError("automated OMP uses no explicit extension/profile/Dori-role flags");
   }
-  const mode = flagValue(argv, "mode");
+  const mode = flagValue(own, "mode");
   if (mode !== null && mode !== "json") {
     throw new UpdateError("automated OMP requires --mode json for final-message evidence");
   }
@@ -49,7 +51,7 @@ function nativeLaunch(
   const guard: Guard = { kind, path: join(directory, `${kind}-scope.json`), nonce: randomUUID() };
   const runtime = dirname(env["DORI_CONFIG"]!);
   const options = [
-    ...nativePromptOptions(directory, job.candidate, kind, argv),
+    ...nativePromptOptions(directory, job.candidate, kind, ompPart(argv)),
     "--no-session",
     "--no-title",
     "--no-extensions",

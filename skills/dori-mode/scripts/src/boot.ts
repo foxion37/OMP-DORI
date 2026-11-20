@@ -1,7 +1,11 @@
 import { join } from "node:path";
 
 import { configPath } from "./config.ts";
+import type { Decisions } from "./decisions.ts";
+import { decisionBootLines } from "./decisions-render.ts";
+import { doctorLocal } from "./doctor.ts";
 import type { FlowDeps } from "./done-flow.ts";
+import { holdLines } from "./holds.ts";
 import { shellQuote } from "./launch-footer.ts";
 import type { SessionInfo } from "../../../../src/runtime/types.ts";
 import type { Slack } from "./messenger/slack.ts";
@@ -24,6 +28,7 @@ export type SlackCheck = () => Promise<{
 export type BootDeps = Pick<FlowDeps, "run" | "registry" | "config" | "clock" | "rts" | "env"> & {
   readonly reports: Reports;
   readonly worklog: Worklog;
+  readonly decisions?: Decisions;
   /** null when no Slack token is configured; boot then skips the check. */
   readonly slack: SlackCheck;
   readonly monitorDirs?: readonly string[];
@@ -104,7 +109,7 @@ export const bootCheck = async (deps: BootDeps): Promise<{ exitCode: number; lin
       continue;
     }
     try {
-      const progress = deps.reports.read(lane.key);
+      const progress = deps.reports.read(lane.key, { generation: lane.lifecycleEpoch });
       lanes.push({ ...lane, reportState: progress?.state });
       // The launch's activity record and screen-derived stalls are written by dori, not the lane: only a report is one.
       const report = progress?.lastReport;
@@ -161,6 +166,7 @@ export const bootCheck = async (deps: BootDeps): Promise<{ exitCode: number; lin
   const warnings = workspaceCheck(deps.config, rts.choice?.kind, panes);
   if (warnings.length) failed = true;
   lines.push(...warnings);
+  lines.push(...holdLines(registered));
   lines.push(...journals);
   // The lead's open requests, each with its Next line, so a compacted lead resumes from the record, not from memory.
   try {
@@ -176,6 +182,9 @@ export const bootCheck = async (deps: BootDeps): Promise<{ exitCode: number; lin
     failed = true;
     lines.push(`WORKLOG unreadable ${shellQuote(deps.worklog.path)}`);
   }
+  const decisions = deps.decisions ? decisionBootLines(deps.decisions, deps.clock.now()) : undefined;
+  lines.push(...(decisions?.lines ?? []));
+  if (decisions?.failed) failed = true;
   const { manifests, errors } = readMonitorManifests(
     deps.config.sessionsDir,
     deps.monitorDirs,
@@ -185,6 +194,9 @@ export const bootCheck = async (deps: BootDeps): Promise<{ exitCode: number; lin
     failed = true;
     lines.push(`MONITORS unreadable ${shellQuote(path)}`);
   }
+  lines.push(
+    `DOCTOR warn=${doctorLocal(deps.config, lanes, manifests).filter((finding) => finding.severity === "WARN").length} ignored=${deps.config.doctor?.ignore?.join(",") || "none"} (local advisory checks; run dori doctor for details)`,
+  );
   const cleanup = monitorCleanup(lanes, manifests);
   // Live watches first, then delivery-paused ones (still running, so still stopped); an expired watch has ended on its
   // own and gets no stop call.

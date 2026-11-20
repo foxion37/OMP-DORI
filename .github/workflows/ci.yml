@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -14,81 +15,44 @@ concurrency:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: ./.github/actions/setup
         with:
-          bun-version: 1.4.4
-      - name: Prepare bound omp-ulw test fixture
-        run: |
-          mkdir -p "$RUNNER_TEMP/omp-dori-ci-home"
-          bun scripts/source-dependencies.ts ulw "$GITHUB_WORKSPACE" "$RUNNER_TEMP/omp-dori-ci-home" "$GITHUB_WORKSPACE/ref/omp-ulw"
-      - name: Check out exact explicit-override compatibility fixture
-        run: |
-          pin=cbfe5ee72e5b2783af01616e7f4d3da5e3f9180d
-          compat="$RUNNER_TEMP/omp-dori-compat-ulw"
-          git clone --quiet --no-checkout --shared "$GITHUB_WORKSPACE/ref/omp-ulw" "$compat"
-          git -C "$compat" fetch --quiet --no-tags https://github.com/dbc-hbin/omp-ulw.git "$pin"
-          git -C "$compat" -c advice.detachedHead=false checkout --quiet "$pin"
-          test "$(git -C "$compat" rev-parse HEAD)" = "$pin"
-          printf 'DORI_TEST_COMPAT_ULW_ENTRY=%s/index.ts\n' "$compat" >> "$GITHUB_ENV"
-      - name: Install exact native OMP test host
-        run: bun install --frozen-lockfile
-        working-directory: test/fixtures/omp-native-host
-      - name: Bind exact native OMP test host
-        run: |
-          host="$GITHUB_WORKSPACE/test/fixtures/omp-native-host/node_modules/@oh-my-pi/pi-coding-agent"
-          bun -e 'const p = await Bun.file(process.argv[1] + "/package.json").json(); if (p.version !== "18.20.0") throw new Error("unexpected native OMP fixture version: " + p.version)' "$host"
-          printf 'DORI_TEST_OMP_ROOT=%s\n' "$host" >> "$GITHUB_ENV"
-      - run: bun install --frozen-lockfile
-      - run: bun install --frozen-lockfile
-        working-directory: skills/dori-mode/scripts
+          fixtures: all
       - run: bun run ci
-
-  test-macos:
-    runs-on: macos-15
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version: 1.4.4
-      - name: Prepare bound omp-ulw test fixture
+      - name: Verify bound native session ownership and ULW code-mode bridges
+        timeout-minutes: 20
         run: |
-          mkdir -p "$RUNNER_TEMP/omp-dori-ci-home"
-          bun scripts/source-dependencies.ts ulw "$GITHUB_WORKSPACE" "$RUNNER_TEMP/omp-dori-ci-home" "$GITHUB_WORKSPACE/ref/omp-ulw"
-      - name: Check out exact explicit-override compatibility fixture
-        run: |
-          pin=cbfe5ee72e5b2783af01616e7f4d3da5e3f9180d
-          compat="$RUNNER_TEMP/omp-dori-compat-ulw"
-          git clone --quiet --no-checkout --shared "$GITHUB_WORKSPACE/ref/omp-ulw" "$compat"
-          git -C "$compat" fetch --quiet --no-tags https://github.com/dbc-hbin/omp-ulw.git "$pin"
-          git -C "$compat" -c advice.detachedHead=false checkout --quiet "$pin"
-          test "$(git -C "$compat" rev-parse HEAD)" = "$pin"
-          printf 'DORI_TEST_COMPAT_ULW_ENTRY=%s/index.ts\n' "$compat" >> "$GITHUB_ENV"
-      - name: Install exact native OMP test host
-        run: bun install --frozen-lockfile
-        working-directory: test/fixtures/omp-native-host
-      - name: Bind exact native OMP test host
-        run: |
-          host="$GITHUB_WORKSPACE/test/fixtures/omp-native-host/node_modules/@oh-my-pi/pi-coding-agent"
-          bun -e 'const p = await Bun.file(process.argv[1] + "/package.json").json(); if (p.version !== "18.20.0") throw new Error("unexpected native OMP fixture version: " + p.version)' "$host"
-          printf 'DORI_TEST_OMP_ROOT=%s\n' "$host" >> "$GITHUB_ENV"
-      - run: bun install --frozen-lockfile
-      - run: bun install --frozen-lockfile
-        working-directory: skills/dori-mode/scripts
-      - run: bun test --parallel=3 --timings=.bun-test-timings.json ./test/
-      - run: bun run test:skill
-      - run: bun run test:extension
+          set -euo pipefail
+          smoke="$RUNNER_TEMP/ulw-native-compatibility"
+          mkdir -m 700 "$smoke" "$smoke/home"
+          native=$(bun scripts/source-dependencies.ts native "$GITHUB_WORKSPACE" "$smoke/home")
+          bun scripts/source-dependencies.ts assert-native "$GITHUB_WORKSPACE" "$smoke/home"
+          version=$(HOME="$smoke/home" "$native/bin/omp" --version)
+          test "$version" = '18.20.0'
+          (
+            cd "$native/source"
+            env -i HOME="$smoke/home" LANG=C.UTF-8 \
+              PATH="$native/bin:$(dirname "$(command -v bun)"):/usr/bin:/bin" \
+              bun test --timeout 15000 packages/coding-agent/test/agent-session-next-turn-ownership.test.ts
+          )
+          for check in code-mode-host-check code-mode-task-host-check; do
+            env -i HOME="$smoke/home" LANG=C.UTF-8 \
+              PATH="$native/bin:$(dirname "$(command -v bun)"):/usr/bin:/bin" \
+              bun "$GITHUB_WORKSPACE/ref/omp-ulw/tests/$check.ts"
+          done
 
   e2e-herdr:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: ./.github/actions/setup
         with:
-          bun-version: 1.4.4
-      - run: bun install --frozen-lockfile
+          fixtures: none
       - name: Install herdr 0.9.5
         env:
           GH_TOKEN: ${{ github.token }}
@@ -99,15 +63,15 @@ jobs:
       - run: bun test test/e2e.test.ts
 
   e2e-hc:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     env:
       HC_SESSION: dori-ci-${{ github.run_id }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: ./.github/actions/setup
         with:
-          bun-version: 1.4.4
-      - run: bun install --frozen-lockfile
+          fixtures: none
       - name: Install hc 0.1.20
         run: |
           curl -fsSL https://releases.herdr.dev/core/install.sh | HC_VERSION=0.1.20 sh

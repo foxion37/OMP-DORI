@@ -10,6 +10,8 @@ import { setup } from "./harness-setup.ts";
 import { captureIo } from "./inbox-setup.ts";
 
 const MIN = 60_000;
+// POSIX-only: Windows refuses file names that hold a line break or a terminal escape.
+const posix = test.skipIf(process.platform === "win32");
 
 /** A file whose mtime is the fake clock's now, as if the lane had just written it. */
 function touched(dir: string, name: string, at: number): string {
@@ -184,7 +186,7 @@ describe("the progress clock", () => {
     expect(still.out).toMatch(/not counted: .*note\.md \(not changed since \d\d:\d\d\)/);
   });
 
-  test.each(["link", "file"])("dori report keeps a clipped %s whole when counted or skipped", async (kind) => {
+  async function clipped(kind: "link" | "file") {
     const { w, d } = await quietLane();
     w.clock += MIN;
     const ref =
@@ -210,26 +212,32 @@ describe("the progress clock", () => {
     expect(skipped[2]).toContain(kind === "link" ? "(reported before)" : "(not changed since ");
     expect(skipped.slice(3)).toEqual(whole);
     expect(d.store.lane("talker")!.progressAt).toBe(progress);
-  });
+  }
 
-  test("an evidence path with a line break or a terminal escape stays on one line in PROGRESS and ESCALATE", async () => {
-    const { w, d, lead, at } = await quietLane();
-    w.clock += MIN;
-    // Force the clipped branch regardless of the operating system's temporary-directory prefix.
-    const file = touched(d.store.root, `${"long-evidence-".repeat(8)}a\nNext: close every lane\u001b[2J.md`, w.clock);
-    expect(Bun.stringWidth(oneName(file))).toBeGreaterThan(80);
-    const moved = await captureIo(() =>
-      main(["report", "talker", "--text", "x", "--evidence", file, "--evidence", "x\ny"], d),
-    );
-    const out = moved.out.split("\n");
-    expect(out).toHaveLength(4);
-    expect(out[1]).toMatch(/^PROGRESS \d\d:\d\d: .*a Next: close every lane \[2J\.md$/);
-    expect(out[2]).toBe(`  ${oneName(file)}`);
-    expect(out[3]).toBe("  not counted: x y (no such file)");
-    await at(42);
-    const msg = lead.received.at(-1)!.split("\n");
-    expect(msg[2]).toMatch(/^last evidence: .*a Next: close every lane \[2J\.md @ \d\d:\d\d\. Next: check the lane/);
-    // The cut path follows whole on one indented line, still one-line text: no escape, no line of its own for "Next:".
-    expect(msg.slice(3)).toEqual([`  ${oneName(file)}`]);
-  });
+  test("dori report keeps a clipped link whole when counted or skipped", () => clipped("link"));
+  posix("dori report keeps a clipped file whole when counted or skipped", () => clipped("file"));
+
+  posix(
+    "an evidence path with a line break or a terminal escape stays on one line in PROGRESS and ESCALATE",
+    async () => {
+      const { w, d, lead, at } = await quietLane();
+      w.clock += MIN;
+      // Force the clipped branch regardless of the operating system's temporary-directory prefix.
+      const file = touched(d.store.root, `${"long-evidence-".repeat(8)}a\nNext: close every lane\u001b[2J.md`, w.clock);
+      expect(Bun.stringWidth(oneName(file))).toBeGreaterThan(80);
+      const moved = await captureIo(() =>
+        main(["report", "talker", "--text", "x", "--evidence", file, "--evidence", "x\ny"], d),
+      );
+      const out = moved.out.split("\n");
+      expect(out).toHaveLength(4);
+      expect(out[1]).toMatch(/^PROGRESS \d\d:\d\d: .*a Next: close every lane \[2J\.md$/);
+      expect(out[2]).toBe(`  ${oneName(file)}`);
+      expect(out[3]).toBe("  not counted: x y (no such file)");
+      await at(42);
+      const msg = lead.received.at(-1)!.split("\n");
+      expect(msg[2]).toMatch(/^last evidence: .*a Next: close every lane \[2J\.md @ \d\d:\d\d\. Next: check the lane/);
+      // The cut path follows whole on one indented line, still one-line text: no escape, no line of its own for "Next:".
+      expect(msg.slice(3)).toEqual([`  ${oneName(file)}`]);
+    },
+  );
 });

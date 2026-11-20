@@ -1,0 +1,235 @@
+import type { TerminateIdentity } from "../../../../src/platform/adapter.ts";
+import { platform } from "../../../../src/platform/index.ts";
+import type { Probe, SessionRef } from "../../../../src/runtime/types.ts";
+import type { FlowDeps } from "./done-flow.ts";
+import type { LessonInput } from "./lessons.ts";
+import { confirmedLaneState, isBareLaneShell } from "./lifecycle-session.ts";
+import { pendingDiscordLane } from "./messenger/discord-lane-inbox.ts";
+import { type Lane, sameLaneGeneration, sessionOf, statusOf, withStatus } from "./registry.ts";
+import { iso, runtimesOf } from "./run.ts";
+import type { Check } from "./signals.ts";
+
+export type CloseLesson = Pick<LessonInput, "rule" | "evidence">;
+type CloseBasis = {
+  readonly note: string;
+  readonly checks: readonly Check[];
+  readonly settlingClaim: boolean;
+  readonly lesson?: CloseLesson;
+};
+export type NativeCloseIntent = CloseBasis & {
+  readonly ref: SessionRef;
+  readonly session: string;
+  readonly epoch?: string;
+  /** Initial lanes have no reopen epoch; their original registration still binds the close. */
+  readonly openedAt?: string;
+  /** The kernel incarnation, independent of wall-clock and timezone changes. */
+  readonly process?: TerminateIdentity & { readonly pid: number };
+};
+
+// A Done decision and a prepared close contend only on the short registry writer lock. Neither waits for pane I/O.
+export const recordDoneDecision = async (
+  deps: FlowDeps,
+  seen: Lane,
+  next: (current: Lane) => Lane,
+): Promise<Lane | "closing" | null> => {
+  let closing = false;
+  const result = await deps.registry.update(seen.key, (current) => {
+    closing = current?.nativeCloseIntent !== undefined;
+    if (!current || closing || statusOf(current) === "closed" || !sameLaneGeneration(seen, current)) return null;
+    const { threadClosePending: _waiting, ...active } = current;
+    return next(active);
+  });
+  return closing ? "closing" : result;
+};
+
+const boundTo = (lane: Lane, intent: NativeCloseIntent): boolean => {
+  const ref = sessionOf(lane);
+  return (
+    lane.lifecycleEpoch === intent.epoch &&
+    (intent.openedAt === undefined ? intent.epoch !== undefined : lane.openedAt === intent.openedAt) &&
+    lane.session === intent.session &&
+    ref !== undefined &&
+    ref.runtime === intent.ref.runtime &&
+    ref.id === intent.ref.id &&
+    ref.group === intent.ref.group &&
+    ref.container === intent.ref.container
+  );
+};
+
+type CloseCommit =
+  | { readonly kind: "closed"; readonly lane: Lane; readonly pane: string | undefined }
+  | { readonly kind: "changed"; readonly pane?: string | undefined }
+  | { readonly kind: "held"; readonly reason: string };
+
+const recordClosed = async (deps: FlowDeps, lane: Lane, basis: CloseBasis): Promise<CloseCommit> => {
+  const intent = lane.nativeCloseIntent;
+  const at = iso(deps.clock);
+  const closed = await deps.registry.transition(lane, (current) => {
+    const { nativeCloseIntent: stored, threadClosePending: _waiting, ...cleared } = current;
+    if (intent ? !stored || !boundTo(current, stored) || !boundTo(current, intent) : stored) return null;
+    const verified = basis.settlingClaim
+      ? withStatus(cleared, "verified-done", "Done signals read back live", at)
+      : cleared;
+    return withStatus(verified, "closed", basis.note, at, { closedAt: at });
+  });
+  const pane = intent?.ref.id;
+  return closed ? { kind: "closed", lane: closed, pane } : { kind: "changed", pane };
+};
+
+const processIdentity = (deps: FlowDeps, pid: number) => {
+  const reader = deps.platform ?? platform;
+  const { startTicks } = reader.procStat(pid);
+  const bootId = reader.bootId();
+  if (!startTicks || !bootId) throw new Error(`native process ${pid} identity is unconfirmed`);
+  return { pid, startTicks, bootId };
+};
+
+const processHold = async (deps: FlowDeps, process: NativeCloseIntent["process"]): Promise<string | undefined> => {
+  if (
+    !process ||
+    !Number.isSafeInteger(process.pid) ||
+    process.pid <= 0 ||
+    typeof process.startTicks !== "string" ||
+    !process.startTicks ||
+    typeof process.bootId !== "string" ||
+    !process.bootId
+  )
+    return "prepared close has no confirmed native process identity";
+  // Only a successful full table or a different kernel incarnation proves exit, never a wall-clock shift.
+  const table = await deps.run(["ps", "-A", "-o", "pid="]);
+  const rows = table.out.split("\n").filter((line) => line.trim());
+  if (table.code !== 0 || rows.length === 0 || rows.some((line) => !/^\s*\d+\s*$/.test(line)))
+    return "native process exit is unconfirmed: process table unavailable";
+  if (rows.some((line) => Number(line.trim()) === process.pid)) {
+    const current = processIdentity(deps, process.pid);
+    if (current.startTicks === process.startTicks && current.bootId === process.bootId)
+      return `native process ${process.pid} is still present`;
+  }
+  return undefined;
+};
+
+/** Keep cleanup behind a fresh busy check and the observed native process's exit, not just pane disappearance. */
+export const commitClose = async (deps: FlowDeps, seen: Lane, basis: CloseBasis): Promise<CloseCommit> => {
+  const saved = seen.nativeCloseIntent;
+  const initial = seen.lifecycleEpoch === undefined && !saved;
+  const hold = (reason: string): CloseCommit => ({ kind: "held", reason });
+  const unconfirmed = "native pane identity or approval state is unconfirmed";
+  const busy = "main agent is still working";
+  const mainBusy = (probe: Probe) =>
+    probe.status === "working" || probe.status === "blocked" || probe.approvalPending === true;
+  const observedBareShell = (probe: Probe) => isBareLaneShell(probe) && probe.foreground?.[0]?.argvIncomplete !== true;
+  let lane = seen;
+  let intent = saved;
+  let session = lane.session;
+  const target = sessionOf(lane);
+  const legacyClose = async (ref: SessionRef): Promise<CloseCommit> => {
+    try {
+      if (mainBusy(await runtimesOf(deps).for(ref).probe(ref, { foregroundOnly: true }))) return hold(busy);
+    } catch {
+      // An unknown initial lane retains the legacy policy, not a quiescence guarantee.
+    }
+    return recordClosed(deps, lane, basis);
+  };
+  try {
+    if (initial) {
+      if (!target) return recordClosed(deps, lane, basis);
+      try {
+        const probe = await runtimesOf(deps).for(target).probe(target);
+        if (mainBusy(probe)) return hold(busy);
+        session ??= probe.sessionId;
+        // Unknown initial lanes retain their legacy close. This is not a quiescence guarantee.
+        if (!session || probe.pid === undefined) return recordClosed(deps, lane, basis);
+      } catch {
+        return recordClosed(deps, lane, basis);
+      }
+    }
+    if (intent) {
+      if (!boundTo(lane, intent)) return hold("prepared close is for a different pane, session, or epoch");
+    } else {
+      if (lane.hold?.outcome) return hold(`terminal intent is already ${lane.hold.outcome}`);
+      if (!target || !session) return hold(unconfirmed);
+      const state = await confirmedLaneState(deps, { ...lane, session }, target);
+      if (!state) return initial ? legacyClose(target) : hold(unconfirmed);
+      if (state.agentStatus === "working") return hold(busy);
+      if (pendingDiscordLane(deps.config.stateDir, lane)) return hold("Discord messages are still pending");
+      let process: ReturnType<typeof processIdentity>;
+      try {
+        process = processIdentity(deps, state.pid);
+      } catch (error) {
+        if (initial) return legacyClose(target);
+        throw error;
+      }
+      const prepared: NativeCloseIntent = {
+        ...basis,
+        ref: target,
+        session,
+        ...(lane.lifecycleEpoch === undefined ? {} : { epoch: lane.lifecycleEpoch }),
+        openedAt: lane.openedAt,
+        process,
+      };
+      const recorded = await deps.registry.transition(lane, (current) => {
+        if (current.nativeCloseIntent || (current.session !== undefined && current.session !== session)) return null;
+        const bound = { ...current, session: prepared.session };
+        return boundTo(bound, prepared) ? { ...bound, nativeCloseIntent: prepared } : null;
+      });
+      if (!recorded) return { kind: "changed" };
+      lane = recorded;
+      intent = prepared;
+    }
+
+    const { ref } = intent;
+    const runtime = runtimesOf(deps).for(ref);
+    // An interrupted request may already have removed the target. Only its saved process proof can settle that close.
+    if (!saved || (await runtime.list()).some((s) => s.ref.id === ref.id)) {
+      if (saved && pendingDiscordLane(deps.config.stateDir, lane)) return hold("Discord messages are still pending");
+      const state = await confirmedLaneState(deps, lane, ref);
+      if (!state) {
+        const current = await runtime.probe(ref, { foregroundOnly: true });
+        if (mainBusy(current)) return hold(busy);
+        if (!observedBareShell(current)) return hold(unconfirmed);
+        const refusal = await processHold(deps, intent.process);
+        if (refusal) return hold(refusal);
+      } else {
+        if (state.agentStatus === "working") return hold(busy);
+        const process = processIdentity(deps, state.pid);
+        if (intent.process) {
+          if (
+            intent.process.pid !== process.pid ||
+            intent.process.startTicks !== process.startTicks ||
+            intent.process.bootId !== process.bootId
+          )
+            return hold("prepared close belongs to a different native process");
+        } else {
+          // An older prepared intent can acquire proof while its exact native pane is still live, never after it vanished.
+          const recorded = await deps.registry.transition(lane, (current) => {
+            const stored = current.nativeCloseIntent;
+            return stored && boundTo(current, stored) && !stored.process
+              ? { ...current, nativeCloseIntent: { ...stored, process } }
+              : null;
+          });
+          if (!recorded) return { kind: "changed" };
+          lane = recorded;
+          intent = { ...intent, process };
+        }
+      }
+      const current = await runtime.probe(ref, { foregroundOnly: true });
+      if (mainBusy(current)) return hold(busy);
+      if (
+        state
+          ? current.pid !== intent.process?.pid ||
+            current.sessionId !== intent.session ||
+            current.approvalPending !== false ||
+            current.shellInFront !== false
+          : !observedBareShell(current)
+      )
+        return hold(unconfirmed);
+      await runtime.close(ref, intent.epoch === undefined && ref.container ? "container" : "session");
+      if ((await runtime.list()).some((s) => s.ref.id === ref.id)) return hold(`pane ${ref.id} is still present`);
+    }
+    const refusal = await processHold(deps, intent.process);
+    if (refusal) return hold(refusal);
+    return recordClosed(deps, lane, intent);
+  } catch (error) {
+    return hold(`native close unconfirmed: ${String(error)}`);
+  }
+};

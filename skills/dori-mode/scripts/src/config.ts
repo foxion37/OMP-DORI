@@ -1,11 +1,20 @@
 import { homedir } from "node:os";
-import { join } from "node:path";
-
-// biome-ignore format: one line keeps this file under the 250-line cap
-import { resolveConsumerOmpCommand, resolveConsumerOmpUlwPath, resolveProcessOmpCommand, resolveProcessOmpUlwPath } from "../../../../src/release/runtime.ts";
+import { join, sep } from "node:path";
+import {
+  resolveConsumerOmpCommand,
+  resolveConsumerOmpUlwPath,
+  resolveProcessOmpCommand,
+  resolveProcessOmpUlwPath,
+} from "../../../../src/release/runtime.ts";
+import { freshnessError, type FreshnessPolicy } from "./freshness-policy.ts";
 import type { RuntimeKind } from "../../../../src/runtime/types.ts";
+import { repoIdentities } from "./config-identities.ts";
+import { type ContextConfig, contextConfig } from "./context-config.ts";
+import { type DoctorOptions, validDoctorOptions } from "./doctor-config.ts";
+import { type LaunchConfig, launchConfig } from "./launch-selection.ts";
 import type { SupervisionOptions } from "./supervision-observe.ts";
 import type { CommitIdentity } from "./verify-pr-check.ts";
+import type { VoiceSettings } from "./voice/settings.ts";
 
 export type ArgvTemplate = readonly string[];
 
@@ -23,43 +32,42 @@ export type GuardThresholds = {
   readonly panesMax: number;
 };
 
-export type DoriConfig = {
-  /** Where new sessions open; absent = detected (see run.ts runtimeChoice). */
-  readonly runtime?: RuntimeKind;
-  readonly stateDir: string;
-  readonly laneWorkspace: string;
-  readonly workspaces: readonly string[];
-  readonly ignorePanes: readonly string[];
-  readonly leadPane: string;
-  readonly defaultCwd: string;
-  readonly agentCommand: ArgvTemplate;
-  readonly defaultModel: string;
-  readonly launchKeywords: string;
-  readonly goalMarker: string;
-  /** How long `launch` waits for the agent's ready status and goal after it starts; a slow host is a host property. */
-  readonly startupWaitSeconds: number;
-  readonly sessionsDir: string;
-  /** omp-ulw's index.ts, loaded only for Dori and lane sessions by the OMP extension. */
-  readonly ompUlwPath: string;
-  readonly nudgeAfterMin: number;
-  readonly postAfterMin: number;
-  readonly closeAfterMin: number;
-  readonly heavySlots: number;
-  readonly heavyMaxLoad: number;
-  /** Context handoff: `contextClaudePattern` models hand off at `contextHandoffPct`, others at `contextHandoffPctOther`;
-   * `contextUnknownAfterMin` and `relayTimeoutMin` are the monitor's silence window and the relay's handoff wait. */
-  readonly contextClaudePattern: string;
-  readonly contextHandoffPct: number;
-  readonly contextHandoffPctOther: number;
-  readonly contextUnknownAfterMin: number;
-  readonly relayTimeoutMin: number;
-  readonly deadPanePatterns: readonly string[];
-  readonly guard: GuardThresholds;
-  readonly hooks: Hooks;
-  /** Expected Git author and committer per lowercase `owner/repo`, for `verify-pr` and the lane footer. */
-  readonly repoIdentities: Readonly<Record<string, CommitIdentity>>;
-  readonly supervision: SupervisionOptions;
-};
+export type DoriConfig = LaunchConfig &
+  ContextConfig & {
+    /** Where new sessions open; absent = detected (see run.ts runtimeChoice). */
+    readonly runtime?: RuntimeKind;
+    readonly stateDir: string;
+    readonly laneWorkspace: string;
+    readonly workspaces: readonly string[];
+    readonly ignorePanes: readonly string[];
+    readonly leadPane: string;
+    readonly defaultCwd: string;
+    readonly agentCommand: ArgvTemplate;
+    readonly defaultModel: string;
+    readonly goalMarker: string;
+    /** How long `launch` waits for the agent's ready status and goal after it starts; a slow host is a host property. */
+    readonly startupWaitSeconds: number;
+    readonly sessionsDir: string;
+    readonly ompUlwPath: string;
+    readonly freshness?: FreshnessPolicy;
+    readonly nudgeAfterMin: number;
+    readonly postAfterMin: number;
+    readonly closeAfterMin: number;
+    readonly heavySlots: number;
+    readonly heavyMaxLoad: number;
+    readonly deadPanePatterns: readonly string[];
+    readonly guard: GuardThresholds;
+    readonly hooks: Hooks;
+    readonly transcribeMaxBytes: number;
+    readonly threadDonePolicy?: "every-lane" | "last-lane";
+    /** Disabled unless explicitly enabled; models, channels and prices belong to the operator. */
+    readonly voice?: Partial<VoiceSettings>;
+    /** Expected Git author and committer per lowercase `owner/repo`, for `verify-pr` and the lane footer. */
+    readonly repoIdentities: Readonly<Record<string, CommitIdentity>>;
+    readonly supervision: SupervisionOptions;
+    readonly prAutoTrack: boolean; // opt-in: claim and checkpoint PR links are tracked for `dori pr watch`
+    readonly doctor?: DoctorOptions;
+  };
 
 export const defaultConfig = (home = homedir()): DoriConfig => ({
   stateDir: join(home, ".dori", "state"),
@@ -70,7 +78,7 @@ export const defaultConfig = (home = homedir()): DoriConfig => ({
   defaultCwd: home,
   agentCommand: ["omp", "--dori-role", "lane", "--model", "{model}", "{prompt}"],
   defaultModel: "anthropic/claude-opus-5-5",
-  launchKeywords: "ulw set goal and work",
+  ...launchConfig(),
   goalMarker: "Pursuing goal",
   startupWaitSeconds: 180,
   sessionsDir: join(home, ".omp", "agent", "sessions"),
@@ -80,20 +88,18 @@ export const defaultConfig = (home = homedir()): DoriConfig => ({
   closeAfterMin: 5,
   heavySlots: 1,
   heavyMaxLoad: 80,
-  contextClaudePattern: "claude|opus|sonnet|haiku",
-  contextHandoffPct: 40,
-  contextHandoffPctOther: 60,
-  contextUnknownAfterMin: 10,
-  relayTimeoutMin: 10,
+  ...contextConfig(),
   deadPanePatterns: ["has stopped", "no suitable jobs"],
   guard: { loadAlert: 150, loadOk: 80, memFreeMinPct: 20, diskFreeMinGb: 50, panesMax: 20 },
   hooks: {},
+  transcribeMaxBytes: 25 * 1024 * 1024,
   repoIdentities: {},
   supervision: {
     hungAfterMinutes: 20,
     staleAfterMinutes: 20,
     defaults: { wallMinutes: null, tokens: null, costUsd: null },
   },
+  prAutoTrack: false,
 });
 
 export const configPath = (): string => process.env["DORI_CONFIG"] ?? join(homedir(), ".dori", "config.json");
@@ -101,27 +107,9 @@ export const configPath = (): string => process.env["DORI_CONFIG"] ?? join(homed
 export const expandHome = (path: string, home = homedir()): string =>
   path === "~" ? home : path.startsWith("~/") ? join(home, path.slice(2)) : path;
 
-const isIdentity = (value: unknown): value is CommitIdentity => {
-  const v = value as { name?: unknown; email?: unknown } | null;
-  return (
-    typeof v === "object" &&
-    v !== null &&
-    typeof v.name === "string" &&
-    !!v.name.trim() &&
-    typeof v.email === "string" &&
-    !!v.email.trim()
-  );
-};
-
-// The file is untrusted JSON: keep only well-formed identities, so a bad entry reads as an unconfigured repo.
-const repoIdentities = (value: unknown): Record<string, CommitIdentity> =>
-  typeof value !== "object" || value === null || Array.isArray(value)
-    ? {}
-    : Object.fromEntries(
-        Object.entries(value).flatMap(([repo, identity]) =>
-          isIdentity(identity) ? [[repo.toLowerCase(), identity]] : [],
-        ),
-      );
+// Enqueue alone needs the spelling before path.join removes `..` after a possible symlink.
+const queueCwds = new WeakMap<DoriConfig, string>();
+export const queueDefaultCwd = (config: DoriConfig): string => queueCwds.get(config) ?? config.defaultCwd;
 
 export class ConfigError extends Error {}
 
@@ -150,26 +138,22 @@ const SUPERVISION_KEYS = new Set([
 ]);
 const CEILINGS = new Set(["wallMinutes", "tokens", "costUsd"]);
 const checkCeilingNames = (where: string, budget: Record<string, unknown>): void => {
-  for (const name of Object.keys(budget)) {
+  for (const name of Object.keys(budget))
     if (!CEILINGS.has(name))
       throw new ConfigError(
         `invalid supervision ${where}.${name}: unknown ceiling (expected wallMinutes, tokens or costUsd)`,
       );
-  }
 };
 
-// A malformed supervision entry stops with its name: dropping it could turn a ceiling off, and keeping it would crash
-// every sweep later. A misspelt name is refused for the same reason.
+// Refuse malformed supervision settings rather than silently disabling a ceiling.
 const checkSupervision = (value: unknown): void => {
   if (value === undefined) return;
   if (!isRecord(value)) throw new ConfigError("invalid supervision: expected an object");
-  for (const name of Object.keys(value)) {
+  for (const name of Object.keys(value))
     if (!SUPERVISION_KEYS.has(name)) throw new ConfigError(`invalid supervision ${name}: unknown setting`);
-  }
-  for (const name of ["defaults", "lanes"] as const) {
+  for (const name of ["defaults", "lanes"] as const)
     if (value[name] !== undefined && !isRecord(value[name]))
       throw new ConfigError(`invalid supervision ${name}: expected an object`);
-  }
   if (isRecord(value["defaults"])) checkCeilingNames("defaults", value["defaults"]);
   for (const [key, budget] of Object.entries(isRecord(value["lanes"]) ? value["lanes"] : {})) {
     if (!isRecord(budget)) throw new ConfigError(`invalid supervision lanes.${key}: expected an object`);
@@ -185,21 +169,35 @@ const checkSupervision = (value: unknown): void => {
     throw new ConfigError("invalid supervision gitActivity: expected true or false");
 };
 
-export const loadConfig = async (path = configPath(), home = homedir()): Promise<DoriConfig> => {
-  const base = defaultConfig(home);
+export const loadConfig = async (path = configPath(), home = homedir(), env = process.env): Promise<DoriConfig> => {
+  const selectedHome = env["DORI_HOME"];
+  const base = {
+    ...defaultConfig(home),
+    ...(selectedHome && path === join(selectedHome, "config.json")
+      ? { stateDir: join(selectedHome, "state"), ompUlwPath: join(selectedHome, "omp-ulw/index.ts") }
+      : {}),
+  };
   const file = Bun.file(path);
   const raw = (await file.exists()) ? ((await file.json()) as Partial<DoriConfig>) : {};
   checkRuntime(raw.runtime);
   checkSupervision(raw.supervision);
+  if (raw.doctor !== undefined && !validDoctorOptions(raw.doctor))
+    throw new ConfigError("invalid doctor: expected an object with an optional ignore array of known check IDs");
+  const policyError = freshnessError(raw.freshness);
+  if (policyError) throw new ConfigError(policyError);
+  if (raw.threadDonePolicy !== undefined && !["every-lane", "last-lane"].includes(raw.threadDonePolicy))
+    throw new ConfigError("invalid threadDonePolicy: expected every-lane or last-lane");
+  if (raw.prAutoTrack !== undefined && typeof raw.prAutoTrack !== "boolean")
+    throw new ConfigError("invalid prAutoTrack: expected true or false");
   const merged: DoriConfig = {
     ...base,
     ...raw,
+    ...launchConfig(raw.launchKeywords, raw.launchKeywords === undefined ? undefined : path),
     guard: { ...base.guard, ...raw.guard },
     hooks: { ...base.hooks, ...raw.hooks },
     repoIdentities: repoIdentities(raw.repoIdentities),
     // Only a string is a marker: null or false would quietly turn the goal check off, and an object would never show.
     goalMarker: typeof raw.goalMarker === "string" ? raw.goalMarker : base.goalMarker,
-    // Only a nonnegative number is a wait: a string or null would otherwise end every launch at the first check.
     startupWaitSeconds:
       typeof raw.startupWaitSeconds === "number" &&
       Number.isFinite(raw.startupWaitSeconds) &&
@@ -226,22 +224,25 @@ export const loadConfig = async (path = configPath(), home = homedir()): Promise
         throw new ConfigError(`invalid supervision lanes.${key}.${name}: expected a nonnegative number or null`);
     }
   }
-  const command = resolveProcessOmpCommand(merged.agentCommand, path);
-  const ulw = resolveProcessOmpUlwPath(expandHome(merged.ompUlwPath, home), home);
-  return {
+  const command = resolveProcessOmpCommand(merged.agentCommand, path, env);
+  const config: DoriConfig = {
     ...merged,
-    agentCommand: command === merged.agentCommand ? resolveConsumerOmpCommand(command, { home }) : command,
-    stateDir: expandHome(process.env["DORI_STATE_DIR"] ?? merged.stateDir, home),
+    agentCommand:
+      command === merged.agentCommand || env["DORI_AGENT_ARGV"] === undefined
+        ? resolveConsumerOmpCommand(command, { home })
+        : command,
+    stateDir: expandHome(env["DORI_STATE_DIR"] ?? merged.stateDir, home),
     defaultCwd: expandHome(merged.defaultCwd, home),
     sessionsDir: expandHome(merged.sessionsDir, home),
-    ompUlwPath: resolveConsumerOmpUlwPath(ulw, { home, useDefault: raw.ompUlwPath === undefined }),
-    leadPane: process.env["DORI_LEAD_PANE"] ?? merged.leadPane,
+    ompUlwPath: resolveConsumerOmpUlwPath(resolveProcessOmpUlwPath(expandHome(merged.ompUlwPath, home), home, env), {
+      home,
+      useDefault: raw.ompUlwPath === undefined,
+    }),
+    leadPane: env["DORI_LEAD_PANE"] ?? merged.leadPane,
   };
+  if (merged.defaultCwd.startsWith("~/")) queueCwds.set(config, `${home}${sep}${merged.defaultCwd.slice(2)}`);
+  return config;
 };
 
 export const fill = (template: ArgvTemplate, values: Readonly<Record<string, string>>): string[] =>
   template.map((part) => part.replace(/\{(\w+)\}/g, (whole, name: string) => values[name] ?? whole));
-
-/** Whether the configured argv starts OMP, including its installed package entry point. */
-export const isOmpCommand = (argv: ArgvTemplate): boolean =>
-  argv.some((part) => /(?:^|[/\\])omp(?:\s|$)|pi-coding-agent[/\\]dist[/\\]cli\.js/.test(part));

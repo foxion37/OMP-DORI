@@ -3,6 +3,7 @@ import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { bootCheck } from "../src/boot.ts";
 import type { Manifest, Monitor } from "../src/boot-monitors.ts";
+import { shellQuote } from "../src/launch-footer.ts";
 import type { Lane, LaneStatus } from "../src/registry.ts";
 import { Reports } from "../src/reports.ts";
 import { Worklog } from "../src/worklog.ts";
@@ -141,8 +142,8 @@ test("an unreadable lane file is named and the other lanes are still checked", a
   writeFileSync(deps.registry.path("null-record"), "null");
   // When boot runs; then the file is named, the healthy lane is still reported, and the run is incomplete.
   const result = await bootCheck(deps);
-  expect(result.lines).toContain(`REGISTRY unreadable ${deps.registry.path("broken")}`);
-  expect(result.lines).toContain(`REGISTRY unreadable ${deps.registry.path("null-record")}`);
+  expect(result.lines).toContain(`REGISTRY unreadable ${shellQuote(deps.registry.path("broken"))}`);
+  expect(result.lines).toContain(`REGISTRY unreadable ${shellQuote(deps.registry.path("null-record"))}`);
   expect(result.lines).toContain(
     "VANISHED healthy pane=w1:gone status=working; registry and worktrees preserved; no relaunch",
   );
@@ -157,7 +158,7 @@ test("a lanes path that cannot be listed is named and the rest of boot still run
   writeFileSync(join(state.dir, "lanes"), "not a directory");
   // When boot runs; then the registry is named unreadable and the later checks still print.
   const result = await bootCheck(deps);
-  expect(result.lines).toContain(`REGISTRY unreadable ${join(state.dir, "lanes")}`);
+  expect(result.lines).toContain(`REGISTRY unreadable ${shellQuote(join(state.dir, "lanes"))}`);
   expect(result.lines.some((l) => l.startsWith("MONITORS cleanupCandidates="))).toBe(true);
   expect(result.exitCode).toBe(1);
 });

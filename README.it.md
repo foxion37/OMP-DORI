@@ -1,167 +1,197 @@
-# omp-dori
+<p align="center">
+  <img src="docs/cataly-portrait.webp" width="320" alt="Cataly character portrait: silver hair and a crimson halo">
+</p>
 
-Un solo Dori, che unisce le filosofie di tre progetti:
+<h1 align="center">Cataly</h1>
 
-1. [dori-superagent](https://github.com/sisyphuslabs/dori-superagent) — presa in carico del lavoro via chat e coordinamento basato su prove.
-2. [oh-my-pi](https://github.com/can1357/oh-my-pi) — runtime nativo OMP e strumenti per coding agent.
-3. [omp-ulw](https://github.com/dbc-hbin/omp-ulw) — flussi di lavoro rigorosi e orientati ai risultati.
+<p align="center">
+  <strong>Capire l'intento. Leggere il contesto. Portare il lavoro fino in fondo.</strong>
+</p>
 
-omp-dori è un port modificato per OMP che trasforma le richieste via chat in lane di lavoro affidate a coding agent e risponde con prove del completamento.
+<p align="center">
+  Cataly è un compagno di squadra AI che porta il lavoro dall'obiettivo al completamento.
+  Digli cosa vuoi realizzare: si fa carico dei passi successivi, tiene conto del
+  contesto e prosegue fino a un risultato che puoi verificare.
+</p>
 
-[English](README.md) | [한국어](README.ko.md) | [日本語](README.ja.md) | [Deutsch](README.de.md) | [Italiano](README.it.md) | [中文](README.zh.md)
+<p align="center">
+  <a href="https://github.com/vntrevx/Cataly/releases/tag/v0.1.2"><img alt="Published preview" src="https://img.shields.io/github/v/release/vntrevx/Cataly?include_prereleases&label=preview&labelColor=2b2d33&color=c8102e"></a>
+  <a href="https://github.com/vntrevx/Cataly/actions/workflows/ci.yml?query=branch%3Amain"><img alt="CI on main" src="https://img.shields.io/github/actions/workflow/status/vntrevx/Cataly/ci.yml?branch=main&label=ci&labelColor=2b2d33"></a>
+  <a href="LICENSING.md"><img alt="License: SUL 1.0 with a scoped MIT notice" src="https://img.shields.io/badge/license-SUL%201.0%20%2B%20scoped%20MIT-8b9099?labelColor=2b2d33"></a>
+  <a href="https://bun.sh"><img alt="Bun 1.4.4 or later" src="https://img.shields.io/badge/bun-%E2%89%A51.4.4-8b9099?labelColor=2b2d33&logo=bun&logoColor=white"></a>
+</p>
 
-## Cosa fa
+<p align="center">
+  <a href="#per-iniziare"><strong>Per iniziare</strong></a> ·
+  <a href="#come-funziona"><strong>Come funziona</strong></a> ·
+  <a href="#documentazione"><strong>Documentazione</strong></a> ·
+  <a href="#contribuire"><strong>Contribuire</strong></a>
+</p>
 
-- Assegna alle attività più lunghe un brief, una sessione agente e una lane tracciata; il lead gestisce direttamente le piccole richieste.
-- Mantiene una sola voce nella conversazione: le lane fanno rapporto al lead, che risponde nel thread della richiesta.
-- Verifica l'identità attuale dell'agente, lo stato dell'input e delle approvazioni prima della consegna; trattiene o accoda i messaggi quando una sessione è occupata o il suo stato è sconosciuto.
-- Richiede prove del completamento e verifica i segnali di conclusione correnti, come PR integrate, versioni pubblicate, comandi riusciti o file corrispondenti.
-- Salva worklog, checkpoint delle lane e registri su disco, così `dori boot` può esaminarli dopo un riavvio.
-- Conserva lezioni e backlog e offre pianificazione oraria facoltativa e supervisione dell'host e delle attività in stallo per il lavoro continuativo.
+<p align="center">
+  <a href="README.md">English</a> · <a href="README.ko.md">한국어</a> · <a href="README.ja.md">日本語</a><br>
+  <a href="README.de.md">Deutsch</a> · <strong>Italiano</strong> · <a href="README.zh.md">中文</a>
+</p>
 
-## Dalla richiesta al risultato
+## La filosofia
 
-```mermaid
-flowchart TD
-    request["Il tuo messaggio"] --> route{"Attività piccola?"}
-    route -->|Sì| direct["Dori la gestisce direttamente"]
-    route -->|No| lane["Brief e lane di lavoro dedicata"]
-    direct --> verify{"Risultato e prove verificati?"}
-    lane --> verify
-    verify -->|Sì| report["Rapporto nel thread originale"]
-    verify -->|No| resolve["Correggere il problema o chiedere"]
-    resolve --> verify
-```
+L'ambizione non è soltanto seguire le istruzioni, ma esercitare buon giudizio:
+riconoscere ciò che conta, collegare i dettagli e gestire il lavoro senza
+dover essere guidato un passo alla volta.
 
-## Anteprima supportata
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <h4>Farsi carico del risultato</h4>
+      Lavorare per raggiungere l'obiettivo, non per spuntare un elenco di attività.
+    </td>
+    <td width="50%" valign="top">
+      <h4>Capire il contesto</h4>
+      Tenere presenti la conversazione, le convenzioni del progetto, i vincoli e
+      le preferenze dell'utente.
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <h4>Prendere iniziative ponderate</h4>
+      Gestire autonomamente le decisioni ordinarie. Chiedere quando un vero
+      compromesso o un permesso mancante richiedono il giudizio dell'utente.
+    </td>
+    <td width="50%" valign="top">
+      <h4>Portare il lavoro fino in fondo</h4>
+      Indagare, implementare, verificare e riferire ciò che è realmente accaduto.
+      Una spiegazione convincente non sostituisce un risultato funzionante.
+    </td>
+  </tr>
+</table>
 
-**`v0.1.2` è una prerelease GitHub per Linux x64 + herdr + Discord.** Bun **1.4.4** e OMP nativo **18.18.8** sono la base testata e le versioni minime. Versioni più recenti e altre distribuzioni Linux non sono automaticamente verificate.
+Questo è il criterio su cui si fonda Cataly: la capacità di agire, l'attenzione
+necessaria per capire e la responsabilità del risultato.
 
-macOS e hc hanno copertura CI e adattatori nel `main` del sorgente; non rientrano nell'anteprima supportata per l'uso reale da parte degli utenti. Slack e Telegram restano funzionalità del sorgente. Questo ambito non implica una beta indipendente con utenti esterni né che ogni provider e interfaccia sia stato testato.
+## Come funziona
 
-**Sorgente `main` attuale:** il percorso predefinito prepara OMP 18.20.0 modificato e l'overlay ULW b215 vincolato a sorgenti verificate; OMP stock nel PATH non è un prerequisito né un sostituto. L'addon nativo ufficiale della stessa versione non richiede Cargo. Usa il wrapper `omp` generato; le toolchain personalizzate restano scelte esplicite. [Contratto del bundle](docs/releases.md#current-source-bundle). Gli asset immutabili `v0.1.2` e i relativi requisiti storici qui sotto non cambiano.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/how-it-works-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="docs/how-it-works-light.svg">
+  <img src="docs/how-it-works-light.svg" width="100%" alt="Workflow: a request arrives, the lead assigns it, a lane works and reports, and completion is checked before a result you can verify, with its evidence, comes back to you.">
+</picture>
+
+Cataly collega le conversazioni nelle app di messaggistica a un runtime nativo
+per coding agent e a lane di lavoro tracciate:
+
+- Il lead gestisce direttamente le piccole richieste e assegna ai lavori più lunghi
+  un brief, una sessione dedicata e un responsabile che ne risponde.
+- Worklog, checkpoint e registri rendono i progressi consultabili anche dopo i riavvii.
+- La ricezione da Discord porta nel lavoro il contesto delle risposte e i metadati degli allegati.
+- I record di sessione e approvazione legati al processo proteggono la consegna all'agente previsto.
+- I controlli di completamento possono verificare segnali concreti, come comandi
+  riusciti, file corrispondenti, pull request integrate o versioni pubblicate.
+- Pianificazione, monitor e supervisione facoltativi supportano il lavoro
+  continuativo quando vengono abilitati esplicitamente.
+
+L'implementazione riunisce
+[dori-superagent](https://github.com/sisyphuslabs/dori-superagent),
+[oh-my-pi](https://github.com/can1357/oh-my-pi) e
+[omp-ulw](https://github.com/dbc-hbin/omp-ulw). Autori, licenze e provenienza
+dei sorgenti restano parte del progetto.
+
+## Principi operativi
+
+Cataly lavora con gli account e i permessi che fornisci. Le azioni con effetti
+esterni richiedono l'autorizzazione pertinente: ritenere utile un'azione
+non conferisce il permesso di eseguirla. Abilita soltanto le sessioni, i monitor
+e i servizi che intendi usare.
+
+La verifica ha dei limiti. Un segnale di completamento soddisfatto è una prova
+di quel segnale, non una garanzia su ogni risultato. I rapporti dovrebbero
+distinguere i risultati osservati, l'incertezza residua e il lavoro non svolto.
+
+Tieni credenziali, conversazioni private e dati degli account fuori da patch
+e rapporti pubblici. La telemetria facoltativa può essere disabilitata con
+`DORI_TELEMETRY=0` o `DO_NOT_TRACK=1`.
 
 ## Per iniziare
 
-### 1. Verificare prerequisiti e versioni
+<table width="100%"><tr><td>
 
-Esegui i comandi seguenti in Bash su Linux x64 (`uname` deve indicare `Linux` e `x86_64`). Rendi disponibili git, [Bun](https://bun.sh) **1.4.4+**, [OMP nativo](https://github.com/can1357/oh-my-pi) **18.18.8+** e [herdr](https://github.com/herdrdev/herdr) nel `PATH` seguendo le rispettive istruzioni di installazione. Servono anche Bash, curl, tar e `sha256sum`. L'installer di Dori verifica gli strumenti; non li installa né li aggiorna mai.
+**Nota**
 
-```bash
-uname -s
-uname -m
-for tool in bash curl tar sha256sum git bun omp herdr; do
-  command -v "$tool" || exit 1
-done
-git --version
-bun --version
-omp --version
-```
+Cataly è il nome del progetto. I comandi esistenti `dori`, `omp-dori` e `omp`,
+le directory di installazione e i nomi degli asset pubblicati non sono stati rinominati.
 
-### 2. Scaricare, verificare e installare v0.1.2
+</td></tr></table>
 
-Prima del download verifica proprietario del repository, tag e commit della [release canonica v0.1.2](https://github.com/vntrevx/omp-dori/releases/tag/v0.1.2). Segui la [guida verificata alla release esatta](docs/releases.md#install-the-exact-preview) e scarica tutti e quattro gli asset; non sostituirli con un fork, un installer di `main` o un mirror. Per la prima installazione usa la tua home senza Dori in esecuzione. Esamina un'installazione esistente prima di modificarne sorgente o stato.
+### Usare una release pubblicata
 
-```bash
-download_dir="$(mktemp -d)" || exit 1
-cd "$download_dir" || exit 1
-release_url="https://github.com/vntrevx/omp-dori/releases/download/v0.1.2"
-for asset in install.sh release-manifest.json SHA256SUMS omp-dori-v0.1.2.tar.gz; do
-  curl --proto '=https' --tlsv1.2 -fL "$release_url/$asset" -o "$asset" || exit 1
-done
-sha256sum --check SHA256SUMS || exit 1
-bash ./install.sh --version v0.1.2 --from "$download_dir" || exit 1
-"$HOME/.dori/bin/dori" --version
-export PATH="$HOME/.dori/bin:$PATH"
-```
+La **prerelease v0.1.2** esistente ha un contratto immutabile per
+Linux x64 / herdr / Discord. Rinominare il repository non aggiorna quegli asset
+né introduce il supporto per nuove piattaforme.
 
-Esegui l'installer solo dopo che tutti i checksum sono corretti. I checksum dimostrano la corrispondenza con la release attendibile, non sono una firma indipendente; l'installer verifica anche manifest, archivio e dipendenza pubblica omp-ulw fissata. Anche con `--from`, la prima installazione può richiedere accesso git anonimo alla rete per quella dipendenza esatta. Il launcher esplicito è `~/.dori/bin/dori`; conserva l'export del PATH nella configurazione della tua shell, se desideri. Non servono GitHub CLI o permessi di scrittura su GitHub.
+Segui la [guida verificata alla release esatta](https://github.com/vntrevx/Cataly/blob/v0.1.2/docs/releases.md#prerequisites-and-trust).
+Include prerequisiti, checksum, installazione, la tua autenticazione,
+avvio esplicito e monitor Discord da abilitare su scelta dell'utente.
+Non sostituire una release esatta con un installer arbitrario di `main`.
 
-L'installazione non avvia **nulla**: nessun agente, ricevitore, watcher, processo di presenza, servizio, harness o richiesta di inferenza. Riprendere una sessione Dori esistente può ripristinarne i monitor registrati; una nuova installazione non ne crea.
+### Lavorare dai sorgenti
 
-### 3. Configurare il proprio ambiente
+Installa prima git, Bun 1.4.4+ e herdr o hc; consulta i
+[prerequisiti della versione sorgente](docs/releases.md#current-source-bundle).
 
-Segui la guida ad [autenticazione e avvio esplicito](docs/releases.md#your-authentication-and-explicit-startup). Installa esplicitamente l'integrazione OMP di herdr:
+Usa un checkout separato, non un'installazione in esecuzione o una release utente congelata:
 
 ```bash
-herdr integration install omp
-```
-
-Apri un terminale herdr nella directory del progetto in cui vuoi lavorare, fuori dalla directory temporanea di download, e ricava il suo ID pane:
-
-```bash
-herdr pane current
-```
-
-Modifica `~/.dori/config.json`: imposta `runtime: "herdr"`, `leadPane` con quell'ID pane, `laneWorkspace`, `defaultCwd`, un `defaultModel` qualificato con il provider e disponibile al tuo account, e gli hook di messaggistica. Mantieni `agentCommand`, `sessionsDir` e `ompUlwPath` dell'installer. Configurazione, autenticazione, lavoro e sessioni esistenti vengono conservati. Autentica OMP con il tuo account provider seguendo le istruzioni di OMP; Dori non include credenziali del provider.
-
-Crea e invita il tuo bot tramite il [Discord Developer Portal](https://discord.com/developers/applications). Concedi View Channel e Read Message History, oltre a Send Messages e ai permessi per i thread che userai; abilita **Message Content Intent** nella pagina Bot. Il [riferimento per la configurazione del bot](skills/dori-mode/references/setup.md#3-bot) descrive permessi e hook di messaggistica. Conserva soltanto il token in un file regolare di tua proprietà `~/.dori/discord-token` con modalità `0600`, seguendo le [istruzioni per il file token protetto](docs/releases.md#your-authentication-and-explicit-startup). Solo il processo figlio del monitor abilitato esplicitamente lo legge come `DORI_DISCORD_TOKEN`; tieni il valore fuori da chat, sorgenti, argomenti dei comandi e ambiente OMP padre.
-
-### 4. Avviare esplicitamente il primo ruolo OMP
-
-Abilita Discord Developer Mode e copia il tuo ID utente e l'ID esatto del canale, oppure l'ID del thread stesso. Sono stringhe decimali positive non segrete. Nello stesso terminale herdr usa le richieste interattive di Bash:
-
-```bash
-read -r -p "Your Discord user ID: " DORI_DISCORD_OWNER_ID
-read -r -p "Discord channel or thread ID: " DORI_DISCORD_CHANNEL_ID
-export DORI_DISCORD_OWNER_ID DORI_DISCORD_CHANNEL_ID
-omp --dori-role dori
-```
-
-Poi di' «Dori mode» e completa l'onboarding per nome, destinazione dei messaggi e strumenti consentiti. Questo passaggio avvia esplicitamente una sessione AI e consuma la quota del tuo provider.
-
-### 5. Abilitare i monitor Discord scelti
-
-Nella sessione OMP proprietaria avvia esplicitamente il `monitor` nativo con l'`argv` del processo figlio che legge il file token protetto e il filtro `^INBOUND`, come nella [ricetta per la ricezione dei messaggi del proprietario su Discord](docs/releases.md#discord-owner-intake). Eredita i due ID non segreti impostati sopra. Attendi `INBOUND_READY`, poi invia un nuovo messaggio come proprietario; il primo avvio registra un punto iniziale senza riprodurre i vecchi messaggi. La [presenza online](docs/releases.md#discord-online-presence) richiede un proprio monitor nativo abilitato separatamente. La sola installazione non dimostra l'autenticazione del provider né la consegna dei messaggi.
-
-### Aggiornamenti e rollback
-
-Usa `dori update check --version v0.1.2`, `dori update install --version v0.1.2`, `dori update status` e `dori update rollback`. L'attivazione resta in attesa finché esiste una sessione Dori in esecuzione, anche se non sta lavorando; pianifica un intervallo di manutenzione con Dori fermo. Il rollback richiede una release precedente conservata e verificata. Vedi [opzioni di aggiornamento e ripristino](docs/releases.md#updates-and-rollback).
-
-### Installazione da sorgente accanto a un Dori esistente
-
-I maintainer usano un checkout ordinario separato e `scripts/install-source.sh`, seguendo la [guida all'installazione da sorgente](docs/releases.md#source-checkouts-for-maintainers). La modalità side usa home, wrapper e skill propri e lascia intatta l'installazione Dori primaria. Le home gestite dalle release per gli utenti sono protette dall'installazione da sorgente. Mantieni immutate le release utente installate.
-
-Questo è un percorso facoltativo dal `main` del sorgente, separato dall'anteprima per gli utenti. Eseguilo se la destinazione documentata del checkout è ancora inutilizzata:
-
-```bash
-git clone https://github.com/vntrevx/omp-dori.git "$HOME/src/omp-dori" || exit 1
-cd "$HOME/src/omp-dori" || exit 1
+git clone https://github.com/vntrevx/Cataly.git "$HOME/src/Cataly" || exit 1
+cd "$HOME/src/Cataly" || exit 1
 DORI_INSTALL_MODE=side DORI_NO_PULL=1 DORI_SRC="$PWD" bash scripts/install-source.sh
 ```
 
-`DORI_NO_PULL=1` installa il checkout selezionato così com'è. La modalità side usa per impostazione predefinita `~/.omp-dori/config.json` e stato e wrapper propri; collega solo `omp-dori` in `OMP_DORI_BIN_DIR` (predefinito `${BUN_INSTALL:-$HOME/.bun}/bin`). Usa `omp-dori <command>` e `omp-dori omp ...` per quella home, mantieni `stateDir` e `agentCommand` generati e usa bot, canale e namespace runtime separati. Questa installazione facoltativa non avvia sessioni o monitor e lascia intatti il `~/.dori` primario, il comando `dori` e i collegamenti globali di skill ed estensioni.
+L'installer da sorgente prepara OMP 18.20.0 con le modifiche e i vincoli del progetto
+e l'overlay ULW; un `omp` standard nel `PATH` non può sostituirli. La modalità side
+usa per impostazione predefinita `~/.omp-dori`, mantiene wrapper e configurazione
+propri e lascia intatta l'installazione primaria `~/.dori`.
+L'installazione non avvia agenti, ricevitori di messaggi o servizi.
 
-Il `dori` installato è la CLI di messaggistica e gestione delle lane. L'harness completo resta disponibile tramite `dori harness <args>` o `bun src/cli.ts <args>` da un checkout sorgente. L'avvio dell'harness crea sessioni e loop reali; il suo registro e il suo protocollo di completamento sono separati da quelli della skill. I maintainer aggiornano il sorgente con [`dori upstream`](skills/dori-mode/references/scripts.md#staged-dori-updates), separatamente dagli aggiornamenti delle release per gli utenti.
+Leggi la [guida all'installazione da sorgente](docs/releases.md#source-checkouts-for-maintainers)
+per isolamento, configurazione e avvio esplicito. Le sessioni native
+usano la tua autenticazione presso il provider e la tua quota di utilizzo.
 
-## OMP session contract
+<table width="100%"><tr><td>
 
-Le sessioni lead/duty usano `omp --dori-role dori`; le lane di lavoro e il revisore integrato usano `--dori-role lane`. Gli handler dell'estensione Dori si attivano in base al ruolo, lasciando invariate le normali sessioni OMP. I ruoli persistono alla ripresa, e i record nativi di sessione e approvazione, associati al processo, proteggono la consegna degli input. Gli obiettivi nativi e le intenzioni registrate per i monitor persistono nello stato della sessione; riprendere la sessione Dori che li possiede ne ripristina i monitor registrati. Le release per gli utenti mantengono la revisione di omp-ulw vincolata al manifest e l'importazione limitata ai ruoli. La modalità primary delle installazioni da sorgente può caricare omp-ulw globalmente, mentre la modalità side lo limita al proprio wrapper. Vedi il [contratto del runtime](docs/runtime.md).
+**Importante**
+
+L'implementazione per gli utenti supporta anche profili isolati macOS arm64 / hc
+quando un manifest di release verificato li dichiara. Questo non significa che sia
+stata pubblicata una release macOS. Slack e Telegram restano funzionalità della versione sorgente.
+
+</td></tr></table>
 
 ## Documentazione
 
-- [Release, installazione, supporto, aggiornamenti e rollback](docs/releases.md)
-- [Skill Dori e regole operative](skills/dori-mode/SKILL.md) · [Riferimento per il setup](skills/dori-mode/references/setup.md)
+- [Installazione, supporto, aggiornamenti e rollback](docs/releases.md)
+- [Skill e regole operative](skills/dori-mode/SKILL.md)
+- [Configurazione della messaggistica](skills/dori-mode/references/setup.md)
 - [Adattatori runtime e contratti delle sessioni](docs/runtime.md)
-- [Ricetta container per maintainer](docs/container.md) · [Loop orario e backlog](docs/hourly-loop.md)
-- [Contribuire](CONTRIBUTING.md) · [Registro delle modifiche](CHANGELOG.md) · [Avviso sulla copia modificata](NOTICE)
+- [Configurazione dei container](docs/container.md)
+- [Pianificazione e backlog](docs/hourly-loop.md)
+- [Lock condivisi e priorità delle lane](docs/locks.md)
+- [Contribuire](CONTRIBUTING.md)
+- [Registro delle modifiche](CHANGELOG.md)
+- [Licenze e attribuzione dei sorgenti](LICENSE) · [Guida alle licenze](LICENSING.md) · [Avviso sulla copia modificata](NOTICE)
 
 ## Contribuire
 
-Questo fork è mantenuto da [vntrevx](https://github.com/vntrevx). Apri qui le [issue](https://github.com/vntrevx/omp-dori/issues) e le [pull request](https://github.com/vntrevx/omp-dori/pulls) di omp-dori. La [guida ai contributi](CONTRIBUTING.md) descrive proposte, sviluppo da sorgente, verifiche, attribuzioni e condizioni dei contributi. Le PR di questo fork non richiedono la firma del CLA upstream.
-
-## Limiti e privacy
-
-Dori usa gli account e i permessi che fornisci. Le azioni esterne richiedono comunque l'autorizzazione del proprietario; i controlli di completamento dimostrano i segnali configurati, non la correttezza di ogni risultato. Abilita solo le sessioni e i monitor che intendi eseguire. Le sessioni AI consumano la quota del tuo provider.
-
-La telemetria facoltativa si disattiva con `DORI_TELEMETRY=0` o `DO_NOT_TRACK=1`. Tieni credenziali e dati privati di sessioni e progetti fuori dai rapporti pubblici.
+Porta un obiettivo chiaro, una modifica mirata e prove del suo funzionamento.
+Parti dalla [guida ai contributi](CONTRIBUTING.md), controlla le
+[issue esistenti](https://github.com/vntrevx/Cataly/issues) e le
+[pull request](https://github.com/vntrevx/Cataly/pulls) e conserva il contesto
+che ha reso necessaria la modifica.
 
 ## Licenza
 
-omp-dori applica le licenze secondo l'origine dei componenti:
-
-- **Sustainable Use License 1.0:** il codice derivato da dori-superagent segue ambito e condizioni originali in [LICENSE](LICENSE).
-- **MIT:** l'integrazione OMP preesistente segue [LICENSE.omp-dori](LICENSE.omp-dori), conservando gli avvisi di YeonGyu Kim e betive37 e aggiungendo la manutenzione di quella parte da parte di vntrevx.
-- **Licenze di terze parti:** oh-my-pi, omp-ulw e gli altri componenti mantengono le rispettive condizioni.
-
-[NOTICE](NOTICE) registra maintainer, revisioni importate e attribuzione della copia modificata. L'avviso MIT riguarda la parte OMP specificata e non attribuisce una nuova licenza all'intero repository.
+Le licenze seguono la provenienza di ogni componente. Il materiale derivato da
+dori-superagent conserva la [Sustainable Use License 1.0](LICENSE);
+l'integrazione OMP preesistente conserva la propria
+[licenza MIT e gli avvisi di copyright](LICENSE.omp-dori).
+Gli altri componenti mantengono le rispettive condizioni. L'avviso MIT non
+attribuisce una nuova licenza all'intero repository. [NOTICE](NOTICE) registra
+le revisioni importate e l'attribuzione della copia modificata.

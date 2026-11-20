@@ -1,23 +1,23 @@
 {
   "version": 1,
   "repository": "https://github.com/dbc-hbin/omp-ulw.git",
-  "commit": "b2159b77fe3acbf9a8c6482f80dc5d4069fda881",
-  "patchSha256": "a6b375ad49e46bd312795b76103369d0c97b133cb4126393e633b3a1c495c9cc",
-  "resultTree": "556112f26f7099040a393d061962adaba273c57e",
+  "commit": "6ec7ecd40b2b5667f37c9802999db1d12ebbc2ae",
+  "patchSha256": "9d5bd547f8ad40266a255eb65a72a11d68a5aa74b006e25be227fc80063e093f",
+  "resultTree": "144a8cb3de8ed2c874b880479e3b164ae20e63f5",
   "files": [
     {
       "path": "CHANGELOG.md",
-      "sha256": "2860c9e741b8a3acadf20e76c7ba762295ec14452aa9944774cd9ce27ae8d565",
+      "sha256": "00bd404fd0d010fc24b2df7957880b79665293007723b8574ce7e4c795160f52",
       "executable": false
     },
     {
       "path": "README.md",
-      "sha256": "1863ad29fbcd5beda94c0115ccdd587d44a171c1a8198264f8e1f77ae4662fa4",
+      "sha256": "709b0b629e47ab47bba0512751dd0ed1dfb8982f58c5b5dab86bef1bd2f2eed7",
       "executable": false
     },
     {
       "path": "claude-harness.test.ts",
-      "sha256": "fc30f92370cfefc533602288bf269918fdf0d9998234b3f5bd8f9a1cf3c90ec0",
+      "sha256": "7e48fc3b6723b715b254819aa5468649cecef26e75a67078acb513ddd04c03af",
       "executable": false
     },
     {
@@ -37,7 +37,7 @@
     },
     {
       "path": "index.test.ts",
-      "sha256": "7f13b3150fa4162b8434160e21684999edb6f4b9e68e9f7a0c4506c7dbcad0ad",
+      "sha256": "2a1d338d8c2440131321ecee3c22e5db65a91c72686a4aa5c9e62e38bb7c9c7b",
       "executable": false
     },
     {
@@ -46,13 +46,18 @@
       "executable": false
     },
     {
+      "path": "omp-settings.d.ts",
+      "sha256": "0c259ddb337a92f52086876996819f34940c28a22c6283ffcbe6c2996339dfd4",
+      "executable": false
+    },
+    {
       "path": "package.json",
-      "sha256": "1bfc78c42fd21a7575968b4abd3415c918894c8383a205d0ab85758870dcccaf",
+      "sha256": "c378ab947ee90cd32f9c32e7e78bd946e6f2a18eb55adf7c59e1f63ca5b82d29",
       "executable": false
     },
     {
       "path": "presets.ts",
-      "sha256": "2f290aca312c544d303b461c3d3884bc2378d10b7170e501011753018072538c",
+      "sha256": "cf2b8d8661c306ce8af972569e741ba71fa736abe6564e2d1038eb5274546f02",
       "executable": false
     },
     {
@@ -71,8 +76,13 @@
       "executable": false
     },
     {
+      "path": "tests/code-mode-host-check.ts",
+      "sha256": "bb9cc81bc6f1dd753d8de717e71200b095da77f60b76098467ba3d5e540d66a7",
+      "executable": false
+    },
+    {
       "path": "tests/presets.test.ts",
-      "sha256": "59fbc66b9bbc99b8e42664d47fddd1eb218dba5e09a83a6dbde4cad5858b0a39",
+      "sha256": "ffe424601e449a20454bf962f1e9b803545573df81d5d686acb4fa90747cb9a9",
       "executable": false
     },
     {

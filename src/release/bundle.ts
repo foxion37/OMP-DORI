@@ -6,8 +6,8 @@ import { regularFile } from "./files.ts";
 import { validateReleaseManifest } from "./manifest.ts";
 import type { ReleaseManifest } from "./types.ts";
 
-const API = "https://api.github.com/repos/vntrevx/omp-dori";
-const DOWNLOAD = "https://github.com/vntrevx/omp-dori/releases/download";
+const API = "https://api.github.com/repos/vntrevx/Cataly";
+const DOWNLOAD = "https://github.com/vntrevx/Cataly/releases/download";
 const TAG = /^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 export type ReleaseSelection = { readonly version?: string; readonly from?: string };
 export type VerifiedBundle = { readonly manifest: ReleaseManifest; readonly files: readonly ArchiveFile[] };
@@ -18,10 +18,10 @@ type GithubRelease = {
   readonly assets: readonly { readonly name: string; readonly browser_download_url: string }[];
 };
 
-async function download(url: string, max: number): Promise<Buffer> {
+async function download(url: string, max: number, signal?: AbortSignal): Promise<Buffer> {
   const response = await fetch(url, {
     headers: { Accept: url.startsWith(API) ? "application/vnd.github+json" : "application/octet-stream" },
-    signal: AbortSignal.timeout(120_000),
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(120_000)]) : AbortSignal.timeout(120_000),
     redirect: "follow",
   });
   if (!response.ok) {
@@ -40,16 +40,19 @@ async function download(url: string, max: number): Promise<Buffer> {
   return Buffer.concat(chunks);
 }
 
-async function githubJson(path: string): Promise<unknown> {
-  return JSON.parse((await download(`${API}${path}`, 4 * 1024 * 1024)).toString("utf8"));
+async function githubJson(path: string, signal?: AbortSignal): Promise<unknown> {
+  return JSON.parse((await download(`${API}${path}`, 4 * 1024 * 1024, signal)).toString("utf8"));
 }
 
 function object(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-async function githubRelease(version?: string): Promise<GithubRelease> {
-  const value = await githubJson(version ? `/releases/tags/${encodeURIComponent(version)}` : "/releases/latest");
+async function githubRelease(version?: string, signal?: AbortSignal): Promise<GithubRelease> {
+  const value = await githubJson(
+    version ? `/releases/tags/${encodeURIComponent(version)}` : "/releases/latest",
+    signal,
+  );
   if (
     !object(value) ||
     typeof value["tag_name"] !== "string" ||
@@ -69,20 +72,20 @@ async function githubRelease(version?: string): Promise<GithubRelease> {
   return { tag_name: value["tag_name"], draft: false, prerelease: value["prerelease"], assets };
 }
 
-async function assertTag(manifest: ReleaseManifest): Promise<void> {
-  let value = await githubJson(`/git/ref/tags/${encodeURIComponent(manifest.tag)}`);
+async function assertTag(manifest: ReleaseManifest, signal?: AbortSignal): Promise<void> {
+  let value = await githubJson(`/git/ref/tags/${encodeURIComponent(manifest.tag)}`, signal);
   if (!object(value) || !object(value["object"])) throw new Error("Published Git tag is missing");
   let target = value["object"];
   for (let depth = 0; target["type"] === "tag" && depth < 4; depth++) {
     if (typeof target["sha"] !== "string" || !/^[a-f0-9]{40}$/.test(target["sha"]))
       throw new Error("Published annotated tag identity is invalid");
-    value = await githubJson(`/git/tags/${target["sha"]}`);
+    value = await githubJson(`/git/tags/${target["sha"]}`, signal);
     if (!object(value) || !object(value["object"])) throw new Error("Published annotated tag is incomplete");
     target = value["object"];
   }
   if (target["type"] !== "commit" || target["sha"] !== manifest.commit)
     throw new Error("Release manifest commit differs from its published tag");
-  const commit = await githubJson(`/git/commits/${manifest.commit}`);
+  const commit = await githubJson(`/git/commits/${manifest.commit}`, signal);
   if (!object(commit) || !object(commit["tree"]) || commit["tree"]["sha"] !== manifest.tree)
     throw new Error("Release manifest tree differs from its published commit");
 }
@@ -93,9 +96,9 @@ function checksum(sums: string, name: string, bytes: Uint8Array): void {
     throw new Error(`Release checksum differs: ${name}`);
 }
 
-export async function acquireBundle(selection: ReleaseSelection): Promise<VerifiedBundle> {
+export async function acquireBundle(selection: ReleaseSelection, signal?: AbortSignal): Promise<VerifiedBundle> {
   if (selection.version && !TAG.test(selection.version)) throw new Error("--version must be an exact vX.Y.Z tag");
-  const remote = selection.from ? undefined : await githubRelease(selection.version);
+  const remote = selection.from ? undefined : await githubRelease(selection.version, signal);
   const read = async (name: string, max: number): Promise<Buffer> => {
     if (selection.from) {
       const path = join(resolve(selection.from), name);
@@ -108,7 +111,7 @@ export async function acquireBundle(selection: ReleaseSelection): Promise<Verifi
     const matches = remote!.assets.filter((asset) => asset.name === name);
     if (matches.length !== 1 || matches[0]?.browser_download_url !== url)
       throw new Error(`Missing canonical published asset: ${name}`);
-    return download(url, max);
+    return download(url, max, signal);
   };
   const [metadata, sumsBytes] = await Promise.all([
     read("release-manifest.json", 4 * 1024 * 1024),
@@ -121,7 +124,7 @@ export async function acquireBundle(selection: ReleaseSelection): Promise<Verifi
   if (remote) {
     if (manifest.tag !== remote.tag_name || manifest.prerelease !== remote.prerelease)
       throw new Error("Release manifest and published release differ");
-    await assertTag(manifest);
+    await assertTag(manifest, signal);
   }
   const archive = await read(manifest.archive.name, 128 * 1024 * 1024);
   checksum(sums, manifest.archive.name, archive);

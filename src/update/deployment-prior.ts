@@ -1,7 +1,8 @@
 import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { isAbsolute } from "node:path";
+import { readSourceBundle } from "../release/source-bundle.ts";
 import type { ActiveDeployment } from "./deployment-active.ts";
-import { DeploymentHeld, sameProcess } from "./deployment-process.ts";
+import { DeploymentHeld, managedOmpCommand, sameProcess } from "./deployment-process.ts";
 import { assertRuntimeToolchain, inspectRuntimeToolchain, prepareRuntimeToolchain } from "./deployment-toolchain.ts";
 import type { DeploymentConfig, DeploymentRecord, RuntimeIdentity, ToolchainReceipt } from "./deployment-types.ts";
 import { digest } from "./source.ts";
@@ -29,6 +30,20 @@ export function verifyLegacyArtifact(config: DeploymentConfig, expectedHash: str
   )
     throw new DeploymentHeld("legacy native override differs from the captured running image or source generation");
   return config.legacyOmp;
+}
+
+/** The new release's prepared overlay can serve rollback only when the prior source pins the same overlay identity. */
+function priorSourceToolchain(toolchain: ToolchainReceipt, source: string | undefined): ToolchainReceipt {
+  if (!toolchain.ompUlw || source === toolchain.ompUlw.source) return toolchain;
+  let identity: string | undefined;
+  try {
+    identity = source === undefined ? undefined : readSourceBundle(source).identity;
+  } catch {
+    identity = undefined;
+  }
+  if (source === undefined || identity !== toolchain.ompUlw.identity)
+    throw new DeploymentHeld("prior source cannot be relaunched with the prepared extension overlay");
+  return { ...toolchain, ompUlw: { ...toolchain.ompUlw, source } };
 }
 
 /** A prior managed receipt outranks a legacy override. Legacy images are admitted only for the first directory conversion. */
@@ -62,12 +77,14 @@ export async function admitRuntimeToolchains(
       const legacy = verifyLegacyArtifact(config, runtime.executableHash);
       record.oldToolchain = await inspectRuntimeToolchain(config, record, legacy, true);
     } else if (record.toolchain && runtimeUsesToolchain(runtime, record.toolchain))
-      record.oldToolchain = record.toolchain;
+      record.oldToolchain = priorSourceToolchain(record.toolchain, record.oldSource);
     else throw new DeploymentHeld("legacy native conversion needs its exact preserved executable before any stop");
   }
   const oldToolchain = record.oldToolchain;
   if (!oldToolchain) throw new DeploymentHeld("prior native toolchain receipt is unavailable");
   assertRuntimeToolchain(config, oldToolchain);
+  // Rollback relaunches the prior source with this receipt; prove that command exists before the old actor stops.
+  managedOmpCommand(oldToolchain, record.oldSource);
   if (!runtimeUsesToolchain(runtime, oldToolchain))
     throw new DeploymentHeld("rollback native image differs from the captured actor");
   return {

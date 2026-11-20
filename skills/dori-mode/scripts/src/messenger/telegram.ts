@@ -1,5 +1,6 @@
 import type { Clock } from "../run.ts";
-import { guardText, type Http, MessengerError, withBackoff } from "./http.ts";
+import { DeliveryUncertainError, guardText, type Http, MessengerError, withBackoff } from "./http.ts";
+import { cutAt } from "./split.ts";
 
 export type TgTarget = { readonly chatId: number | string; readonly threadId?: number };
 
@@ -19,13 +20,7 @@ export const splitForTelegram = (text: string): string[] => {
   const parts: string[] = [];
   let rest = text;
   while (rest.length > limit) {
-    const window = rest.slice(0, limit);
-    const nl = window.lastIndexOf("\n");
-    const sp = window.lastIndexOf(" ");
-    let at = nl >= limit / 2 ? nl + 1 : sp >= limit / 2 ? sp + 1 : limit;
-    const before = rest.charCodeAt(at - 1);
-    const after = rest.charCodeAt(at);
-    if (before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff) at--;
+    const at = cutAt(rest, limit, ["\n", " "]);
     parts.push(rest.slice(0, at));
     rest = rest.slice(at);
   }
@@ -51,11 +46,14 @@ export class Telegram {
   ) {}
 
   async call<T = unknown>(method: string, params: Record<string, unknown>): Promise<T> {
+    const readOnly = ["getUpdates", "getMe", "getWebhookInfo", "getFile", "getChat"].includes(method);
     const res = await withBackoff(
       this.http,
       this.clock,
       {
         method: "POST",
+        readOnly,
+        operation: `telegram ${method}`,
         url: `${this.base}/bot${this.botToken}/${method}`,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(params),
@@ -69,9 +67,19 @@ export class Telegram {
       if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("expected an object");
       body = parsed as typeof body;
     } catch {
+      if (!readOnly && res.status < 300) throw new DeliveryUncertainError(`telegram ${method}`, res.status);
       throw new MessengerError(`telegram ${method}: malformed API response`, res.status);
     }
-    if (body.ok !== true)
+    if (
+      !readOnly &&
+      res.status < 300 &&
+      (typeof body.ok !== "boolean" ||
+        (body.ok && !("result" in body)) ||
+        body.error_code === 408 ||
+        (body.error_code !== undefined && body.error_code >= 500))
+    )
+      throw new DeliveryUncertainError(`telegram ${method}`, res.status);
+    if (res.status >= 300 || body.ok !== true)
       throw new MessengerError(`telegram ${method}: ${body.description ?? res.status}`, body.error_code ?? res.status);
     return body.result as T;
   }
@@ -83,19 +91,26 @@ export class Telegram {
   async send(t: TgTarget, text: string, rich = false): Promise<number> {
     // Plain text can span messages. HTML remains one request so tags and entities stay intact.
     const guarded = guardText(text);
-    let last = 0;
-    for (const part of rich ? [guarded] : splitForTelegram(guarded)) {
-      const r = await this.call<{ message_id?: unknown } | null>("sendMessage", {
-        ...this.where(t),
-        text: part,
-        ...(rich ? { parse_mode: "HTML" } : {}),
-      });
-      const id = r?.message_id;
-      if (typeof id !== "number" || !Number.isSafeInteger(id) || id <= 0)
-        throw new MessengerError("telegram sendMessage: malformed API response (no valid message_id)", 502);
-      last = id;
+    const ids: number[] = [];
+    const parts = rich ? [guarded] : splitForTelegram(guarded);
+    for (const part of parts) {
+      try {
+        const r = await this.call<{ message_id?: unknown } | null>("sendMessage", {
+          ...this.where(t),
+          text: part,
+          ...(rich ? { parse_mode: "HTML" } : {}),
+        });
+        const id = r?.message_id;
+        if (typeof id !== "number" || !Number.isSafeInteger(id) || id <= 0)
+          throw new DeliveryUncertainError("telegram sendMessage: no valid message_id", 200);
+        ids.push(id);
+      } catch (error) {
+        if (error instanceof MessengerError && ids.length > 0)
+          error.message += ` (part ${ids.length + 1} of ${parts.length}; already posted: ${ids.join(" ")})`;
+        throw error;
+      }
     }
-    return last;
+    return ids.at(-1) ?? 0;
   }
 
   async edit(t: TgTarget, messageId: number, text: string, rich = false): Promise<void> {
@@ -135,6 +150,8 @@ export class Telegram {
       chat_id: chatId,
       name: guardText(name).slice(0, 128),
     });
+    if (!Number.isSafeInteger(r?.message_thread_id) || r.message_thread_id <= 0)
+      throw new DeliveryUncertainError("telegram createForumTopic: missing topic ID", 200);
     return r.message_thread_id;
   }
 

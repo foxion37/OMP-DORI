@@ -102,7 +102,7 @@ async function pull(
       break;
     }
     try {
-      await startLane(d, item.id, item.brief, { cwd: item.cwd });
+      await startLane(d, item.id, item.brief, { cwd: item.cwd, priority: item.priority });
     } catch (e) {
       const why = e instanceof Error ? e.message : String(e);
       const lane = d.store.lane(item.id);

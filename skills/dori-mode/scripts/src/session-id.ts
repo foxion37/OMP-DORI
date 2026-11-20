@@ -2,6 +2,7 @@ import { readdirSync, realpathSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 
+import { isOmpProcessCommand, namesOmpProcess } from "../../../../src/runtime/omp.ts";
 import type { Probe, SessionRef } from "../../../../src/runtime/types.ts";
 import { type PaneState, readPaneState } from "./lane-state.ts";
 import { type ChosenRuntimes, type Runner, runtimesFor } from "./run.ts";
@@ -13,8 +14,8 @@ export type SessionHit = {
   readonly pid?: number;
 };
 
-const OMP = /(?:^|\s)(?:[^\s]*\/)?omp(\s|$)|pi-coding-agent\/dist\/cli\.js/;
-const AGENT = /senpi\/dist\/bundle\/cli\.js|(?:^|\s)(?:[^\s]*\/)?(?:omo|omp)(\s|$)|pi-coding-agent\/dist\/cli\.js/;
+// OMP's launch forms, the source launcher included, are classified once by the runtime; omo and senpi are custom agents.
+const CUSTOM_AGENT = /senpi\/dist\/bundle\/cli\.js|(?:^|\s)(?:[^\s]*\/)?omo(\s|$)/;
 const ENV_ID = /(?:^|\s)PI_SESSION_ID=([0-9a-f-]{36})(?:\s|$)/;
 const SESSION_FILE = /^(\d{4}-\d\d-\d\dT\d\d)-(\d\d)-(\d\d)-(\d{3})Z_([0-9a-f-]{36})\.jsonl$/;
 const START_WINDOW_MS = 180_000;
@@ -86,11 +87,14 @@ const sessionProcs = async (
   ref: SessionRef,
   table: readonly Proc[],
   deps: SessionDeps,
+  requireForeground = false,
 ): Promise<{ readonly candidates: readonly Proc[]; readonly probe?: Probe }> => {
   const config = deps.stateDir === undefined ? {} : { stateDir: deps.stateDir };
   const rts = deps.rts ?? runtimesFor(config, process.env, deps.run);
   try {
-    const probe = await rts.for(ref).probe(ref);
+    const rt = rts.for(ref);
+    const probe =
+      requireForeground && ref.runtime === "hc" ? await rt.probe(ref, { foregroundOnly: true }) : await rt.probe(ref);
     const root = probe.rootPid;
     return { probe, candidates: root ? [...table.filter((p) => p.pid === root), ...descendants(table, root)] : [] };
   } catch {
@@ -105,7 +109,7 @@ const stateForAgent = (
   probe: Probe | undefined,
 ): PaneState | null => {
   const state = readPaneState(stateDir, ref.id);
-  const agent = candidates.find((p) => p.pid === state?.pid && OMP.test(p.cmd) && !/\bmcp\b/.test(p.cmd));
+  const agent = candidates.find((p) => p.pid === state?.pid && isOmpProcessCommand(p.cmd) && !/\bmcp\b/.test(p.cmd));
   return state &&
     agent &&
     probe &&
@@ -117,8 +121,7 @@ const stateForAgent = (
     (state.sessionFile === undefined || typeof state.sessionFile === "string") &&
     agent.pid === state.pid &&
     probe.pid === state.pid &&
-    probe.sessionId === state.sessionId &&
-    OMP.test(agent.cmd)
+    probe.sessionId === state.sessionId
     ? state
     : null;
 };
@@ -129,10 +132,13 @@ export const trustedPaneState = async (
   stateDir: string,
   ref: SessionRef,
   rts?: ChosenRuntimes,
+  requireForeground = false,
 ): Promise<PaneState | null> => {
   if (!readPaneState(stateDir, ref.id)) return null;
   const deps: SessionDeps = { run, stateDir, sessionsDir: "", ...(rts === undefined ? {} : { rts }) };
-  const { candidates, probe } = await sessionProcs(ref, await procTable(run), deps);
+  const { candidates, probe } = await sessionProcs(ref, await procTable(run), deps, requireForeground);
+  // The runtime only returns non-shell OMP identity when its writer owns the foreground.
+  if (requireForeground && (probe?.shellInFront !== false || probe.approvalPending !== false)) return null;
   return stateForAgent(stateDir, ref, candidates, probe);
 };
 
@@ -146,10 +152,12 @@ export const resolveSession = async (
   const { candidates, probe } = await sessionProcs(ref, table, deps);
   const state = deps.stateDir === undefined ? null : stateForAgent(deps.stateDir, ref, candidates, probe);
   if (state) return { id: state.sessionId, via: "extension", pid: state.pid };
-  const agent = candidates.find((p) => AGENT.test(p.cmd) && !/\bmcp\b/.test(p.cmd));
+  // Without the extension's record only the start-time folder is read, so any line naming OMP is found, as before.
+  const agent = candidates.find((p) => (namesOmpProcess(p.cmd) || CUSTOM_AGENT.test(p.cmd)) && !/\bmcp\b/.test(p.cmd));
   if (!agent) return { id: "", via: "none" };
   // --session and PI_SESSION_ID belong to custom senpi/omo agents, never to OMP's current session.
-  if (!OMP.test(agent.cmd)) {
+  const omp = namesOmpProcess(agent.cmd);
+  if (!omp) {
     const argv = agent.cmd.split(/\s+/);
     const flagAt = argv.indexOf("--session");
     const fromFlag = flagAt >= 0 ? (argv[flagAt + 1] ?? "") : "";
@@ -171,7 +179,7 @@ export const resolveSession = async (
         return [];
       }
     });
-  const dir = OMP.test(agent.cmd)
+  const dir = omp
     ? sessionDirFor(deps.sessionsDir, cwd)
     : join(deps.sessionsDir, `--${cwd.replace(/^\//, "").replace(/\//g, "-")}--`);
   const near = list(dir)

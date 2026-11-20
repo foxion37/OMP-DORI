@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -5,21 +6,23 @@ import { LANE_KEY } from "./registry.ts";
 
 export type ReportKind = "milestone" | "blocker" | "question" | "halted" | "done";
 export type ProgressState = "running" | "blocked" | "halted" | "done" | "stalled";
-export type Report = {
+type EventFields = {
+  readonly key: string;
+  readonly at: string;
+  readonly text: string;
+  readonly generation?: string;
+};
+export type Report = EventFields & {
   readonly type: "report";
-  readonly key: string;
-  readonly at: string;
   readonly kind: ReportKind;
-  readonly text: string;
+  readonly owner?: string;
 };
-export type Activity = {
+export type Activity = EventFields & {
   readonly type: "activity";
-  readonly key: string;
-  readonly at: string;
   readonly state: "running" | "stalled";
-  readonly text: string;
 };
-export type LaneEvent = Report | Activity;
+export type LaneEvent = Report | Activity | (EventFields & { readonly type: "reopen" });
+type EventScope = { readonly generation: string | undefined };
 export type Progress = {
   readonly state: ProgressState;
   readonly lastReport: Report | null;
@@ -52,8 +55,22 @@ export const reportState = (kind: ReportKind): ProgressState => {
 export const reportLine = (report: Report): string =>
   `[REPORT] ${report.key} | ${report.kind} | ${Bun.stripANSI(report.text)
     .replace(/\s*[\r\n]+\s*/g, " ")
-    // biome-ignore lint/suspicious/noControlCharactersInRegex: the pattern deliberately matches control characters to reject or strip them
+    // oxlint-disable-next-line no-control-regex -- the pattern deliberately matches control characters to reject or strip them
     .replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, "")}`;
+
+export const reportId = (report: Report): string =>
+  createHash("sha256")
+    .update(
+      JSON.stringify([
+        report.key,
+        report.at,
+        report.kind,
+        report.text,
+        report.owner ?? null,
+        report.generation ?? null,
+      ]),
+    )
+    .digest("hex");
 
 export const parseEvent = (line: string, key: string): LaneEvent => {
   const value: unknown = JSON.parse(line);
@@ -68,13 +85,27 @@ export const parseEvent = (line: string, key: string): LaneEvent => {
     !("text" in value) ||
     typeof value.text !== "string" ||
     !value.text.trim() ||
-    !("type" in value)
+    !("type" in value) ||
+    ("generation" in value && typeof value.generation !== "string")
   ) {
     throw new ReportError(`invalid report record for ${key}`);
   }
-  const common = { key, at: value.at, text: value.text };
+  const common = {
+    key,
+    at: value.at,
+    text: value.text,
+    ...("generation" in value && typeof value.generation === "string" ? { generation: value.generation } : {}),
+  };
+  if (value.type === "reopen") return { ...common, type: "reopen" };
   if (value.type === "report" && "kind" in value && isReportKind(value.kind)) {
-    return { ...common, type: "report", kind: value.kind };
+    if ("owner" in value && (typeof value.owner !== "string" || !value.owner.trim()))
+      throw new ReportError(`invalid owner summary for ${key}`);
+    return {
+      ...common,
+      type: "report",
+      kind: value.kind,
+      ...("owner" in value ? { owner: value.owner as string } : {}),
+    };
   }
   if (value.type === "activity" && "state" in value && (value.state === "running" || value.state === "stalled")) {
     return { ...common, type: "activity", state: value.state };
@@ -93,7 +124,8 @@ export class Reports {
     return join(this.stateDir, "lanes", key, "reports.jsonl");
   }
 
-  read(key: string): Progress | null {
+  // With no scope, inspect the raw journal. An explicit undefined generation selects only legacy records.
+  read(key: string, scope?: EventScope): Progress | null {
     const path = this.path(key);
     if (!existsSync(path)) return null;
     let progress: Progress | null = null;
@@ -107,7 +139,11 @@ export class Reports {
         if (!(error instanceof SyntaxError || error instanceof ReportError)) throw error;
         throw new ReportError(`${path}:${index + 1}: ${error.message}`);
       }
-      if (event.type === "report") {
+      if (scope && event.generation !== scope.generation) continue;
+      if (event.type === "reopen") {
+        lastReport = null;
+        progress = { state: "running", lastReport, lastEvent: event };
+      } else if (event.type === "report") {
         lastReport = event;
         progress = { state: reportState(event.kind), lastReport: event, lastEvent: event };
       } else if (!progress || progress.state === "running" || progress.state === "stalled") {
@@ -127,14 +163,29 @@ export class Reports {
     appendFileSync(path, `${JSON.stringify(event)}\n`, { encoding: "utf8", mode: 0o600 });
   }
 
-  report(key: string, kind: ReportKind, text: string, now: number): Report {
-    const report: Report = { type: "report", key, kind, text: text.trim(), at: new Date(now).toISOString() };
+  report(key: string, kind: ReportKind, text: string, now: number, generation?: string, owner?: string): Report {
+    const report: Report = {
+      type: "report",
+      key,
+      kind,
+      text: text.trim(),
+      at: new Date(now).toISOString(),
+      ...(generation === undefined ? {} : { generation }),
+      ...(owner === undefined ? {} : { owner: owner.trim() }),
+    };
     this.append(report);
     return report;
   }
 
-  observe(key: string, screen: string, now: number, staleAfterMs: number, resumeOnWorking = true): Progress | null {
-    const progress = this.read(key);
+  observe(
+    key: string,
+    screen: string,
+    now: number,
+    staleAfterMs: number,
+    resumeOnWorking = true,
+    scope?: EventScope,
+  ): Progress | null {
+    const progress = this.read(key, scope);
     if (!progress || (progress.state !== "running" && progress.state !== "stalled")) return progress;
     const visible = Bun.stripANSI(screen);
     const lastAt = (pattern: RegExp): number => {
@@ -154,11 +205,13 @@ export class Reports {
     const state =
       failed || (idle && !working && stale) ? "stalled" : working && resumeOnWorking ? "running" : progress.state;
     if (state === progress.state) return progress;
+    const { generation } = progress.lastEvent;
     const event: Activity = {
       type: "activity",
       key,
       at: new Date(now).toISOString(),
       state,
+      ...(generation === undefined ? {} : { generation }),
       text: failed
         ? "compaction failed"
         : state === "stalled"
@@ -166,6 +219,6 @@ export class Reports {
           : "Working activity resumed",
     };
     this.append(event);
-    return this.read(key);
+    return this.read(key, scope);
   }
 }

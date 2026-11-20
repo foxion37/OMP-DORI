@@ -25,6 +25,9 @@ import { sourceManifest } from "../src/update/source.ts";
 import { archive, type ConsumerFixture, fixture, withArchive } from "./release-consumer-setup.ts";
 import { fixtureGit, nativeCacheFixture, overlayFixture } from "./source-bundle-setup.ts";
 
+// POSIX-only: release installation refuses non-private directories by POSIX mode bits.
+const posix = test.skipIf(process.platform === "win32");
+
 function bundledRelease(f: ConsumerFixture, selected: string, nativeSource?: string) {
   const original = f.release(selected);
   const source = join(f.root, `bundled-${selected}`);
@@ -75,64 +78,70 @@ function bundledRelease(f: ConsumerFixture, selected: string, nativeSource?: str
   return { source, dependency, bundle: { manifest, files: readArchive(bytes, manifest) } };
 }
 
-test("consumer install, update and reuse select each loaded release's bound overlay without rewriting config", async () => {
-  const f = fixture();
-  const first = bundledRelease(f, "first");
-  const one = await installBundle(f.paths, first.bundle, undefined);
-  const config = readFileSync(f.paths.config);
-  const configured = JSON.parse(config.toString());
-  const sourceOne = releasePath(f.paths, one.current);
-  const omp = resolveConsumerOmpCommand(["omp", "{prompt}"], { home: f.paths.home, sourceRoot: sourceOne });
-  expect(omp[0]).toBe(readlinkSync(join(f.paths.dori, "bin/omp")));
-  expect(omp).toEqual([
-    join(sourceOne, "scripts/consumer/omp"),
-    "--no-extensions",
-    "-e",
-    join(sourceOne, "extension"),
-    "{prompt}",
-  ]);
-  expect(configured.agentCommand[0]).toBe(join(f.paths.dori, "bin/omp"));
-  const second = bundledRelease(f, "second", first.source);
-  const two = await installBundle(f.paths, second.bundle, one);
-  const sourceTwo = releasePath(f.paths, two.current);
-  const effective = (sourceRoot: string) =>
-    resolveConsumerOmpUlwPath(configured.ompUlwPath, { home: f.paths.home, sourceRoot });
-  expect(effective(sourceOne)).toBe(join(first.dependency, "index.ts"));
-  expect(effective(sourceTwo)).toBe(join(second.dependency, "index.ts"));
-  expect(readFileSync(effective(sourceOne), "utf8")).toContain('selected = "first"');
-  expect(readFileSync(effective(sourceTwo), "utf8")).toContain('selected = "second"');
-  expect(fixtureGit(first.dependency, "rev-parse", "HEAD")).toBe(one.current.ompUlw.commit);
-  expect(await installBundle(f.paths, second.bundle, two)).toEqual(two);
-  expect(readFileSync(f.paths.config)).toEqual(config);
-  expect(resolveConsumerOmpCommand(["/owner/custom-omp"], { home: f.paths.home, sourceRoot: sourceTwo })).toEqual([
-    "/owner/custom-omp",
-  ]);
-  const rolled = await rollbackRelease(f.paths, two);
-  expect(effective(sourceOne)).toBe(join(first.dependency, "index.ts"));
-  expect(readFileSync(f.paths.config)).toEqual(config);
-  writeFileSync(join(second.dependency, "index.ts"), "owner edit\n");
-  expect(() => effective(sourceTwo)).toThrow();
-  await expect(installBundle(f.paths, second.bundle, rolled)).rejects.toThrow();
-  expect(readlinkSync(f.paths.live)).toBe(sourceOne);
-});
+posix(
+  "consumer install, update and reuse select each loaded release's bound overlay without rewriting config",
+  async () => {
+    const f = fixture();
+    const first = bundledRelease(f, "first");
+    const one = await installBundle(f.paths, first.bundle, undefined);
+    const config = readFileSync(f.paths.config);
+    const configured = JSON.parse(config.toString());
+    const sourceOne = releasePath(f.paths, one.current);
+    const omp = resolveConsumerOmpCommand(["omp", "{prompt}"], { home: f.paths.home, sourceRoot: sourceOne });
+    expect(omp[0]).toBe(readlinkSync(join(f.paths.dori, "bin/omp")));
+    expect(omp).toEqual([
+      join(sourceOne, "scripts/consumer/omp"),
+      "--no-extensions",
+      "-e",
+      join(sourceOne, "extension"),
+      "{prompt}",
+    ]);
+    expect(configured.agentCommand[0]).toBe(join(f.paths.dori, "bin/omp"));
+    const second = bundledRelease(f, "second", first.source);
+    const two = await installBundle(f.paths, second.bundle, one);
+    const sourceTwo = releasePath(f.paths, two.current);
+    const effective = (sourceRoot: string) =>
+      resolveConsumerOmpUlwPath(configured.ompUlwPath, { home: f.paths.home, sourceRoot });
+    expect(effective(sourceOne)).toBe(join(first.dependency, "index.ts"));
+    expect(effective(sourceTwo)).toBe(join(second.dependency, "index.ts"));
+    expect(readFileSync(effective(sourceOne), "utf8")).toContain('selected = "first"');
+    expect(readFileSync(effective(sourceTwo), "utf8")).toContain('selected = "second"');
+    expect(fixtureGit(first.dependency, "rev-parse", "HEAD")).toBe(one.current.ompUlw.commit);
+    expect(await installBundle(f.paths, second.bundle, two)).toEqual(two);
+    expect(readFileSync(f.paths.config)).toEqual(config);
+    expect(resolveConsumerOmpCommand(["/owner/custom-omp"], { home: f.paths.home, sourceRoot: sourceTwo })).toEqual([
+      "/owner/custom-omp",
+    ]);
+    const rolled = await rollbackRelease(f.paths, two);
+    expect(effective(sourceOne)).toBe(join(first.dependency, "index.ts"));
+    expect(readFileSync(f.paths.config)).toEqual(config);
+    writeFileSync(join(second.dependency, "index.ts"), "owner edit\n");
+    expect(() => effective(sourceTwo)).toThrow();
+    await expect(installBundle(f.paths, second.bundle, rolled)).rejects.toThrow();
+    expect(readlinkSync(f.paths.live)).toBe(sourceOne);
+  },
+);
 
-test("rollback to a genuine older archive keeps its no-lock protocol instead of requiring new source locks", async () => {
-  const f = fixture();
-  const old = await installBundle(f.paths, f.release("older").bundle, undefined);
-  const next = bundledRelease(f, "newer");
-  const state = await installBundle(f.paths, next.bundle, old);
-  expect(existsSync(join(f.paths.dori, "bin/omp"))).toBe(true);
-  const restored = await rollbackRelease(f.paths, state);
-  expect(restored.current.requirements.omp).toBe("18.18.8");
-  expect(existsSync(join(f.paths.dori, "bin/omp"))).toBe(false);
-});
+posix(
+  "rollback to a genuine older archive keeps its no-lock protocol instead of requiring new source locks",
+  async () => {
+    const f = fixture();
+    const old = await installBundle(f.paths, f.release("older").bundle, undefined);
+    const next = bundledRelease(f, "newer");
+    const state = await installBundle(f.paths, next.bundle, old);
+    expect(existsSync(join(f.paths.dori, "bin/omp"))).toBe(true);
+    const restored = await rollbackRelease(f.paths, state);
+    expect(restored.current.requirements.omp).toBe("18.18.8");
+    expect(existsSync(join(f.paths.dori, "bin/omp"))).toBe(false);
+  },
+);
 
 test("a managed process selects its prepared default but retains an explicit external ULW path", () => {
   const before = process.env["DORI_OMP_ULW_PATH"];
   try {
     process.env["DORI_OMP_ULW_PATH"] = "/prepared/omp-ulw/index.ts";
     expect(resolveProcessOmpUlwPath("", "/home/fixture")).toBe("/prepared/omp-ulw/index.ts");
-    expect(resolveProcessOmpUlwPath("/home/fixture/.dori/omp-ulw/index.ts", "/home/fixture")).toBe(
+    expect(resolveProcessOmpUlwPath(join("/home/fixture", ".dori", "omp-ulw", "index.ts"), "/home/fixture")).toBe(
       "/prepared/omp-ulw/index.ts",
     );
     expect(resolveProcessOmpUlwPath("/owner/custom-ulw/index.ts", "/home/fixture")).toBe("/owner/custom-ulw/index.ts");

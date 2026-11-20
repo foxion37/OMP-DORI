@@ -6,12 +6,15 @@ import { readSourceBundle } from "../src/release/source-bundle.ts";
 import { sourceManifest } from "../src/update/source.ts";
 import { fixtureGit, overlayFixture } from "./source-bundle-setup.ts";
 
+// POSIX-only: the fixture spawns /bin/sh and asserts umask and file modes.
+const posix = test.skipIf(process.platform === "win32");
+
 const directories: string[] = [];
 afterEach(() => {
   for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
 
-test.each(["0000", "0002", "0077"])("release source admits bound payloads under umask %s", async (mask) => {
+posix.each(["0000", "0002", "0077"])("release source admits bound payloads under umask %s", async (mask) => {
   const directory = realpathSync(mkdtempSync(join(tmpdir(), "dori-release-source-test-")));
   directories.push(directory);
   const source = join(directory, "source");

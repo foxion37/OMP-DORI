@@ -12,4 +12,4 @@ List each finding as: severity (HIGH/MEDIUM/LOW), file:line, problem, fix.
 Then print exactly one final line:
 VERDICT: CLEAR   (no HIGH or MEDIUM findings)
 VERDICT: BLOCK   (at least one HIGH or MEDIUM finding)
-Do not modify any files.
+Do not modify any files. A CLEAR verdict is review evidence, not permission to merge, publish, deploy or spend. Report findings and the verdict through the requested output surface; do not post them elsewhere without explicit authorization.

@@ -3,8 +3,11 @@ import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 
 import { join } from "node:path";
 import { script, withUlwRemote } from "./install-setup.ts";
 
+// POSIX-only: the fixture runs scripts/install-source.sh and shebang stubs linked through a ':' PATH.
+const posix = test.skipIf(process.platform === "win32");
+
 // Actual installer and bound ULW admission; package installs and native argv are labeled fixtures.
-test.each(["tools", "./tools", ".", "tools with 'quote'; literal", "absolute"])(
+posix.each(["tools", "./tools", ".", "tools with 'quote'; literal", "absolute"])(
   "the primary guard preserves Bun selected through PATH entry %s",
   (entry) => {
     const s = withUlwRemote();

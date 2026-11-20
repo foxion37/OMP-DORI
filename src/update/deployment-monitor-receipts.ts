@@ -14,7 +14,9 @@ import type {
 } from "./deployment-types.ts";
 import { procCmdline, procCwd, procStat } from "./proc.ts";
 
-export function readRuntimeHealth(config: DeploymentConfig): RuntimeHealth | undefined {
+export function readRuntimeHealth(
+  config: Pick<DeploymentConfig, "stateDir" | "pane" | "sessionId">,
+): RuntimeHealth | undefined {
   const path = join(config.stateDir, "runtime", `${encodeURIComponent(config.pane)}.json`);
   const stat = lstatSync(path, { throwIfNoEntry: false });
   if (!stat) return undefined;

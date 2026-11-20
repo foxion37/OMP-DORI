@@ -19,6 +19,9 @@ import { assertSourceBundle, readSourceBundle } from "../src/release/source-bund
 import { digest } from "../src/update/source.ts";
 import { nativeCacheFixture, overlayFixture } from "./source-bundle-setup.ts";
 
+// POSIX-only: native admission fixtures build private directories that POSIX mode bits mark.
+const posix = test.skipIf(process.platform === "win32");
+
 const roots: string[] = [];
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
@@ -48,7 +51,7 @@ type Fixture = {
   readonly manifest: { readonly file: string; readonly integrity: string; readonly size: number };
 };
 
-test("exact manifest-authenticated export assets pass generic, native and existing-cache admission", async () => {
+posix("exact manifest-authenticated export assets pass generic, native and existing-cache admission", async () => {
   const f = fixture();
   expect(assertNativeExport(f.checkout)).toBe(true);
   expect(() => assertSourceBundle(f.checkout, f.bundle, f.home)).not.toThrow();
@@ -56,7 +59,7 @@ test("exact manifest-authenticated export assets pass generic, native and existi
   expect(await provisionNativeSource(f.source, f.home)).toEqual(f.receipt);
 });
 
-test("source may precede generation, but native reuse holds incomplete caches unchanged", async () => {
+posix("source may precede generation, but native reuse holds incomplete caches unchanged", async () => {
   const f = fixture();
   const receiptPath = join(f.receipt.directory, "receipt.json");
   const receipt = readFileSync(receiptPath);
@@ -71,7 +74,7 @@ test("source may precede generation, but native reuse holds incomplete caches un
   expect(readFileSync(f.manifestPath)).toEqual(manifest);
 });
 
-test.each([
+posix.each([
   [
     "same-size viewer tamper",
     (f: Fixture) => {
@@ -121,7 +124,7 @@ test.each([
   expect(() => assertNativeSource(f.source, f.home)).toThrow();
 });
 
-test.each([
+posix.each([
   ["path traversal", (f: Fixture) => ({ ...f.manifest, file: "../viewer.js" })],
   ["wrong SRI", (f: Fixture) => ({ ...f.manifest, integrity: "sha256-wrong" })],
   ["wrong size", (f: Fixture) => ({ ...f.manifest, size: f.manifest.size + 1 })],
@@ -134,7 +137,7 @@ test.each([
   expect(() => assertNativeSource(f.source, f.home)).toThrow();
 });
 
-test("matching new viewer metadata cannot replace the authenticated tracked manifest", () => {
+posix("matching new viewer metadata cannot replace the authenticated tracked manifest", () => {
   const f = fixture();
   const bytes = "different admission fixture bytes\n";
   const hash = digest(bytes);
@@ -151,7 +154,7 @@ test("matching new viewer metadata cannot replace the authenticated tracked mani
   expect(() => assertNativeSource(f.source, f.home)).toThrow();
 });
 
-test("valid export assets do not exempt unrelated untracked source or non-native bundles", () => {
+posix("valid export assets do not exempt unrelated untracked source or non-native bundles", () => {
   const f = fixture();
   writeFileSync(join(f.checkout, "shadow.node"), "untracked source\n", { mode: 0o600 });
   expect(assertNativeExport(f.checkout)).toBe(true);

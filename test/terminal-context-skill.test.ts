@@ -7,9 +7,12 @@ import { depsFor, fakeClock, newWorld } from "../skills/dori-mode/scripts/test/f
 import { recordingOmp } from "./terminal-context-setup.ts";
 import { expectContext, managedTerminal } from "./terminal-managed-setup.ts";
 
+// POSIX-only: the transport fixture records through /bin/sh shebang programs and `env -0`.
+const posix = test.skipIf(process.platform === "win32");
+
 for (const runtime of ["herdr", "hc"] as const) {
   for (const external of [false, true]) {
-    test(`${runtime}: full skill launch crosses a conflicting daemon with external=${external}`, async () => {
+    posix(`${runtime}: full skill launch crosses a conflicting daemon with external=${external}`, async () => {
       const f = managedTerminal(runtime);
       const custom = join(f.root, "external owner tools", "omp");
       const customUlw = join(f.root, "external owner tools", "ulw.ts");

@@ -180,6 +180,19 @@ describe("probe", () => {
     expect(await rt.probe(T1)).toMatchObject(want);
   });
 
+  test.each([undefined, null, "bash", ["bash", null], []].map((argv) => ({ argv })))(
+    "incomplete argv keeps hints without claiming a complete observation: %p",
+    ({ argv }) => {
+      const probe = parseProbe({ foreground: { name: "bash", pid: 11, argv } });
+      const expected =
+        Array.isArray(argv) && argv.length === 0
+          ? { name: "bash", pid: 11, argv: [] }
+          : { name: "bash", pid: 11, argv: ["bash"], argvIncomplete: true };
+      expect(probe.foreground).toEqual([expected]);
+      expect(probe.shellInFront).toBe(true);
+    },
+  );
+
   test("a terminal hc does not know is gone", async () => {
     const { rt } = rig();
     expect(await rt.probe(T1)).toEqual({ status: "gone", shellInFront: false });

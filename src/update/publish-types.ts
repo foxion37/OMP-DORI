@@ -12,8 +12,7 @@ export type InitialSourcePins = {
   readonly upstream: string;
 };
 export type PublicationBasis =
-  | { readonly kind: "matched-main" }
-  | { readonly kind: "initial-source"; readonly pins: InitialSourcePins };
+  { readonly kind: "matched-main" } | { readonly kind: "initial-source"; readonly pins: InitialSourcePins };
 
 export type PublishConfig = {
   readonly remote: string;

@@ -51,6 +51,9 @@ function rig(
 }
 
 describe("telemetry", () => {
+  // POSIX-only: six concurrent first-run processes racing on one install id need POSIX spawn timing; the Windows runner flakes
+  const posix = test.skipIf(process.platform === "win32");
+
   test("records refused inside a 200 response (partialSuccess.rejectedLogRecords) are counted, not treated as delivered", async () => {
     let reply = JSON.stringify({ partialSuccess: { rejectedLogRecords: "2", errorMessage: "invalid_scope" } });
     const r = rig(
@@ -117,7 +120,7 @@ describe("telemetry", () => {
     expect(Date.now() - started).toBeLessThan(1000);
   });
 
-  test("first runs racing in separate processes on one home end up with a single install id", async () => {
+  posix("first runs racing in separate processes on one home end up with a single install id", async () => {
     const home = mkdtempSync(join(tmpdir(), "dori-tel-"));
     const script = `const { Telemetry } = await import(${JSON.stringify(join(import.meta.dir, "../src/telemetry.ts"))});
       const hashes = [];

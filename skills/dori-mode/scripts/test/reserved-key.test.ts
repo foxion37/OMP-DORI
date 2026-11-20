@@ -3,7 +3,7 @@ import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { adoptLane } from "../src/adopt.ts";
-import { launchLane, LaunchError } from "../src/launch.ts";
+import { LaunchError, launchLane } from "../src/launch.ts";
 import { Registry } from "../src/registry.ts";
 import { run } from "../src/run.ts";
 import { depsFor, fakeClock, newWorld, withState, type World } from "./fakes.ts";

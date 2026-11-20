@@ -40,8 +40,9 @@ test("OMP paths expand while explicit commands, models and environment overrides
     const c = await loadConfig(undefined, "/home/ana");
     expect(c.stateDir).toBe(state.dir);
     expect(c.leadPane).toBe("w2:p2");
-    expect(c.sessionsDir).toBe("/home/ana/custom-sessions");
-    expect(c.ompUlwPath).toBe("/home/ana/extensions/ulw/index.ts");
+    // The expansion joins with the platform's separator, as the OS would.
+    expect(c.sessionsDir).toBe(join("/home/ana", "custom-sessions"));
+    expect(c.ompUlwPath).toBe(join("/home/ana", "extensions", "ulw", "index.ts"));
     expect(c.defaultModel).toBe("provider/custom-model");
     expect(c.agentCommand).toEqual(["custom-agent", "--model", "{model}", "{prompt}"]);
     expect(c.guard).toMatchObject({ panesMax: 7 });

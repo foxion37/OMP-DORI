@@ -6,9 +6,8 @@
  */
 import { cpus } from "node:os";
 import { parseArgs } from "node:util";
-import { OWNER_ID } from "./bench/fake-discord.ts";
+import { OWNER_ID, startFakeDiscord } from "./bench/fake-discord.ts";
 import { type Emit, type Fake, loadBaseline, type Variant, variantsFor } from "./bench/variants.ts";
-import { startFakeDiscord } from "./bench/fake-discord.ts";
 
 type Scenario = {
   name: string;

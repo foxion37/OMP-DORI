@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { expect, test } from "bun:test";
 import { existsSync, readFileSync, renameSync, symlinkSync } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
@@ -6,9 +6,9 @@ import { DoriUpdater } from "../src/update/controller.ts";
 import { acknowledgeStopped, restoreUpdate, snapshotUpdate } from "../src/update/recovery.ts";
 import { sourceManifest } from "../src/update/source.ts";
 import { persistJob, persistState, readState, saveJson, transition } from "../src/update/state.ts";
-import { fixture, git } from "./update-setup.ts";
+import { fixture, git, posixSuite } from "./update-setup.ts";
 
-describe("Dori staged updater", () => {
+posixSuite("Dori staged updater", () => {
   test("automatic baseline observation does no port; manual current-head staging propagates failure and deduplicates across restart", async () => {
     const f = fixture();
     expect(await f.updater.once()).toEqual({ outcome: "unchanged" });

@@ -128,6 +128,36 @@ test("explicit stop during handshake or reconnect cancels all future work", asyn
   }
 });
 
+test("send reaches only the current authenticated connection and reports false otherwise", async () => {
+  const f = gatewayWorld();
+  const old = f.sockets[0]!;
+  const voice = { op: 4, d: { guild_id: "1", channel_id: "2", self_mute: false, self_deaf: false } };
+  expect(f.presence.send(voice)).toBe(false);
+  old.hello();
+  expect(f.presence.send(voice)).toBe(false);
+  old.ready();
+  expect(f.presence.send(voice)).toBe(true);
+  expect(old.frames.at(-1)).toEqual(voice);
+  old.failSend = true;
+  expect(f.presence.send(voice)).toBe(false);
+  expect(old.closes).toEqual([4000]);
+  expect(f.logs.at(-1)).toBe("PRESENCE_RECONNECT discord reason=socket_error code=0 retry_in=5s");
+  expect(f.presence.send(voice)).toBe(false);
+  f.advance(5_000);
+  const resumed = f.sockets[1]!;
+  resumed.hello();
+  expect(f.presence.send(voice)).toBe(false);
+  resumed.receive({ op: 0, s: 4, t: "RESUMED", d: {} });
+  const sent = resumed.frames.length;
+  expect(f.presence.send(voice)).toBe(true);
+  expect(resumed.frames).toHaveLength(sent + 1);
+  expect(old.frames.filter((frame) => frame.op === 4)).toHaveLength(1);
+  f.presence.close();
+  expect(f.presence.send(voice)).toBe(false);
+  await f.presence.done;
+  expect(resumed.frames).toHaveLength(sent + 1);
+});
+
 test("a duplicate HELLO retires the existing heartbeat rather than leaking a second timer", async () => {
   const f = gatewayWorld();
   const old = f.sockets[0]!;

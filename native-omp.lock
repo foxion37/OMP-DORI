@@ -2,8 +2,8 @@
   "version": 1,
   "repository": "https://github.com/can1357/oh-my-pi.git",
   "commit": "c308970263ae13744ea15ab67302e3dac840e266",
-  "patchSha256": "17fdb4623061f5990de0117853e51318965ebad2c16281686923c1301897f49a",
-  "resultTree": "d7dcc8fb7cbafd530efca0e852ce25305e130f83",
+  "patchSha256": "0f8922d8fd63e46db60e5f30f381e2c0318e066f2f519398475a0343a2591f57",
+  "resultTree": "273e9405b41875d43c9cf7df6fcde9b711eacf80",
   "files": [
     {
       "path": "docs/context-files.md",
@@ -77,7 +77,7 @@
     },
     {
       "path": "packages/coding-agent/src/session/agent-session.ts",
-      "sha256": "b63bef1feb20d63da6c6617e180814d9ac17529165e685d74ff3637c8a932b59",
+      "sha256": "15fb2fc7a13fd27cab63592778f88ffa80037d786509dbade192d3dd0167dffd",
       "executable": false
     },
     {
@@ -108,6 +108,11 @@
     {
       "path": "packages/coding-agent/test/agent-session-context-file-reload.test.ts",
       "sha256": "8c911c7e82e90c38b2ff90b871082a2935738c6b697f415a4c5835c72fe105a3",
+      "executable": false
+    },
+    {
+      "path": "packages/coding-agent/test/agent-session-next-turn-ownership.test.ts",
+      "sha256": "f8b80fb1dbdda6bf6ba7ffa4f0e14cbdd9d2d95521103d529a5e2659b181b1f0",
       "executable": false
     },
     {

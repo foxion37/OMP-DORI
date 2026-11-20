@@ -35,6 +35,7 @@
     "activityPaths": [],
     "gitActivity": true
   },
+  "transcribeMaxBytes": 26214400,
   "heavySlots": 1,
   "heavyMaxLoad": 80,
   "deadPanePatterns": ["has stopped", "no suitable jobs"],

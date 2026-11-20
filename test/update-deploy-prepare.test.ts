@@ -10,8 +10,10 @@ import { git } from "./update-setup.ts";
 
 // The kernels whose process identity deployment can bind.
 const posix = test.skipIf(process.platform !== "linux" && process.platform !== "darwin");
+// POSIX-only: release preparation runs Git and installs through `/bin/sh -c 'umask 077; exec "$@"'`.
+const it = test.skipIf(process.platform === "win32");
 
-test("published clone provisions frozen dependencies privately and carries only the admitted opaque pin", async () => {
+it("published clone provisions frozen dependencies privately and carries only the admitted opaque pin", async () => {
   const f = preparationFixture();
   const candidateBefore = sourceManifest(f.candidate);
   await prepareRelease(f.config, f.input, f.record);
@@ -29,7 +31,7 @@ test("published clone provisions frozen dependencies privately and carries only 
   expect(sourceManifest(f.record.releasePath).hash).toBe(candidateBefore.hash);
 });
 
-test("actual published tree mismatch is held before operator source or state changes", async () => {
+it("actual published tree mismatch is held before operator source or state changes", async () => {
   const f = preparationFixture();
   f.put("src/app.ts", "export const release = 'moved';\n");
   git(f.remote, "add", "--", "src/app.ts");
@@ -40,7 +42,7 @@ test("actual published tree mismatch is held before operator source or state cha
   expect(readFileSync(join(f.home, ".dori/state/owner.json"), "utf8")).toContain('"cursor":17');
 });
 
-test("a Git tree containing excluded runtime data is rejected even when its admitted source hash matches", async () => {
+it("a Git tree containing excluded runtime data is rejected even when its admitted source hash matches", async () => {
   const f = preparationFixture();
   f.put("state/unpublished.txt", "synthetic runtime marker\n");
   git(f.remote, "add", "--", "state/unpublished.txt");
@@ -157,7 +159,9 @@ exec ${quote(process.execPath)} "$@"`,
   }
 });
 
-test.each(["tree", "admission"])("pre-stop %s violations remain terminal holds", async (mode) => {
+test.each(["tree", "admission"])("pre-stop %s violations remain terminal holds", assertTerminalHold, 20_000);
+
+async function assertTerminalHold(mode: string) {
   const f = preparationFixture();
   if (mode === "admission") writeFileSync(join(f.candidate, "auth.json"), '{"fixture":"excluded"}\n');
   const input = mode === "tree" ? { ...f.input, tree: "b".repeat(40) } : f.input;
@@ -173,4 +177,4 @@ test.each(["tree", "admission"])("pre-stop %s violations remain terminal holds",
   } finally {
     signals.mockRestore();
   }
-});
+}

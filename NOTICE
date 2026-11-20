@@ -1,48 +1,86 @@
-omp-dori - modified copy and attribution
+Cataly - modified-copy notice and source attribution
 
-Project: https://github.com/vntrevx/omp-dori
-Fork maintainer: vntrevx (https://github.com/vntrevx)
+Project: https://github.com/vntrevx/Cataly
+Maintainer: vntrevx (https://github.com/vntrevx)
 
-This fork combines messenger-facing ownership from dori-superagent, the
-oh-my-pi coding-agent runtime, and the outcome-driven workflow of omp-ulw.
-Maintenance and integration by this fork do not replace the original
-authors' credit or the license attached to each source origin.
+Cataly integrates messenger-facing ownership from dori-superagent, the native
+oh-my-pi coding-agent runtime, and the outcome-driven workflows of omp-ulw.
+The Cataly name identifies this maintained integration; it does not replace
+the original authors' credit or the license attached to each source.
 
-This is a modified copy of sisyphuslabs/dori-superagent, based on upstream
+Source provenance
+-----------------
+
+This is a modified copy of sisyphuslabs/dori-superagent, based on
 97d807b9037cb050a72129659cf6306d8055010d (2026-11-11 source snapshot).
-It incorporates the OMP-specific adaptations from omp-dori source
-75a1b28de8caddb6d30b2e3d72ef3dec09450b47 and additional OMP compatibility
-changes for sessions, goals, approvals, monitors, runtime adapters,
-configuration, packaging and documentation.
-This copy also integrates upstream 49fba4dc081c9238f01e617b2fd17f548438e624,
-preserving those local adaptations and the separately pinned omp-ulw source.
+It incorporates OMP-specific adaptations from omp-dori source
+75a1b28de8caddb6d30b2e3d72ef3dec09450b47, with further changes for sessions,
+goals, approvals, monitors, runtime adapters, configuration, packaging,
+and documentation.
 
-The upstream Sustainable Use License and original notices are preserved in
-LICENSE and the imported source. LICENSE permits own internal business use
-and personal/non-commercial use under its stated terms. This modified copy
-does not relabel current upstream code as MIT.
+It also integrates upstream 49fba4dc081c9238f01e617b2fd17f548438e624 while
+preserving the local adaptations and separately bound omp-ulw source.
 
-The pre-existing omp-dori material incorporated from the local source,
-including its extension and OMP integration changes, retains its original
-copyright and permission notice in LICENSE.omp-dori. Third-party components
-retain their original licenses.
+The dori-superagent-derived material retains Sustainable Use License 1.0
+and its notices in LICENSE. The pre-existing omp-dori material incorporated
+from the local source, including its extension and OMP integration changes,
+retains the MIT terms and YeonGyu Kim, betive37, and vntrevx notices in
+LICENSE.omp-dori. Third-party components keep their own licenses. This
+modified copy does not claim that upstream SUL material has become MIT.
 
-This source distribution includes modified-copy patch excerpts for oh-my-pi
-(https://github.com/can1357/oh-my-pi), based on
-c308970263ae13744ea15ab67302e3dac840e266 / 18.20.0, and omp-ulw
-(https://github.com/dbc-hbin/omp-ulw), based on
-b2159b77fe3acbf9a8c6482f80dc5d4069fda881. native-omp.lock/native-omp.patch
-and omp-ulw.overlay.lock/omp-ulw.patch bind those upstream bases, patch
-digests and resulting source identities. omp-ulw.lock retains its upstream
-repository/commit meaning. The repositories and gitlinks are not replaced
-by a vendored union or an external fork dependency.
+Bound upstream sources
+----------------------
 
-Original authors and upstream copyright/license notices remain applicable
-to those excerpts and fetched source. The default runtime reuses the
-official version-matched MIT-licensed @oh-my-pi/pi-natives addon; its
-compatibility stamp is not proof of a rebuilt binary or the source delta.
-No private policy, provider settings, credentials or QA workspace content
-is part of these source payloads.
+This distribution includes modified-copy patch excerpts for:
 
-Installation and runtime activation are separate operator actions. Installing
-this copy does not replace a running Dori or activate another harness.
+- oh-my-pi (https://github.com/can1357/oh-my-pi), based on
+  c308970263ae13744ea15ab67302e3dac840e266 / 18.20.0.
+- omp-ulw (https://github.com/dbc-hbin/omp-ulw), based on
+  6ec7ecd40b2b5667f37c9802999db1d12ebbc2ae.
+
+native-omp.lock/native-omp.patch and omp-ulw.overlay.lock/omp-ulw.patch bind
+those bases, patch digests, and resulting source identities. omp-ulw.lock
+retains its upstream repository/commit meaning. These are prepared source
+overlays, not a vendored union or an external fork dependency.
+
+Original authors' copyright and license notices continue to apply to the
+patch excerpts and fetched source. The default runtime uses the official,
+version-matched MIT-licensed @oh-my-pi/pi-natives addon. Its compatibility
+stamp does not establish a rebuilt binary or verify a source delta.
+
+Private policy, provider settings, credentials, and QA workspace content
+are not part of these source payloads. Installation and runtime activation
+are separate actions: installing Cataly does not replace a running agent
+or enable another harness, receiver, or service.
+
+Adapted Discord table renderer
+------------------------------
+
+skills/dori-mode/scripts/src/messenger/discord-markdown.ts is adapted from
+omp-superagent (https://github.com/dbc-hbin/omp-superagent),
+src/discord-markdown.ts at db3d74e4f37191dfbb74f8259563d1399c22f3b7.
+Changes preserve source escapes and indentation, bound display width before
+padding, reject ambiguous row/fence syntax, and make rendering opt-in.
+Its MIT terms apply to that adapted component, not to the SUL material above.
+
+MIT License
+
+Copyright (c) 2026 dbc-hbin
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

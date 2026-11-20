@@ -2,6 +2,7 @@ import { appendFileSync, copyFileSync, existsSync, rmSync, writeFileSync } from 
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import { KEY_RE, reservedKey, type Deps } from "./harness.ts";
+import { checkPriority } from "./lock-queue.ts";
 import { Refusal } from "./refusal.ts";
 import type { Item } from "./store-types.ts";
 
@@ -21,9 +22,7 @@ export function backlogAdd(
   if (!KEY_RE.test(id)) throw new Refusal(`item id must match ${KEY_RE} (it becomes the lane key)`);
   const reserved = reservedKey(id);
   if (reserved) throw new Refusal(reserved);
-  const priority = opts.priority ?? 5;
-  if (!Number.isInteger(priority) || priority < 1 || priority > 9)
-    throw new Refusal("--priority must be 1 (first) to 9 (last)");
+  const priority = checkPriority(opts.priority);
   if (!existsSync(briefFile)) throw new Refusal(`no brief file ${briefFile}`);
   const old = d.store.item(id);
   if (old && (old.status === "open" || old.status === "running"))

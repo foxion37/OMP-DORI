@@ -3,8 +3,7 @@ import { existsSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { main } from "../src/cli.ts";
 import { dutyTick } from "../src/duty.ts";
-import { send } from "../src/inbox.ts";
-import { flushInbox } from "../src/inbox.ts";
+import { flushInbox, send } from "../src/inbox.ts";
 import { INBOX_LOCK_STALE_MS } from "../src/store-types.ts";
 import { setup } from "./inbox-setup.ts";
 import { href } from "./fake.ts";
@@ -56,7 +55,15 @@ describe("one flush per pane (#108 3)", () => {
       { pid: 1, host: "other-host", at: s.w.clock - INBOX_LOCK_STALE_MS - 1 },
       { pid: exited.pid, host: hostname(), at: s.w.clock },
     ]) {
-      s.d.store.enqueue(href("w1:p2"), { at: s.w.clock, from: "cli", text: `m${stale.host === "other-host" ? 1 : 2}` });
+      await s.d.store.enqueue(
+        href("w1:p2"),
+        {
+          at: s.w.clock,
+          from: "cli",
+          text: `m${stale.host === "other-host" ? 1 : 2}`,
+        },
+        false,
+      );
       writeFileSync(lockPath(s), JSON.stringify(stale));
       expect(await flushInbox(s.d, href("w1:p2"))).toBe("delivered");
       expect(existsSync(lockPath(s))).toBe(false);
@@ -66,7 +73,7 @@ describe("one flush per pane (#108 3)", () => {
 
   test("a fresh lock on another host, or a live pid on this host however old its lock, is not taken over", async () => {
     const s = setup();
-    s.d.store.enqueue(href("w1:p2"), { at: s.w.clock, from: "cli", text: "wait" });
+    await s.d.store.enqueue(href("w1:p2"), { at: s.w.clock, from: "cli", text: "wait" }, false);
     for (const live of [
       { pid: 1, host: "other-host", at: s.w.clock },
       { pid: process.pid, host: hostname(), at: s.w.clock - 1000 },

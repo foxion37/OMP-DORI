@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { platform } from "../../../../src/platform/index.ts";
 import type { ForegroundProcess } from "../../../../src/runtime/types.ts";
 
 import { type DoriConfig, defaultConfig } from "../src/config.ts";
@@ -26,6 +27,7 @@ export type World = {
   panes: {
     pane_id: string;
     workspace_id: string;
+    tab_id?: string;
     agent?: string;
     agent_status?: string;
     title?: string;
@@ -39,6 +41,8 @@ export type World = {
   /** The extension reacts to accepted text by updating its current-session state. */
   onSendText?: (id: string, text: string) => void;
   procs?: { pid: number; ppid: number; cmd: string }[];
+  procStartTicks?: Record<number, string>;
+  bootId?: string;
   shells?: Record<string, number>;
   /** hc terminals by address, for lanes on the hc runtime. */
   terminals: Record<string, HcTerm>;
@@ -81,7 +85,10 @@ export const fakeRunner =
       w.onSendText?.(argv[3] ?? "", argv[4] ?? "");
       return ok();
     }
-    if (cmd === "ps" && a1 === "-A") return ok((w.procs ?? []).map((p) => `${p.pid} ${p.ppid} ${p.cmd}`).join("\n"));
+    if (cmd === "ps" && a1 === "-A")
+      return ok(
+        (w.procs ?? []).map((p) => (argv.includes("pid=") ? String(p.pid) : `${p.pid} ${p.ppid} ${p.cmd}`)).join("\n"),
+      );
     if (cmd === "ps" && argv.includes("lstart=")) return ok("Thu Jan  1 12:00:00 2026 GMT");
     if (cmd === "herdr" && a1 === "pane" && a2 === "list") return ok(JSON.stringify({ result: { panes: w.panes } }));
     if (cmd === "herdr" && a1 === "pane" && a2 === "get") {
@@ -162,7 +169,29 @@ export const depsFor = (w: World, clock: Clock, stateDir: string, patch: Partial
     runtime: "herdr",
     ...patch,
   };
-  return { run: fakeRunner(w), clock, registry: new Registry(stateDir), config, exists: () => true, env: {} };
+  return {
+    run: fakeRunner(w),
+    clock,
+    registry: new Registry(stateDir),
+    config,
+    exists: () => true,
+    env: {},
+    platform: {
+      ...platform,
+      procStat(pid) {
+        const process = w.procs?.find((entry) => entry.pid === pid);
+        if (!process) throw Object.assign(new Error(`process ${pid} is absent`), { code: "ENOENT" });
+        return {
+          zombie: false,
+          ppid: process.ppid,
+          pgid: pid,
+          tpgid: pid,
+          startTicks: w.procStartTicks?.[pid] ?? String(pid),
+        };
+      },
+      bootId: () => w.bootId ?? "fixture-boot",
+    },
+  };
 };
 
 /** An OMP agent under a herdr shell; hc fixtures may instead place this pid at their terminal root. */

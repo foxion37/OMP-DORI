@@ -10,14 +10,12 @@ export const runHarness = async (argv: readonly string[]): Promise<number> => {
   try {
     return await main(argv, deps);
   } catch (error) {
-    if (
-      !(
-        error instanceof Refusal ||
-        error instanceof ConfigError ||
-        error instanceof RuntimeConfigError ||
-        error instanceof RuntimeChoiceError
-      )
-    )
+    if (!(
+      error instanceof Refusal ||
+      error instanceof ConfigError ||
+      error instanceof RuntimeConfigError ||
+      error instanceof RuntimeChoiceError
+    ))
       throw error;
     console.error(error.message);
     return 2;

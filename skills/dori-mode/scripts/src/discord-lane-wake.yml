@@ -1,0 +1,17 @@
+# Applied only to an automatic Discord wake; never copied into user settings.
+retry:
+  enabled: false
+  modelFallback: false
+  fallbackRevertPolicy: never
+  usageAwareFallback: true
+  usageReservePolicy: fail-closed
+  waitForUsageReset: false
+contextPromotion:
+  enabled: false
+codexResets:
+  autoRedeem5h: "no"
+  autoRedeemWeekly: "no"
+claudeResets:
+  autoRedeem5h: "no"
+  autoRedeemWeekly: "no"
+  autoRedeemFable: "no"

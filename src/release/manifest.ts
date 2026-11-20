@@ -1,11 +1,15 @@
 import { hasControl, object } from "../update/config.ts";
 import { digest } from "../update/source.ts";
 import type { SourceEntry, SourceManifest } from "../update/types.ts";
-import type { ReleaseManifest } from "./types.ts";
+import type { ReleaseManifest, ReleaseProfile } from "./types.ts";
 import { isReleaseVersion } from "./version.ts";
 
 const HASH = /^[a-f0-9]{64}$/;
 const COMMIT = /^[a-f0-9]{40}$/;
+const PROFILES: readonly ReleaseProfile[] = [
+  { platform: "linux", arch: "x64", runtime: "herdr" },
+  { platform: "darwin", arch: "arm64", runtime: "hc" },
+];
 const PRIVATE: Readonly<Record<string, true>> = {
   ".git": true,
   node_modules: true,
@@ -202,4 +206,38 @@ export function validateReleaseManifest(value: unknown): ReleaseManifest {
     requirements: supported,
     ompUlw: { repository: "https://github.com/dbc-hbin/omp-ulw.git", commit: ompUlw["commit"] },
   };
+}
+
+export function supportsReleaseProfile(
+  manifest: ReleaseManifest,
+  profile: { readonly platform: string; readonly arch: string; readonly runtime: string },
+  metadata?: Uint8Array,
+): boolean {
+  const source = manifest.source.files.find((entry) => entry.path === "release-capabilities.json");
+  if (!source) {
+    if (metadata !== undefined) throw new Error("Unexpected release capabilities metadata");
+    return profile.platform === "linux" && profile.arch === "x64" && profile.runtime === "herdr";
+  }
+  if (metadata === undefined || digest(metadata) !== source.sha256) {
+    throw new Error("Release capabilities metadata missing or SHA256 differs");
+  }
+  const input: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(metadata));
+  const capabilities = record(input, ["version", "profiles"], "capabilities");
+  if (capabilities["version"] !== 1 || !Array.isArray(capabilities["profiles"]) || !capabilities["profiles"].length)
+    throw new Error("Invalid release capabilities");
+  const profiles: ReleaseProfile[] = [];
+  for (const value of capabilities["profiles"]) {
+    const entry = record(value, ["platform", "arch", "runtime"], "capability");
+    const candidate = PROFILES.find(
+      (item) => item.platform === entry["platform"] && item.arch === entry["arch"] && item.runtime === entry["runtime"],
+    );
+    if (!candidate || profiles.includes(candidate)) throw new Error("Invalid or duplicate release capability");
+    profiles.push(candidate);
+  }
+  return profiles.some(
+    (candidate) =>
+      candidate.platform === profile.platform &&
+      candidate.arch === profile.arch &&
+      candidate.runtime === profile.runtime,
+  );
 }

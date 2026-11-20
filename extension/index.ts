@@ -11,8 +11,10 @@
  *   approvals of the Dori/lane session running in HERDR_PANE_ID or HC_TERMINAL_ID.
  * - Lanes without a goal get omp's `goal` tool so the agent can create its goal from the lane brief.
  * - The Dori session gets the `monitor` tool (monitor.ts).
+ * - Root Dori/lane agents get compact role guidance on each turn; children do not.
  * - A lane's main agent on GPT-6.1 Sol is told to carry lane bookkeeping along with real work (lane-bookkeeping.ts).
  */
+import { spawnSync } from "node:child_process";
 import { mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadConfig } from "../skills/dori-mode/scripts/src/config";
@@ -25,20 +27,31 @@ import {
   readPaneState,
   writePaneState,
 } from "../skills/dori-mode/scripts/src/lane-state";
+import type { MonitorSpec } from "../src/update/deployment-types.ts";
 import { bootstrapMonitors, MONITOR_BOOTSTRAP_FLAG, recordedIntake } from "./bootstrap.ts";
 import { RuntimeHealthWriter } from "./deployment-health.ts";
+import { DiscordAsk, routeFor } from "./discord-ask.ts";
+import { type AskLane, automaticDiscordAskRoute, bindAskLane } from "./discord-ask-auto.ts";
+import { DiscordLane } from "./discord-lane.ts";
 import { type PromptModel, withLaneBookkeeping } from "./lane-bookkeeping.ts";
 import { MONITOR_DESCRIPTION, Monitors } from "./monitor";
+import { ROLE_INVARIANTS } from "./role-invariants.ts";
+import { bumpAttempts, MAX_CONTINUATIONS, openOwes, recordOwes, reminder } from "../skills/dori-mode/scripts/src/owes";
 
 interface SessionEntry {
+  id?: string;
   type: string;
   customType?: string;
   data?: unknown;
   mode?: string;
+  content?: unknown;
 }
 export interface DoriContext {
   cwd: string;
+  mode: string;
   abort(): void;
+  isIdle?(): boolean;
+  hasPendingMessages?(): boolean;
   agent: { kind: "main" | "sub"; id: string; parentId?: string };
   model?: PromptModel;
   /** How full the session's context is; absent when omp cannot report it. */
@@ -93,7 +106,10 @@ export interface DoriApi {
   getFlag(name: string): boolean | string | undefined;
   registerCommand(name: string, options: CommandOptions): void;
   registerTool<Params>(tool: ToolDefinition<Params>): void;
-  on(event: "goal_updated", handler: (event: { goal: Goal | null }, ctx: DoriContext) => unknown): void;
+  on(
+    event: "goal_updated",
+    handler: (event: { goal: Goal | null; state?: { enabled?: boolean } }, ctx: DoriContext) => unknown,
+  ): void;
   on(
     event: "tool_approval_requested" | "tool_approval_resolved",
     handler: (event: { toolCallId: string }, ctx: DoriContext) => unknown,
@@ -101,9 +117,10 @@ export interface DoriApi {
   on(event: string, handler: Handler): void;
   appendEntry(customType: string, data?: unknown): void;
   sendMessage(
-    message: { customType: string; content: string; display: boolean },
+    message: { customType: string; content: string; display: boolean; details?: unknown },
     options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" | "aside" },
   ): void;
+  sendUserMessage(content: string, options?: { deliverAs?: "aside" }): Promise<void>;
   getActiveTools(): string[];
   setActiveTools(toolNames: string[]): Promise<void>;
   /** omp's session name, shown in the session list and stored in the session file. */
@@ -114,6 +131,12 @@ const ROLE_FLAG = "dori-role";
 const ROLE_ENTRY = "omp-dori:role";
 const MONITOR_ENTRY = "omp-dori:monitor";
 const ONLY_IN_ROLE = "works only in Dori sessions (omp --dori-role dori|lane)";
+// A path the managed overlay owns. A POSIX path is cut at `/` only; a backslash is an ordinary name character there,
+// so only Windows reads it as a separator.
+const MANAGED_OVERLAY =
+  process.platform === "win32"
+    ? /[\\/](?:consumer-dependencies[\\/]omp-ulw-[a-f0-9]{40}-[a-f0-9]{64}|\.cache[\\/]omp-dori[\\/]omp-ulw-[a-f0-9]{64})(?:[\\/]index\.ts)?$/
+    : /\/(?:consumer-dependencies\/omp-ulw-[a-f0-9]{40}-[a-f0-9]{64}|\.cache\/omp-dori\/omp-ulw-[a-f0-9]{64})(?:\/index\.ts)?$/;
 // budget-limited halts the goal until a person raises the budget; unknown statuses must never read as "none",
 // which `dori pause` treats as nothing-to-pause.
 const GOAL_STATUS: Record<string, GoalStatus> = {
@@ -151,22 +174,18 @@ const isGoal = (value: unknown): value is Goal =>
   typeof value.objective === "string";
 
 /** omp persists goals in `mode_change.data.goal` ("goal" / "goal_paused" carry the goal; any other mode ends it). */
-const recordedGoal = (branch: readonly SessionEntry[]): PaneState["goal"] => {
-  let goal: PaneState["goal"] = { status: "none" };
-  for (const entry of branch) {
-    if (entry.type !== "mode_change") continue;
-    const data =
-      typeof entry.data === "object" && entry.data !== null && "goal" in entry.data ? entry.data.goal : undefined;
-    goal = (entry.mode === "goal" || entry.mode === "goal_paused") && isGoal(data) ? goalOf(data) : { status: "none" };
-  }
-  return goal;
+const modeGoal = (entry: SessionEntry | undefined): PaneState["goal"] => {
+  if (entry?.mode !== "goal" && entry?.mode !== "goal_paused") return { status: "none" };
+  const data =
+    typeof entry.data === "object" && entry.data !== null && "goal" in entry.data ? entry.data.goal : undefined;
+  return isGoal(data) ? goalOf(data) : { status: "none" };
 };
 
-type MonitorSpec = {
-  readonly name: string;
-  readonly argv: readonly string[];
-  readonly filter: string;
-  readonly cwd: string;
+type StartupGoalPause = {
+  readonly session: string;
+  readonly activeEntry: string | undefined;
+  readonly pausedEntry?: string;
+  used?: boolean;
 };
 
 /**
@@ -184,7 +203,14 @@ const recordedMonitors = (branch: readonly SessionEntry[]): Map<string, MonitorS
       entry.data === null
     )
       continue;
-    const data = entry.data as { op?: unknown; name?: unknown; argv?: unknown; filter?: unknown; cwd?: unknown };
+    const data = entry.data as {
+      op?: unknown;
+      name?: unknown;
+      argv?: unknown;
+      filter?: unknown;
+      cwd?: unknown;
+      restart?: unknown;
+    };
     if (typeof data.name !== "string") continue;
     if (data.op === "stop") specs.delete(data.name);
     else if (
@@ -193,7 +219,13 @@ const recordedMonitors = (branch: readonly SessionEntry[]): Map<string, MonitorS
       typeof data.filter === "string" &&
       typeof data.cwd === "string"
     ) {
-      specs.set(data.name, { name: data.name, argv: data.argv.map(String), filter: data.filter, cwd: data.cwd });
+      specs.set(data.name, {
+        name: data.name,
+        argv: data.argv.map(String),
+        filter: data.filter,
+        cwd: data.cwd,
+        ...(data.restart === "on-failure" ? { restart: data.restart } : {}),
+      });
     }
   }
   return specs;
@@ -210,6 +242,10 @@ export default async function ompDori(pi: DoriApi): Promise<void> {
     description: "Private session-bound monitor bootstrap for an explicit managed legacy handoff",
     type: "string",
   });
+  pi.registerFlag("dori-lane-receiver", {
+    description: "Take over an existing separately scoped Discord receiver for this lane",
+    type: "boolean",
+  });
 
   let role: DoriRole | undefined;
   let stateDir: string | undefined;
@@ -217,23 +253,46 @@ export default async function ompDori(pi: DoriApi): Promise<void> {
   let requiredLoadError: SourceBundleError | undefined;
   let warned = false;
   let lifecycleRegistered = false;
-  let session: { id: string; startedAt: string } | undefined;
+  /** The session whose monitor bootstrap was rejected: it stays role-less until a session_start bootstraps it again. */
+  let rejectedBootstrap: string | undefined;
+  let session:
+    | {
+        id: string;
+        startedAt: string;
+        monitorSpecs?: readonly MonitorSpec[];
+        intake?: ReturnType<typeof recordedIntake>;
+      }
+    | undefined;
   let goal: PaneState["goal"] = { status: "none" };
+  let startupPause: StartupGoalPause | undefined;
   let agentStatus: "idle" | "working" = "idle";
   let goalToolAdded = false;
   let paneWritten: string | undefined;
   let usageWritten = "";
   let namedSession: string | undefined;
   const approvals = new Set<string>();
+  const discordAsk = new DiscordAsk();
+  const discordLane = new DiscordLane();
+  let askLane: AskLane | undefined;
+  let ownsDiscordReceiver = false;
   let managedRestorePending = process.env.DORI_MANAGED_STARTUP === "1";
   const monitors = new Monitors(
-    (content) =>
-      pi.sendMessage({ customType: "dori-monitor", content, display: true }, { triggerTurn: true, deliverAs: "aside" }),
+    async (content, delivery) => {
+      const root = stateDir;
+      if (!delivery.isCurrent()) return;
+      // Monitor delivery is an admission path in its own right; its message must follow committed persistence.
+      if (role === "dori" && root !== undefined) await recordOwes(root, content, Date.now(), delivery.signal);
+      if (delivery.isCurrent())
+        pi.sendMessage(
+          { customType: "dori-monitor", content, display: true },
+          { triggerTurn: true, deliverAs: "aside" },
+        );
+    },
     () => (role === "dori" ? session?.id : undefined),
   );
   const runtimeHealth = new RuntimeHealthWriter(monitors);
 
-  // Only the file this process wrote: another process may have taken the pane since.
+  // Only remove a live record this process wrote. Inactive pointers are handled separately on plain TUI takeover.
   const removePane = (): void => {
     runtimeHealth.stop();
     if (
@@ -247,11 +306,30 @@ export default async function ompDori(pi: DoriApi): Promise<void> {
     paneWritten = undefined;
   };
 
+  // Preserve session identity for a later resume without attesting a live pane owner.
+  const retirePane = (): void => {
+    runtimeHealth.stop();
+    if (paneWritten === undefined || stateDir === undefined) return;
+    const state = readPaneState(stateDir, paneWritten);
+    if (state !== null && state.pid === process.pid) {
+      writePaneState(stateDir, {
+        ...state,
+        pid: 0,
+        agentStatus: "idle",
+        approvalPending: false,
+        updatedAt: new Date().toISOString(),
+      });
+      if (process.env.HC_TERMINAL_ID) process.stdout.write("\x1b]7501;state=unknown:app=omp\x1b\\");
+    }
+    paneWritten = undefined;
+  };
+
   /**
    * Only the process that owns the pane reports it. `HERDR_PANE_ID` and `HC_TERMINAL_ID` are inherited by every
    * child, so a nested `omp` run (a `-p` check, a subagent's own session) would otherwise take the pane record of
    * the live session above it and delete that record on its own shutdown — which reads to the watchdog as a dead
-   * lead, so it restarts the lead every tick. An incumbent that is still alive keeps its record.
+   * lead, so it restarts the lead every tick. An incumbent that is still alive, and not a newer process reusing its
+   * pid, keeps its record.
    */
   const paneHeldByAnother = (paneId: string): boolean => {
     if (stateDir === undefined) return false;
@@ -260,11 +338,20 @@ export default async function ompDori(pi: DoriApi): Promise<void> {
       return false;
     try {
       process.kill(existing.pid, 0);
-      return true;
     } catch (error) {
       // EPERM still identifies a live owner. Dead processes and invalid pid arguments do not own this pane.
-      return (error as NodeJS.ErrnoException).code === "EPERM";
+      if ((error as NodeJS.ErrnoException).code !== "EPERM") return false;
     }
+    // A start observed later than the session cannot own it. lstart resolves seconds, not same-second PID reuse.
+    // An unreadable start time keeps the incumbent's protection.
+    const ps = spawnSync("ps", ["-o", "lstart=", "-p", String(existing.pid)], {
+      encoding: "utf8",
+      // lstart has no offset; its ps producer and Date.parse observer must use the same zone.
+      env: { ...process.env, LC_ALL: "C", TZ: Intl.DateTimeFormat().resolvedOptions().timeZone },
+      timeout: 1_000,
+    });
+    const started = Date.parse(ps.stdout?.trim() ?? "");
+    return !(ps.status === 0 && Number.isFinite(started) && started > Date.parse(existing.startedAt));
   };
 
   // What the lane monitor needs: the model and how full its context is. Percent is kept to one decimal.
@@ -289,20 +376,37 @@ export default async function ompDori(pi: DoriApi): Promise<void> {
   const savePane = (ctx: DoriContext): void => {
     const paneId = process.env.HC_TERMINAL_ID || process.env.HERDR_PANE_ID;
     if (!paneId || stateDir === undefined || !session) return;
-    // The pane now runs a session without a role: a leftover file would point `dori` at the previous session.
+    // Only an interactive session taking over the pane clears an inactive resume pointer. Print/RPC children
+    // inherit pane ids too, but do not own the terminal. A record another live process owns stays untouched.
     if (!role) {
       removePane();
+      if (ctx.mode === "tui" && !paneHeldByAnother(paneId)) rmSync(paneStatePath(stateDir, paneId), { force: true });
       return;
     }
     if (paneHeldByAnother(paneId)) return;
     const sessionFile = ctx.sessionManager.getSessionFile();
     const usage = usageOf(ctx);
     usageWritten = JSON.stringify(usage);
+    let discordReceiver: PaneState["discordLaneReceiver"];
+    if (role === "lane" && ownsDiscordReceiver) {
+      try {
+        const route = routeFor(stateDir, session.id);
+        if (route && route.receiverStateDir !== stateDir)
+          discordReceiver = { channel: route.channel, stateDir: route.receiverStateDir };
+      } catch {
+        // Invalid explicit routes do not advertise ownership or start intake.
+      }
+    }
     writePaneState(stateDir, {
       paneId,
       role,
       sessionId: session.id,
       ...(sessionFile ? { sessionFile } : {}),
+      ...(role === "lane" && askLane ? { discordLaneKey: askLane.key } : {}),
+      ...(role === "lane" && ctx.mode === "tui" && !requiredLoadError && !ownsDiscordReceiver
+        ? { discordLaneInbox: true }
+        : {}),
+      ...(discordReceiver ? { discordLaneReceiver: discordReceiver } : {}),
       cwd: ctx.cwd,
       pid: process.pid,
       startedAt: session.startedAt,
@@ -330,9 +434,12 @@ export default async function ompDori(pi: DoriApi): Promise<void> {
     }
   };
 
-  // Boot reads this desired-state mirror instead of opening private session transcripts.
+  // Cache desired intent for /new; boot reads the same mirror without opening private session transcripts.
   const saveMonitorSpecs = (specs: ReadonlyMap<string, MonitorSpec>, branch: readonly SessionEntry[]): void => {
-    if (!session || !stateDir) return;
+    if (!session) return;
+    session.monitorSpecs = [...specs.values()];
+    session.intake = recordedIntake(branch);
+    if (!stateDir) return;
     const dir = join(stateDir, "monitors");
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     const path = join(dir, `${encodeURIComponent(session.id)}.json`);
@@ -343,8 +450,8 @@ export default async function ompDori(pi: DoriApi): Promise<void> {
         {
           version: 1,
           sessionId: session.id,
-          monitors: [...specs.values()],
-          intake: recordedIntake(branch),
+          monitors: session.monitorSpecs,
+          intake: session.intake,
         },
         null,
         2,
@@ -391,9 +498,23 @@ export default async function ompDori(pi: DoriApi): Promise<void> {
       if (!role || ctx.agent.kind !== "main") return;
       if (JSON.stringify(usageOf(ctx)) !== usageWritten) savePane(ctx);
     });
+    // The awaited preflight runs before the built-in opens its form; execution events can arrive later.
+    pi.on("tool_call", (event, ctx) => {
+      const id = ctx.sessionManager.getSessionId();
+      const root = stateDir;
+      const currentRole = role;
+      if (root && currentRole && ctx.agent.kind === "main" && id === session?.id && approvals.size === 0)
+        return discordAsk.arm(event, ctx.ui, root, id, async () => {
+          const route = await automaticDiscordAskRoute(root, currentRole, id, askLane);
+          return approvals.size === 0 ? route : undefined;
+        });
+    });
+    pi.on("tool_execution_end", (event) => discordAsk.finish(event));
     pi.on("session_shutdown", () => {
+      discordLane.stop();
+      discordAsk.clear();
       monitors.stopAll();
-      removePane();
+      retirePane();
     });
   };
 
@@ -411,17 +532,48 @@ export default async function ompDori(pi: DoriApi): Promise<void> {
 
   const syncMain = async (ctx: DoriContext, branch: readonly SessionEntry[], bootstrap = false): Promise<void> => {
     const sessionId = ctx.sessionManager.getSessionId();
+    const initialStart = bootstrap && session === undefined;
+    startupPause = undefined;
     // Monitors belong to the Dori session that started them; their lines must not wake whatever session comes next.
+    discordLane.stop();
+    if (session?.id !== sessionId || !role) discordAsk.clear();
     if (session?.id !== sessionId || role !== "dori") monitors.stopAll();
     if (session?.id !== sessionId) {
       session = { id: sessionId, startedAt: new Date().toISOString() };
       approvals.clear();
       agentStatus = "idle";
     }
-    if (bootstrap && role === "dori" && bootstrapMonitors(pi, branch, sessionId, recordedMonitors(branch)))
-      branch = ctx.sessionManager.getBranch();
-    goal = recordedGoal(branch);
     if (role && !lifecycleRegistered) registerLifecycle();
+    if (bootstrap && role === "dori") {
+      try {
+        if (bootstrapMonitors(pi, branch, sessionId, recordedMonitors(branch))) branch = ctx.sessionManager.getBranch();
+        rejectedBootstrap = undefined;
+      } catch (error) {
+        // A rejected bootstrap leaves no role session behind: no handler may publish ready or approval-free state, and
+        // a later branch or tree move in this session does not restore the role from its record.
+        rejectedBootstrap = sessionId;
+        role = undefined;
+        agentRoles.delete(ctx.agent.id);
+        monitors.stopAll();
+        removePane();
+        throw error;
+      }
+    }
+    const mode = branch.findLast((entry) => entry.type === "mode_change");
+    goal = modeGoal(mode);
+    if (
+      initialStart &&
+      role === "lane" &&
+      ctx.mode === "tui" &&
+      process.env.DORI_DISCORD_WAKE_SESSION === sessionId &&
+      goal.status === "active"
+    ) {
+      // A cold TUI emits session_start before it reconciles the goal and appends its own PAUSE.
+      startupPause = {
+        session: sessionId,
+        activeEntry: process.env.DORI_DISCORD_WAKE_GOAL === "active" ? mode?.id : undefined,
+      };
+    }
     if (role && loadError && !warned) {
       warned = true;
       ctx.ui.notify(
@@ -432,6 +584,21 @@ export default async function ompDori(pi: DoriApi): Promise<void> {
     await syncTools();
     savePane(ctx);
     if (role === "lane" && ctx.agent.kind === "main") await nameSession(ctx);
+    if (role === "lane" && stateDir && !requiredLoadError)
+      discordLane.start(pi, stateDir, ctx, askLane, ownsDiscordReceiver, {
+        idle: () => agentStatus === "idle" && approvals.size === 0,
+        goalAllows: (optedIn, claimed) => {
+          if (startupPause && startupPause.pausedEntry === undefined) return false;
+          if (goal.status === "blocked") return false;
+          if (goal.status !== "paused") return true;
+          if (!optedIn || !startupPause || (startupPause.used && !claimed)) return false;
+          const mode = ctx.sessionManager.getBranch().findLast((entry) => entry.type === "mode_change");
+          return mode?.id === startupPause.pausedEntry;
+        },
+        consumePause: () => {
+          if (startupPause) startupPause.used = true;
+        },
+      });
     if (role === "dori") {
       restoreMonitors(ctx, branch, managedRestorePending);
       managedRestorePending = false;
@@ -443,23 +610,24 @@ export default async function ompDori(pi: DoriApi): Promise<void> {
   const restoreMonitors = (ctx: DoriContext, branch: readonly SessionEntry[], managedStartup = false): void => {
     if (!session) return;
     const wanted = recordedMonitors(branch);
-    for (const running of monitors.list()) {
+    for (const running of monitors.specs()) {
       const spec = wanted.get(running.name);
       if (
         !spec ||
         JSON.stringify(spec.argv) !== JSON.stringify(running.argv) ||
         new RegExp(spec.filter).source !== running.filter ||
-        spec.cwd !== running.cwd
+        spec.cwd !== running.cwd ||
+        spec.restart !== running.restart
       )
         monitors.stop(running.name);
     }
-    const running = new Set(monitors.list().map((m) => m.name));
+    const running = new Set(monitors.specs().map((m) => m.name));
     const restored: string[] = [];
     const failed: string[] = [];
     for (const spec of wanted.values()) {
       if (running.has(spec.name)) continue;
       try {
-        monitors.start(spec.name, spec.argv, spec.filter, spec.cwd, session.id);
+        monitors.start(spec.name, spec.argv, spec.filter, spec.cwd, session.id, spec.restart);
         restored.push(spec.name);
       } catch (error) {
         failed.push(`${spec.name} (${errorText(error)})`);
@@ -481,51 +649,178 @@ export default async function ompDori(pi: DoriApi): Promise<void> {
 
   // Registered before omp-ulw so its restore handlers see this event's role.
   for (const eventName of ["session_start", "session_switch", "session_branch", "session_tree"] as const) {
-    pi.on(eventName, async (_event, ctx) => {
+    pi.on(eventName, async (event, ctx) => {
+      if (eventName !== "session_start" && ctx.agent.kind === "main") discordAsk.clear();
       const branch = ctx.sessionManager.getBranch();
+      let flaggedRole = false;
       if (ctx.agent.kind === "sub") {
         role = ctx.agent.parentId === undefined ? undefined : agentRoles.get(ctx.agent.parentId);
       } else {
-        role = recordedRole(branch);
+        const recorded = recordedRole(branch);
+        // `/new` emits `session_switch` with `reason: "new"`; its empty branch has no role entry to read. Adopting
+        // that emptiness would strip `monitor`, stop the monitors that answer the messenger, and drop the pane record
+        // for the rest of the process lifetime, so the process's own role carries over instead.
+        const carried =
+          eventName === "session_switch" &&
+          typeof event === "object" &&
+          event !== null &&
+          "reason" in event &&
+          event.reason === "new";
+        role = recorded ?? (carried ? role : undefined);
         const flagged = pi.getFlag(ROLE_FLAG);
-        if (eventName === "session_start" && role === undefined && flagged !== undefined) {
+        if (role === undefined && eventName === "session_start" && flagged !== undefined) {
           role = parseRole(flagged);
-          if (role) pi.appendEntry(ROLE_ENTRY, role);
+          if (role) flaggedRole = true;
           else ctx.ui.notify(`omp-dori: --${ROLE_FLAG} must be "dori" or "lane", got "${String(flagged)}"`, "error");
+        }
+        if (eventName !== "session_start" && rejectedBootstrap === ctx.sessionManager.getSessionId()) role = undefined;
+        // Re-record the role and desired monitor starts: an exited child is not a recorded stop, and the fresh
+        // branch otherwise loses the intent that `syncMain` uses to restore it.
+        if (carried && role && recorded === undefined) pi.appendEntry(ROLE_ENTRY, role);
+        askLane =
+          role === "lane"
+            ? bindAskLane(
+                branch,
+                ctx.sessionManager.getSessionId(),
+                flaggedRole ? process.env["CATALY_ASK_LAUNCHED_LANE"] : undefined,
+                (kind, binding) => pi.appendEntry(kind, binding),
+              )
+            : undefined;
+        const id = ctx.sessionManager.getSessionId();
+        ownsDiscordReceiver =
+          role === "lane" &&
+          branch.some(
+            (entry) =>
+              entry.type === "custom" && entry.customType === "omp-dori:discord-lane-receiver" && entry.data === id,
+          );
+        if (
+          role === "lane" &&
+          !ownsDiscordReceiver &&
+          eventName === "session_start" &&
+          pi.getFlag("dori-lane-receiver") === true
+        ) {
+          pi.appendEntry("omp-dori:discord-lane-receiver", id);
+          ownsDiscordReceiver = true;
+        }
+        if (carried && role === "dori" && recorded === undefined) {
+          for (const spec of session?.monitorSpecs ?? [])
+            pi.appendEntry(MONITOR_ENTRY, {
+              op: "start",
+              name: spec.name,
+              argv: spec.argv,
+              filter: spec.filter,
+              cwd: spec.cwd,
+              ...(spec.restart ? { restart: spec.restart } : {}),
+            });
+          if (session?.intake) pi.appendEntry("omp-dori:intake", session.intake);
         }
       }
       if (role) agentRoles.set(ctx.agent.id, role);
       else agentRoles.delete(ctx.agent.id);
-      if (ctx.agent.kind === "main") await syncMain(ctx, branch, eventName === "session_start");
+      try {
+        // Opening an OMP transcript is read-only. This appends before publishing the pane so the resumed
+        // foreground must actually take the native session lease; a conflicting writer will force a sibling.
+        if (
+          eventName === "session_start" &&
+          ctx.agent.kind === "main" &&
+          ctx.mode === "tui" &&
+          role === "lane" &&
+          !requiredLoadError &&
+          process.env["DORI_DISCORD_WAKE_SESSION"] === ctx.sessionManager.getSessionId()
+        )
+          pi.appendEntry(ROLE_ENTRY, role);
+        if (ctx.agent.kind === "main")
+          await syncMain(ctx, ctx.sessionManager.getBranch(), eventName === "session_start");
+        else {
+          // Explicit native tool selection can activate a defaultInactive manager tool.
+          const active = pi.getActiveTools();
+          if (active.includes("monitor")) await pi.setActiveTools(active.filter((name) => name !== "monitor"));
+        }
+      } finally {
+        // A rejected bootstrap has cleared the role, so it is not recorded; any other failure keeps the role this
+        // process runs with, and its record, as a later resume without the flag must restore it.
+        if (flaggedRole && role) pi.appendEntry(ROLE_ENTRY, role);
+      }
     });
   }
 
   pi.on("goal_updated", (event, ctx) => {
     if (ctx.agent.kind !== "main" || !role) return;
-    goal = goalOf(event.goal);
+    const next = goalOf(event.goal);
+    const startup = startupPause;
+    startupPause = undefined;
+    if (
+      startup?.activeEntry !== undefined &&
+      startup.pausedEntry === undefined &&
+      startup.session === ctx.sessionManager.getSessionId() &&
+      goal.status === "active" &&
+      next.status === "paused" &&
+      event.state?.enabled === false &&
+      next.objective === goal.objective
+    ) {
+      const modes = ctx.sessionManager.getBranch().filter((entry) => entry.type === "mode_change");
+      const pause = modes.at(-1);
+      if (
+        pause?.id !== undefined &&
+        pause.mode === "goal_paused" &&
+        modeGoal(pause).status === "paused" &&
+        modeGoal(pause).objective === goal.objective &&
+        modes.at(-2)?.id === startup.activeEntry
+      ) {
+        startupPause = { ...startup, pausedEntry: pause.id };
+      }
+    }
+    goal = next;
     savePane(ctx);
   });
 
   pi.on("agent_start", (_event, ctx) => {
     if (ctx.agent.kind !== "main" || !role) return;
+    if (role === "lane") {
+      if (startupPause && !startupPause.used) startupPause = undefined;
+      discordLane.agentStart?.(ctx.sessionManager.getSessionId());
+    }
     agentStatus = "working";
     savePane(ctx);
   });
-  pi.on("agent_end", (_event, ctx) => {
+  pi.on("agent_end", (event, ctx) => {
     if (ctx.agent.kind !== "main" || !role) return;
     agentStatus = "idle";
     savePane(ctx);
+    if (role === "lane") discordLane.agentEnd?.(ctx.sessionManager.getSessionId(), event);
+  });
+
+  /**
+   * Recent Discord obligations request bounded continuations until both send and exact-message mark exist.
+   * MAX_CONTINUATIONS limits the reminder loop; lanes and subagents never receive this gate.
+   */
+  pi.on("session_stop", (_event, ctx) => {
+    if (role !== "dori" || ctx.agent.kind !== "main" || stateDir === undefined) return;
+    const owes = openOwes(stateDir, Date.now());
+    if (owes.length === 0) return;
+    const attempts = bumpAttempts(
+      stateDir,
+      owes.map((owe) => owe.id),
+    );
+    const live = owes.filter((owe) => (attempts[owe.id] ?? 0) <= MAX_CONTINUATIONS);
+    if (live.length === 0) return;
+    return { continue: true, additionalContext: reminder(live) };
   });
 
   // OMP chains prompt replacements in extension/handler order; append to the prompt this handler receives.
-  pi.on("before_agent_start", (event, ctx) => {
+  pi.on("before_agent_start", async (event, ctx) => {
     if (role && requiredLoadError) {
       ctx.abort();
       throw requiredLoadError;
     }
-    if (role !== "lane" || ctx.agent.kind !== "main" || typeof event !== "object" || event === null) return;
-    const systemPrompt = "systemPrompt" in event ? withLaneBookkeeping(event.systemPrompt, ctx.model) : undefined;
-    return systemPrompt && { systemPrompt };
+    if (!role || ctx.agent.kind !== "main" || typeof event !== "object" || event === null) return;
+    if (role === "lane") await discordLane.beforeAgentStart?.(event, ctx);
+    const original = "systemPrompt" in event ? event.systemPrompt : undefined;
+    if (!Array.isArray(original) || !original.every((block) => typeof block === "string")) return;
+    const invariant = ROLE_INVARIANTS[role];
+    const withRole = original.includes(invariant) ? original : [...original, invariant];
+    const systemPrompt = role === "lane" ? (withLaneBookkeeping(withRole, ctx.model) ?? withRole) : withRole;
+    if (systemPrompt !== original) return { systemPrompt };
   });
 
   pi.on("before_provider_request", (_event, ctx) => {
@@ -533,10 +828,17 @@ export default async function ompDori(pi: DoriApi): Promise<void> {
       ctx.abort();
       throw requiredLoadError;
     }
+    if (role === "lane" && ctx.agent.kind === "main") discordLane.beforeProviderRequest?.(ctx);
   });
 
   const z = pi.zod;
-  pi.registerTool<{ op: "start" | "stop" | "list"; name?: string; argv?: string[]; filter?: string }>({
+  pi.registerTool<{
+    op: "start" | "stop" | "list";
+    name?: string;
+    argv?: string[];
+    filter?: string;
+    restart?: "on-failure";
+  }>({
     name: "monitor",
     label: "Monitor",
     description: MONITOR_DESCRIPTION,
@@ -547,6 +849,7 @@ export default async function ompDori(pi: DoriApi): Promise<void> {
       name: z.string().optional().describe("monitor name (start, stop)"),
       argv: z.array(z.string()).optional().describe("command and arguments, run without a shell (start)"),
       filter: z.string().optional().describe("regular expression; matching output lines wake the session (start)"),
+      restart: z.enum(["on-failure"]).optional().describe("retry unexpected exits for this monitor only (start)"),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       if (role !== "dori" || ctx.agent.kind !== "main" || !session)
@@ -555,13 +858,14 @@ export default async function ompDori(pi: DoriApi): Promise<void> {
       if (params.op === "start") {
         if (!params.name || !params.argv || params.filter === undefined)
           throw new Error("start needs name, argv and filter");
-        const started = monitors.start(params.name, params.argv, params.filter, ctx.cwd, session.id);
+        const started = monitors.start(params.name, params.argv, params.filter, ctx.cwd, session.id, params.restart);
         pi.appendEntry(MONITOR_ENTRY, {
           op: "start",
           name: started.name,
           argv: started.argv,
           filter: started.filter,
           cwd: ctx.cwd,
+          ...(params.restart ? { restart: params.restart } : {}),
         });
         saveMonitorSpecs(recordedMonitors(ctx.sessionManager.getBranch()), ctx.sessionManager.getBranch());
         savePane(ctx);
@@ -636,12 +940,7 @@ export default async function ompDori(pi: DoriApi): Promise<void> {
         await ulw(gated);
       } catch (error) {
         loadError = `omp-ulw not loaded from ${config.ompUlwPath} (${errorText(error)})`;
-        if (
-          /\/(?:consumer-dependencies\/omp-ulw-[a-f0-9]{40}-[a-f0-9]{64}|\.cache\/omp-dori\/omp-ulw-[a-f0-9]{64})(?:\/index\.ts)?$/.test(
-            config.ompUlwPath,
-          )
-        )
-          requiredLoadError = new SourceBundleError(loadError);
+        if (MANAGED_OVERLAY.test(config.ompUlwPath)) requiredLoadError = new SourceBundleError(loadError);
       }
     }
   } catch (error) {

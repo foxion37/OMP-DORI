@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, spyOn, test } from "bun:test";
+import { beforeAll, expect, spyOn, test } from "bun:test";
 import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { UpdateError } from "../src/update/config.ts";
@@ -11,7 +11,7 @@ import { candidateReport, reportCandidate } from "../src/update/report.ts";
 import { persistJob, persistState, readJob, readState } from "../src/update/state.ts";
 import type { UpdateJob } from "../src/update/types.ts";
 import { bootstrapFixture } from "./update-publish-setup.ts";
-import { git, type PublicationFixture, publicationFixture } from "./update-setup.ts";
+import { git, it, posixSuite, type PublicationFixture, publicationFixture } from "./update-setup.ts";
 
 async function terminalCycles(f: PublicationFixture, held: UpdateJob) {
   expect(held.phase).toBe("ready");
@@ -59,7 +59,7 @@ async function terminalCycles(f: PublicationFixture, held: UpdateJob) {
   expect(f.events.filter((event) => event.job === f.job.id && event.event === "promotion-held")).toHaveLength(1);
 }
 
-describe("terminal initial-source publication admission", () => {
+posixSuite("terminal initial-source publication admission", () => {
   // Each case prepares two distinct real Git/fsync candidates, not two copies of the same reference fixture.
   // Give that integration lifecycle its own budget; runtime command deadlines and all assertions stay unchanged.
   const terminalCycleTimeoutMs = 20_000;
@@ -179,7 +179,7 @@ describe("terminal initial-source publication admission", () => {
   );
 });
 
-test("a transient pre-record remote operation retries the same ready job without a terminal notification", async () => {
+it("a transient pre-record remote operation retries the same ready job without a terminal notification", async () => {
   const f = await publicationFixture(() => ({
     reporter: {
       name: "notify",

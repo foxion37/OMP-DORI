@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { HcRuntime } from "../src/runtime/hc/index.ts";
 import type { DeliverOutcome } from "../src/runtime/types.ts";
-import { type FakeHc, terminal } from "./fake-hc.ts";
+import { FakeHc, terminal } from "./fake-hc.ts";
 import { rig, T1 } from "./hc-rig.ts";
 
 describe("deliver", () => {
@@ -15,6 +16,47 @@ describe("deliver", () => {
     expect((await rt.deliver(T1, "next")).kind).toBe("delivered");
     expect(fake.calls.filter((c) => c[0] === "send")).toEqual([["send", "t1", "--", "next"]]);
   });
+
+  test.each(["working", "done"] as const)(
+    "idle-only holds when the final probe sees %s after an idle observation",
+    async (state) => {
+      const term = terminal();
+      const { fake, rt } = rig({ t1: term });
+      expect((await rt.probe(T1)).status).toBe("idle");
+      term.status = { state, app: "omo" };
+
+      expect(await rt.deliver(T1, "nudge", { when: "idle", strictIdle: true })).toEqual({
+        kind: "not-ready",
+        status: state,
+      });
+      expect(fake.calls.filter((a) => a[0] === "send")).toEqual([]);
+      const when = state === "working" ? "working" : "idle";
+      expect((await rt.deliver(T1, "next", { when, strictIdle: false })).kind).toBe("delivered");
+      expect(fake.sent).toEqual([{ id: T1.id, text: "next" }]);
+      expect(fake.calls.filter((a) => a[0] === "send")).toEqual([
+        state === "working" ? ["send", T1.id, "--if", "working", "--", "next"] : ["send", T1.id, "--", "next"],
+      ]);
+    },
+  );
+
+  test.each(["working", "done"] as const)(
+    "idle-only uses hc's idle gate when a terminal becomes %s after the final probe",
+    async (state) => {
+      const term = terminal();
+      const fake = new FakeHc({ t1: term });
+      const rt = new HcRuntime((cmd, argv) => {
+        if (argv[1] === "send") term.status = { state, app: "omo" };
+        return fake.exec(cmd, argv);
+      });
+
+      expect(await rt.deliver(T1, "nudge", { when: "any", strictIdle: true })).toEqual({
+        kind: "not-ready",
+        status: state,
+      });
+      expect(fake.calls.filter((a) => a[0] === "send")).toEqual([["send", T1.id, "--if", "idle", "--", "nudge"]]);
+      expect(fake.sent).toEqual([]);
+    },
+  );
 
   test("started:false is still delivered; started:null leaves started out", async () => {
     const a = rig({ t1: terminal() });

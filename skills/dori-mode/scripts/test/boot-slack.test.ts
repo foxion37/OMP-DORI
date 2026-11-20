@@ -89,11 +89,13 @@ test("a bad token file is a failed SLACK token-file line and boot still runs its
   });
   // Then each names the file as a failed check, the local checks still ran, the run is incomplete, and no token shows.
   expect(wide.lines).toContain(
-    `SLACK token-file: DORI_SLACK_TOKEN_FILE ${realpathSync(open)} is open to group or others (mode ${mode}); chmod 600 it`,
+    `SLACK token-file: DORI_SLACK_TOKEN_FILE ${realpathSync.native(open)} is open to group or others (mode ${mode}); chmod 600 it`,
   );
   expect(
     missing.lines.some((l) =>
-      l.startsWith(`SLACK token-file: DORI_SLACK_TOKEN_FILE ${realpathSync(state.dir)}/absent does not exist`),
+      l.startsWith(
+        `SLACK token-file: DORI_SLACK_TOKEN_FILE ${join(realpathSync.native(state.dir), "absent")} does not exist`,
+      ),
     ),
   ).toBe(true);
   for (const r of [wide, missing]) {
@@ -132,7 +134,7 @@ test("boot refuses a token file outside this home, as launch does, before readin
   });
   expect(
     r.lines.some((l) =>
-      l.startsWith(`SLACK token-file: DORI_SLACK_TOKEN_FILE ${realpathSync(file)} is outside this home`),
+      l.startsWith(`SLACK token-file: DORI_SLACK_TOKEN_FILE ${realpathSync.native(file)} is outside this home`),
     ),
   ).toBe(true);
   expect(r.exitCode).toBe(1);

@@ -1,10 +1,25 @@
 import { expect, test } from "bun:test";
 import { releaseGate } from "../scripts/release-gate.ts";
+import { object } from "../src/update/config.ts";
 import { githubFixture } from "./release-producer-setup.ts";
 
-test("allows only a real complete CI4 response bound to the tagged commit, workflow and Actions app", async () => {
+test("allows only a real complete CI response bound to the tagged commit, workflow and Actions app", async () => {
   const f = githubFixture();
   await expect(releaseGate(f.manifest, f.reads)).resolves.toBeUndefined();
+});
+
+test("release validation follows exactly the three automatic Linux CI jobs", async () => {
+  const workflow = Bun.YAML.parse(await Bun.file(new URL("../.github/workflows/ci.yml", import.meta.url)).text());
+  if (!object(workflow) || !object(workflow["jobs"])) throw new Error("CI workflow jobs must be a mapping");
+  const names = Object.keys(workflow["jobs"]);
+  expect(names).toEqual(["check", "e2e-herdr", "e2e-hc"]);
+  const f = githubFixture(names);
+  await expect(releaseGate(f.manifest, f.reads)).resolves.toBeUndefined();
+  // Each workflow job is required on its own: a CI attempt that reports the others but not this one is held.
+  for (const name of names) {
+    const g = githubFixture(names.filter((other) => other !== name));
+    await expect(releaseGate(g.manifest, g.reads)).rejects.toThrow("missing or ambiguous");
+  }
 });
 
 test.each(["application", "suite", "head"])("holds a successful-looking check with a different %s", async (kind) => {
@@ -29,6 +44,15 @@ test("holds an incomplete or duplicate required job instead of accepting partial
     await expect(releaseGate(f.manifest, f.reads)).rejects.toThrow("missing or ambiguous");
   }
 });
+
+test.each(["vntrevx/omp-dori", "other/Cataly", "vntrevx/Cataly-extra"])(
+  "holds successful-looking checks linked to a non-canonical repository: %s",
+  async (repository) => {
+    const f = githubFixture();
+    f.jobs[0]!["check_run_url"] = `https://api.github.com/repos/${repository}/check-runs/100`;
+    await expect(releaseGate(f.manifest, f.reads)).rejects.toThrow("did not succeed for the exact attempt");
+  },
+);
 
 test.each([
   { path: ".github/workflows/other.yml" },

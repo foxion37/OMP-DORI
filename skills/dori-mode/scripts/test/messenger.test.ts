@@ -143,7 +143,7 @@ test("Discord messages are sent without pinging anyone and edited in place; thre
     ok(req.method === "POST" && req.url.endsWith("/messages") ? { id: "M1" } : { id: "T1" }),
   );
   const dc = new Discord(http, sleeps().clock, "b");
-  expect(await dc.send("C1", "hello @everyone")).toBe("M1");
+  expect(await dc.send("C1", "hello @everyone")).toEqual(["M1"]);
   await dc.edit("C1", "M1", "hello again");
   expect(await dc.startThread("C1", "M1", "[working] fix login")).toBe("T1");
   await dc.setThread("T1", { name: "[done] fix login", archived: true });

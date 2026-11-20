@@ -6,6 +6,8 @@ export class UpdateError extends Error {}
 export class UpdateInterrupted extends UpdateError {}
 /** A completed detector attempt failed without creating or owning candidate work; the resident loop may retry. */
 export class UpdateDetectionUnavailable extends UpdateError {}
+/** A verified live same-host controller holds the root; nothing was claimed, so the resident loop may retry. */
+export class UpdateLockBusy extends UpdateError {}
 
 export const object = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);

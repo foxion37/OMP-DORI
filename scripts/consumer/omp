@@ -11,7 +11,15 @@ mkdir -p "$HOME/.cache/omp-dori"
 guard=$(mktemp -d "$HOME/.cache/omp-dori/guard.XXXXXX")
 trap 'rmdir "$guard"' EXIT HUP INT TERM
 cd "$guard"
-omp=$(bun "$source/scripts/source-dependencies.ts" consumer "$source" "$HOME")
+selected=$(bun "$source/src/release/automatic.ts" "$source" "$HOME" "$$" "$@")
+if [ "$selected" != "$source" ]; then
+  cd "$launch_cwd"
+  rmdir "$guard"
+  trap - EXIT HUP INT TERM
+  exec "$selected/scripts/consumer/omp" "$@"
+fi
+# This shell execs the launcher, so it holds the native cache lease for the whole session.
+omp=$(DORI_NATIVE_LEASE_PID=$$ bun "$source/scripts/source-dependencies.ts" consumer "$source" "$HOME")
 cd "$launch_cwd"
 rmdir "$guard"
 trap - EXIT HUP INT TERM

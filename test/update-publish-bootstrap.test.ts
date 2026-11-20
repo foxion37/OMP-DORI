@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect } from "bun:test";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { loadUpdateConfig } from "../src/update/load.ts";
@@ -8,16 +8,18 @@ import { PublicationProcess } from "../src/update/publish-process.ts";
 import { publishRelease } from "../src/update/publish.ts";
 import { PublicationHold, type PublicationRecord } from "../src/update/publish-types.ts";
 import { persistJob, persistState, readJob, readState, saveJson } from "../src/update/state.ts";
-import { git, publicationFixture } from "./update-setup.ts";
+import { git, it, publicationFixture } from "./update-setup.ts";
 import { bootstrapFixture } from "./update-publish-setup.ts";
 
 let exportHash: string;
 beforeAll(async () => {
+  // POSIX-only: publication fixtures need the updater's private 0o700 runtime, so Windows runs no case here.
+  if (process.platform === "win32") return;
   // Share only the checked export hash; every case still prepares its own isolated candidate.
   exportHash = publicSource((await publicationFixture()).job).hash;
 });
 
-test("owner content missing from frozen local input holds before any durable publication intent", async () => {
+it("owner content missing from frozen local input holds before any durable publication intent", async () => {
   const f = await publicationFixture();
   const commands = structuredClone(f.job.commands);
   const review = structuredClone(f.job.review);
@@ -44,7 +46,7 @@ test("owner content missing from frozen local input holds before any durable pub
 });
 
 describe("initial-source pin binding", () => {
-  test.each([
+  it.each([
     "exact",
     "source-mismatch",
     "main-mismatch",
@@ -79,7 +81,7 @@ describe("initial-source pin binding", () => {
   });
 });
 
-test("an initial-source approval never covers owner main movement before publication intent", async () => {
+it("an initial-source approval never covers owner main movement before publication intent", async () => {
   const f = await bootstrapFixture("exact", false, exportHash);
   f.write(f.seed, "owner-history.txt", "later owner work outside the initial-source approval\n");
   git(f.seed, "add", ".");
@@ -95,7 +97,7 @@ test("an initial-source approval never covers owner main movement before publica
   expect(readState(f.updater.context).initialSourceJob).toBeUndefined();
 });
 
-test("initial-source resume retains its frozen basis when the live local source changes", async () => {
+it("initial-source resume retains its frozen basis when the live local source changes", async () => {
   const f = await bootstrapFixture("exact", false, exportHash);
   const interrupted = new Error("fixture stops after durable initial-source preparation");
   await expect(
@@ -114,7 +116,7 @@ test("initial-source resume retains its frozen basis when the live local source 
   expect(git(f.target, "show", "main:src/behavior.ts")).toBe("export const behavior = 2;");
 });
 
-test("a claim-before-receipt interruption recovers only the same exact initial-source job", async () => {
+it("a claim-before-receipt interruption recovers only the same exact initial-source job", async () => {
   const f = await bootstrapFixture("exact", false, exportHash);
   const state = readState(f.updater.context);
   const interrupted = new Error("fixture stops before publication receipt is persisted");
@@ -130,7 +132,7 @@ test("a claim-before-receipt interruption recovers only the same exact initial-s
   expect(readState(f.updater.context).initialSourceJob).toBe(f.job.id);
 });
 
-test.each(["pins", "kind"] as const)("initial-source resume rejects a changed durable basis %s", async (field) => {
+it.each(["pins", "kind"] as const)("initial-source resume rejects a changed durable basis %s", async (field) => {
   const f = await bootstrapFixture("exact", false, exportHash);
   const state = readState(f.updater.context);
   let retained: PublicationRecord | undefined;
@@ -156,7 +158,7 @@ test.each(["pins", "kind"] as const)("initial-source resume rejects a changed du
   expect(git(f.target, "for-each-ref", "--format=%(refname)", "refs/heads/dori-update/")).toBe("");
 });
 
-test("a consumed initial-source exception stays bound to its original registered job", async () => {
+it("a consumed initial-source exception stays bound to its original registered job", async () => {
   const f = await bootstrapFixture("exact", false, exportHash);
   const state = readState(f.updater.context);
   const previousJob = "f".repeat(64);
@@ -171,7 +173,7 @@ test("a consumed initial-source exception stays bound to its original registered
   expect(git(f.target, "rev-parse", "main")).toBe(f.expectedMain);
 });
 
-test("initial-source claims reject stale-state removal and malformed stored identities", async () => {
+it("initial-source claims reject stale-state removal and malformed stored identities", async () => {
   const f = await publicationFixture();
   const state = readState(f.updater.context);
   state.initialSourceJob = f.job.id;
@@ -183,7 +185,7 @@ test("initial-source claims reject stale-state removal and malformed stored iden
   expect(() => readState(f.updater.context)).toThrow("unrecognized initial-source job");
 });
 
-test("initial source admission accepts only complete exact five-pin configuration", async () => {
+it("initial source admission accepts only complete exact five-pin configuration", async () => {
   const f = await publicationFixture();
   const file = join(f.directory, "initial-source.json");
   const initialSource = {
@@ -215,7 +217,7 @@ test("initial source admission accepts only complete exact five-pin configuratio
   }
 });
 
-test.each(["changed-claim", "unregistered"] as const)(
+it.each(["changed-claim", "unregistered"] as const)(
   "a %s admission holds before claiming initial source",
   async (kind) => {
     const f = await bootstrapFixture("exact", false, exportHash);

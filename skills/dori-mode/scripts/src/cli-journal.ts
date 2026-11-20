@@ -1,20 +1,50 @@
 /** dori report, lesson, worklog, checkpoint and checkpoints: the durable journals. */
 import { CheckpointError, Checkpoints } from "./checkpoints.ts";
 import { type Cli, type Command, die } from "./cli-context.ts";
+import { autoTrackLinks } from "./cli-pr.ts";
 import { isLessonOutcome, LessonError, Lessons } from "./lessons.ts";
-import { isReportKind, ReportError, Reports, reportLine } from "./reports.ts";
+import { isReportKind, ReportError, Reports, reportLine, reportId } from "./reports.ts";
 import { realClock, runtimesOf } from "./run.ts";
 import { Worklog, WorklogError } from "./worklog.ts";
 
 /** Journal errors are the user's input refused: one line, never a stack. */
 export const journalErrors = [CheckpointError, LessonError, ReportError, WorklogError] as const;
 
-const report: Command = async ({ key, need, lane, config }) => {
+const report: Command = async ({ key, need, opt, values, lane, config }) => {
   const target = await lane(key ?? die("report needs a lane key"));
   const kind = need("kind");
   if (isReportKind(kind)) {
-    console.log(reportLine(new Reports(config.stateDir).report(target.key, kind, need("text"), realClock.now())));
+    const entry = new Reports(config.stateDir).report(
+      target.key,
+      kind,
+      need("text"),
+      realClock.now(),
+      target.lifecycleEpoch,
+      opt("owner"),
+    );
+    console.log(values["json"] ? JSON.stringify({ ...entry, id: reportId(entry) }) : reportLine(entry));
   } else die("--kind must be milestone, blocker, question, halted or done");
+};
+
+const relayed: Command = async ({ key, need, lane, deps, config }) => {
+  const target = await lane(key ?? die("relayed needs a lane key"));
+  if (target.reportProtocol !== "jsonl-v1")
+    die("relayed requires a launched jsonl-v1 lane, not an adopted screen report");
+  const id = need("report");
+  const reports = new Reports(config.stateDir);
+  const updated = await deps.registry.transition(target, (current) => {
+    const entry = reports.read(target.key, { generation: current.lifecycleEpoch })?.lastReport;
+    if (current.reportProtocol !== "jsonl-v1" || !entry || reportId(entry) !== id) return null;
+    return {
+      ...current,
+      lastPostedReport: reportLine(entry),
+      lastPostedReportId: id,
+      lastPostedReportOwner: entry.owner,
+      lastRelayedAt: realClock.now(),
+    };
+  });
+  if (!updated) die("relayed: report is not the current journal report; read it again before acknowledging");
+  console.log(`RELAYED ${target.key} ${id}`);
 };
 
 const lessonAdd = async (
@@ -101,7 +131,12 @@ const worklog: Command = async ({ key, positionals, values, need, config }) => {
     case "add":
       console.log(
         JSON.stringify(
-          worklog.add(positionals.slice(1).join(" ").trim() || die("worklog add needs a title"), need("source"), now),
+          worklog.add(
+            positionals.slice(1).join(" ").trim() || die("worklog add needs a title"),
+            need("source"),
+            now,
+            values["thread"] === undefined ? undefined : need("thread"),
+          ),
         ),
       );
       break;
@@ -127,7 +162,8 @@ const worklog: Command = async ({ key, positionals, values, need, config }) => {
   }
 };
 
-const checkpoint: Command = async ({ key, positionals, need, strings, lane, config }) => {
+const checkpoint: Command = async (cli) => {
+  const { key, positionals, need, strings, lane, config } = cli;
   const target = await lane(key ?? die("checkpoint needs a lane key"));
   // parseArgs takes one value per flag; a second bare receipt would otherwise be dropped and its effect repeated later.
   const stray = positionals.slice(1);
@@ -143,10 +179,12 @@ const checkpoint: Command = async ({ key, positionals, need, strings, lane, conf
     realClock.now(),
   );
   console.log(JSON.stringify(result));
+  autoTrackLinks(cli, target, result.checkpoint.remoteEffects.join(" "), `checkpoint ${target.key}`);
 };
 
 export const journalCommands: Readonly<Record<string, Command>> = {
   report,
+  relayed,
   lesson,
   worklog,
   checkpoint,

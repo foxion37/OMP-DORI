@@ -60,11 +60,3 @@ test("selected argv preserves empty argument values and every configured templat
     "{prompt}",
   ]);
 });
-
-test("the retired executable field has no compatibility reader and legacy shell fragments remain verbatim", () => {
-  const f = managedCommand();
-  const legacy = "env CUSTOM='owner value' custom-agent --flag";
-  environment({ DORI_AGENT_ARGV: undefined, DORI_AGENT_EXECUTABLE: "retired executable", DORI_AGENT_CMD: legacy });
-  expect(defaultDeps().agentCmd).toBe(legacy);
-  expect(resolveProcessOmpCommand(["omp", "{prompt}"], f.config.doriConfig)).toEqual([legacy, "{prompt}"]);
-});

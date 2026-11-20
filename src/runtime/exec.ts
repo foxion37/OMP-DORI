@@ -1,7 +1,13 @@
 // One injectable process runner shared by every runtime adapter, so tests replace the runtime binary with a recorder
 // and end-to-end tests point it at an isolated session.
 
-export type ExecResult = { readonly code: number; readonly stdout: string; readonly stderr: string };
+export type ExecResult = {
+  readonly code: number;
+  readonly stdout: string;
+  readonly stderr: string;
+  /** The child was never spawned, distinct from any exit code it could return. */
+  readonly spawnFailed?: true;
+};
 /** `onSpawn` gets the running process, so a caller that gives up on it can kill it. */
 export type ExecOptions = { readonly onSpawn?: (proc: { kill(): void }) => void };
 export type Exec = (cmd: string, argv: readonly string[], options?: ExecOptions) => Promise<ExecResult>;

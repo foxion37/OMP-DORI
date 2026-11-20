@@ -125,12 +125,13 @@ test("a QA-only lane's claim is re-checked at close time: the lane says done, bu
   const world = newWorld();
   const clock = fakeClock(Date.parse("2026-01-01T00:00:00Z"));
   const flag = join(state.dir, "qa-passed");
-  const deps = { ...depsFor(world, clock, state.dir), run, signalIo: { cwd: state.dir } };
+  const deps = { ...depsFor(world, clock, state.dir, { defaultCwd: state.dir }), run, signalIo: { cwd: state.dir } };
   const lane = await adoptLane(deps, {
     key: "local-setup",
     title: "setup",
     brief: "/b.md",
-    done: `command ["test","-f","${flag}"]`,
+    // The path is JSON-encoded, as a Done line is: Windows paths carry backslashes JSON would read as escapes.
+    done: `command ${JSON.stringify(["test", "-f", flag])}`,
     pane: "w:p3",
     cwd: state.dir,
   });

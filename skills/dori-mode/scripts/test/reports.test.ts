@@ -117,7 +117,10 @@ test("one corrupt journal is reported once and does not stop the sweep for other
   expect((await freshnessTick(deps, "/home/test")).map((act) => act.kind)).toEqual([]);
 });
 
-test("the lane journal directory is private (0700), like the 0600 journal", () => {
+// POSIX-only: permission bits (0700/0600) have no meaning on Windows.
+const posix = test.skipIf(process.platform === "win32");
+
+posix("the lane journal directory is private (0700), like the 0600 journal", () => {
   const state = withState();
   const umask = process.umask(0o022);
   try {
@@ -131,7 +134,7 @@ test("the lane journal directory is private (0700), like the 0600 journal", () =
   }
 });
 
-test("a lane directory created earlier with wider permissions is made 0700 on the next report", () => {
+posix("a lane directory created earlier with wider permissions is made 0700 on the next report", () => {
   const dir = join(state.dir, "lanes", lane.key);
   mkdirSync(dir, { recursive: true, mode: 0o755 });
   chmodSync(dir, 0o755);

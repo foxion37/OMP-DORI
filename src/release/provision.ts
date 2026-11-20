@@ -1,5 +1,6 @@
-import { lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync } from "node:fs";
+import { delimiter, dirname, join } from "node:path";
+import { platform } from "../platform/index.ts";
 import type { ConsumerPaths } from "./files.ts";
 import { consumerPaths, owned, readJson, realDirectory, regularFile, saveJson } from "./files.ts";
 import { assertSourceBundle, readSourceBundle } from "./source-bundle.ts";
@@ -15,30 +16,57 @@ function atLeast(observed: string, minimum: readonly number[]): boolean {
   return true;
 }
 
-export function prerequisites(legacyNative = false): void {
-  if (process.platform !== "linux" || process.arch !== "x64")
-    throw new Error("This release supports Linux x64 with herdr and Discord");
+export function nativeOmp(): string | undefined {
+  for (const path of (process.env["PATH"] ?? "").split(delimiter)) {
+    const candidate = Bun.which("omp", { PATH: path });
+    if (!candidate) continue;
+    const physical = realpathSync(candidate);
+    const bases = [dirname(dirname(candidate)), dirname(dirname(physical))];
+    if (
+      bases.some((base) => {
+        const marker = join(base, ".omp-dori");
+        // A side home, including a directory alias, is not the source installer's marker file.
+        return (
+          (lstatSync(marker, { throwIfNoEntry: false }) &&
+            !statSync(marker, { throwIfNoEntry: false })?.isDirectory()) ||
+          lstatSync(join(base, "releases/consumer-owner.json"), { throwIfNoEntry: false })
+        );
+      }) ||
+      (physical.endsWith("/scripts/consumer/omp") &&
+        lstatSync(join(dirname(dirname(dirname(physical))), "native-omp.lock"), { throwIfNoEntry: false }))
+    )
+      continue;
+    return candidate;
+  }
+  return undefined;
+}
+
+export function prerequisites(runtime: string, tools = true, legacyNative = false, paths = consumerPaths()): void {
+  if (!platform.supportsReleaseProfile(platform.os, process.arch, runtime))
+    throw new Error(`Unsupported release host/runtime: ${platform.os}/${process.arch}/${runtime}`);
+  if (!tools) return;
   if (!atLeast(Bun.version, [1, 4, 4])) throw new Error("Bun 1.4.4+ is required; install it before OMP-Dori");
-  for (const name of ["git", "herdr"]) {
+  for (const name of ["git", runtime]) {
     if (!Bun.which(name)) throw new Error(`${name} is required; install it before OMP-Dori`);
   }
   if (legacyNative) {
-    const executable = Bun.which("omp");
+    const executable = paths.dori === join(paths.home, ".dori") ? Bun.which("omp") : nativeOmp();
     if (!executable) throw new Error("Older release protocol requires an independently installed OMP 18.18.8+");
-    const paths = consumerPaths();
-    const managed = join(paths.dori, "bin/omp");
-    if (lstatSync(managed, { throwIfNoEntry: false })) {
-      const target = realpathSync(managed);
-      const config = regularFile(paths.config) ? readJson(paths.config) : undefined;
-      const command =
-        config && typeof config === "object" && "agentCommand" in config && Array.isArray(config.agentCommand)
-          ? config.agentCommand[0]
-          : undefined;
-      const configured = typeof command === "string" ? Bun.which(command) : undefined;
-      if (realpathSync(executable) === target || (configured && realpathSync(configured) === target))
-        throw new Error(
-          "Older release protocol requires an independently installed OMP 18.18.8+; managed omp is removed during activation",
-        );
+    if (paths.dori === join(paths.home, ".dori")) {
+      const managed = join(paths.dori, "bin/omp");
+      if (lstatSync(managed, { throwIfNoEntry: false })) {
+        const target = realpathSync(managed);
+        const config = regularFile(paths.config) ? readJson(paths.config) : undefined;
+        const command =
+          config && typeof config === "object" && "agentCommand" in config && Array.isArray(config.agentCommand)
+            ? config.agentCommand[0]
+            : undefined;
+        const configured = typeof command === "string" ? Bun.which(command) : undefined;
+        if (realpathSync(executable) === target || (configured && realpathSync(configured) === target))
+          throw new Error(
+            "Older release protocol requires an independently installed OMP 18.18.8+; managed omp is removed during activation",
+          );
+      }
     }
     const omp = Bun.spawnSync([executable, "--version"], { stdout: "pipe", stderr: "pipe", timeout: 10_000 });
     const version = omp.stdout.toString().match(/\d+\.\d+\.\d+(?:[-+][^\s]+)?/)?.[0] ?? "";
@@ -89,6 +117,16 @@ async function git(args: readonly string[], cwd: string, home: string): Promise<
   return stdout.trim();
 }
 
+export function dependencyPlan(paths: ConsumerPaths, manifest: ReleaseManifest, source?: string) {
+  const { commit, repository } = manifest.ompUlw;
+  const bundle = manifest.requirements.omp === "18.20.0" ? readSourceBundle(source!, false) : undefined;
+  if (bundle && (bundle.lock.commit !== commit || bundle.lock.repository !== repository))
+    throw new Error("Release overlay differs from its upstream dependency pin");
+  const dependency = join(paths.dependencies, `omp-ulw-${commit}${bundle ? `-${bundle.identity}` : ""}`);
+  const expected = { version: 1, repository, commit, ...(bundle ? { identity: bundle.identity } : {}) };
+  return { bundle, directory: dependency, expected };
+}
+
 /** Existing dependency checkouts are never reset, fetched into, or otherwise modified. */
 export async function provisionDependency(
   paths: ConsumerPaths,
@@ -96,12 +134,8 @@ export async function provisionDependency(
   source?: string,
 ): Promise<string> {
   const { commit, repository } = manifest.ompUlw;
-  const bundle = manifest.requirements.omp === "18.20.0" ? readSourceBundle(source!, false) : undefined;
-  if (bundle && (bundle.lock.commit !== commit || bundle.lock.repository !== repository))
-    throw new Error("Release overlay differs from its upstream dependency pin");
-  const dependency = join(paths.dependencies, `omp-ulw-${commit}${bundle ? `-${bundle.identity}` : ""}`);
+  const { bundle, directory: dependency, expected } = dependencyPlan(paths, manifest, source);
   const receipt = `${dependency}.json`;
-  const expected = { version: 1, repository, commit, ...(bundle ? { identity: bundle.identity } : {}) };
   const verify = async () => {
     realDirectory(dependency);
     owned(dependency);

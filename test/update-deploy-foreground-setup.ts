@@ -1,22 +1,30 @@
 import { afterEach } from "bun:test";
 import { spawn } from "node:child_process";
-import { once } from "node:events";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { createInterface } from "node:readline";
 import type { Writable } from "node:stream";
 import { type PaneState, writePaneState } from "../skills/dori-mode/scripts/src/lane-state.ts";
 import { processIdentity } from "../src/update/deployment-process.ts";
 import { procChildren, procCmdline, procStat } from "../src/update/proc.ts";
 import type { MonitorSet, RuntimeHealth, RuntimeIdentity } from "../src/update/deployment-types.ts";
 import { foregroundCli } from "./update-deploy-foreground-cli.ts";
+import { foregroundActor } from "./update-deploy-foreground-readiness.ts";
 import { processName } from "./proc-name.ts";
 import { deploymentConfig } from "./update-deploy-setup.ts";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
-  for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
+  const errors: unknown[] = [];
+  for (const cleanup of cleanups.splice(0).reverse()) {
+    try {
+      await cleanup();
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+  if (errors.length === 1) throw errors[0];
+  if (errors.length > 1) throw new AggregateError(errors, "foreground fixture cleanup failed");
 });
 /** Real exec-launched native group and script children; herdr supplies only their observed metadata. */
 export async function foregroundFixture(
@@ -31,6 +39,8 @@ export async function foregroundFixture(
   } = {},
 ) {
   const root = mkdtempSync(join(tmpdir(), "dori-foreground-"));
+  let closing = false;
+  cleanups.push(async () => rmSync(root, { recursive: true, force: true }));
   const config = {
     ...deploymentConfig(root),
     omp: join(root, "omp"),
@@ -69,28 +79,7 @@ export async function foregroundFixture(
   const commands = [["/bin/bash", script], [presence], ...(options.unknown ? [["/bin/bash", unknown]] : [])];
   writeFileSync(
     config.omp,
-    `#!${process.execPath}
-import { createReadStream, appendFileSync } from "node:fs"; import { once } from "node:events";
-appendFileSync(${JSON.stringify(join(root, "starts"))}, String(process.pid) + "\\n");
-const children = ${JSON.stringify(commands)}.map(argv => Bun.spawn(argv, {
-  cwd: ${JSON.stringify(root)}, stdin: "pipe", stdout: "pipe", stderr: "ignore",
-}));
-for (const child of children) {
-  const reader = child.stdout.getReader();
-  const ready = new TextDecoder().decode((await reader.read()).value);
-  reader.releaseLock();
-  if (ready !== "ready\\n") throw new Error("child did not initialize");
-} if (${options.transient === true}) children.push(Bun.spawn(["/bin/sleep", "60"], { stdin: "pipe", stdout: "ignore", stderr: "ignore" }));
-const input = createReadStream("", { fd: 3 });
-async function stopChildren() { for (const child of children) { if (${options.transient === true} && child === children.at(-1) && child.exitCode === null) child.kill("SIGTERM"); child.stdin.end(); await child.exited; } }
-for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"])
-  process.on(signal, async () => { appendFileSync(${JSON.stringify(signalPath)}, signal); ${options.stoppable ? "await stopChildren(); process.exit(0);" : ""} });
-console.log(JSON.stringify({ pid: process.pid, monitors: children.map(child => child.pid) }));
-const closed = once(input, "end");
-input.resume();
-await closed;
-await stopChildren();
-`,
+    foregroundActor.source({ root, signalPath, commands, stoppable: options.stoppable, transient: options.transient }),
     { mode: 0o700 },
   );
   const args =
@@ -106,46 +95,38 @@ await stopChildren();
     startedAt: new Date().toISOString(),
     cwd: root,
   });
-  const launch = async () => {
+  const launch = async (phase: "prior" | "current") => {
+    if (closing) throw new Error(`foreground fixture ${phase} actor readiness: teardown has started`);
     const requestedAt = new Date().toISOString();
-    const child = spawn("/bin/bash", args, {
-      cwd: root,
-      detached: true,
-      env: { PATH: "/usr/bin:/bin", HOME: root, HISTFILE: "/dev/null" },
-      stdio: ["pipe", "pipe", "ignore", "pipe"],
+    const { child, stop, waitForReady } = foregroundActor.spawn(phase, () =>
+      spawn("/bin/bash", args, {
+        cwd: root,
+        detached: true,
+        env: { PATH: "/usr/bin:/bin", HOME: root, HISTFILE: "/dev/null" },
+        stdio: ["pipe", "pipe", "ignore", "pipe"],
+      }),
+    );
+    cleanups.push(() => {
+      closing = true;
+      return stop();
     });
-    const exited = once(child, "exit");
-    const lines = createInterface({ input: child.stdout! });
-    const ready = once(lines, "line");
+    const ready = waitForReady();
     if (options.parentShell || options.paneShell)
-      child.stdin!.write(
+      child.stdin?.write(
         `${options.paneShell ? "set -m\n" : ""}${[process.execPath, config.omp, ...launchArgs].map((arg) => JSON.stringify(arg)).join(" ")}\n${options.parentShell ? "exit\n" : ""}`,
       );
-    const [line] = await ready;
-    lines.close();
-    const observed = JSON.parse(String(line)) as { pid: number; monitors: number[] };
-    return { child, exited, observed, requestedAt };
+    return { child, stop, observed: await ready, requestedAt };
   };
-  const previous = options.rollback ? await launch() : undefined;
+  const previous = options.rollback ? await launch("prior") : undefined;
   const previousRuntime = previous ? runtimeFor(previous.observed.pid) : undefined;
   const previousMonitors = previous?.observed.monitors.slice(0, specs.length).map((pid, index) => ({
     ...processIdentity(pid)!,
     name: specs[index]!.name,
     argv: procCmdline(pid).split("\0").filter(Boolean),
   }));
-  if (previous) {
-    (previous.child.stdio[3] as Writable).end();
-    previous.child.stdin!.end();
-    await previous.exited;
-  }
-  const { child, exited, observed, requestedAt } = await launch();
+  if (previous) await previous.stop();
+  const { child, observed, requestedAt } = await launch("current");
   const runtime = runtimeFor(observed.pid);
-  cleanups.push(async () => {
-    (child.stdio[3] as Writable).end();
-    child.stdin!.end();
-    await exited;
-    rmSync(root, { recursive: true, force: true });
-  });
   let state: PaneState = {
     ...runtime,
     paneId: config.pane,

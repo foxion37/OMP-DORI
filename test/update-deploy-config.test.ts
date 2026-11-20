@@ -23,6 +23,8 @@ import { digest } from "../src/update/source.ts";
 
 // The kernels whose process identity deployment can bind.
 const posix = test.skipIf(process.platform !== "linux" && process.platform !== "darwin");
+// POSIX-only: a hard link preserves the symlink inode itself, which Windows cannot create.
+const it = test.skipIf(process.platform === "win32");
 
 const directories: string[] = [];
 afterEach(() => {
@@ -75,7 +77,7 @@ test("native stop mode is optional, canonical when absent and rejects malformed 
     expect(() => parseDeploymentConfig({ ...config, nativeStopMode }, root)).toThrow("nativeStopMode");
 });
 
-test("release-root shims remain stable through source conversion and restore their exact previous links", () => {
+it("release-root shims remain stable through source conversion and restore their exact previous links", () => {
   const { root, config } = fixture();
   expect(config.home).toBe(join(root, "home"));
   expect(config.liveSource).toBe(join(config.home, ".dori", "src"));

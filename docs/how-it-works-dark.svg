@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 406" width="1000" height="406" role="img" aria-labelledby="title desc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif">
+  <title id="title">How Cataly works</title>
+  <desc id="desc">A request arrives, the lead assigns it, a lane works and reports, and completion is checked before a result you can verify, with its evidence, comes back to you.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8b9099"/></marker>
+    <marker id="arrow-accent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#f0475f"/></marker>
+  </defs>
+  <rect x="17" y="12" width="120" height="36" rx="18" fill="#e6edf3"/>
+  <text x="77.0" y="36" text-anchor="middle" font-size="16" font-weight="600" fill="#161b22">You</text>
+  <path d="M128.0 48 V80" stroke="#8b9099" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+  <path d="M872.0 84 V40.0 Q872.0 30.0 862.0 30.0 H143" stroke="#f0475f" stroke-width="2" fill="none" marker-end="url(#arrow-accent)"/>
+  <text x="504.5" y="21.0" text-anchor="middle" font-size="15" fill="#f0475f" font-weight="600">a result you can verify, with the evidence</text>
+  <g id="step-1">
+    <rect x="17" y="84" width="222" height="244" rx="14" fill="#161b22" stroke="#3d444d" stroke-width="1.5"/>
+    <circle cx="49" cy="118" r="15" fill="#f0475f"/>
+    <text x="49" y="124" text-anchor="middle" font-size="16" font-weight="700" fill="#0d1117">1</text>
+    <text x="73" y="124" font-size="18" font-weight="700" fill="#e6edf3">Request arrives</text>
+    <text x="35" y="166" font-size="15" fill="#9aa3ad">With Discord intake on,</text>
+    <text x="35" y="188" font-size="15" fill="#9aa3ad">Cataly reads the owner's</text>
+    <text x="35" y="210" font-size="15" fill="#9aa3ad">messages with reply</text>
+    <text x="35" y="232" font-size="15" fill="#9aa3ad">context and attachment</text>
+    <text x="35" y="254" font-size="15" fill="#9aa3ad">metadata.</text>
+    <rect x="35" y="278" width="186" height="32" rx="8" fill="#21262d"/>
+    <text x="128.0" y="299" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace" font-size="14" fill="#c9d1d9">Discord intake</text>
+  </g>
+  <path d="M242 206.0 H262" stroke="#8b9099" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+  <g id="step-2">
+    <rect x="265" y="84" width="222" height="244" rx="14" fill="#161b22" stroke="#3d444d" stroke-width="1.5"/>
+    <circle cx="297" cy="118" r="15" fill="#f0475f"/>
+    <text x="297" y="124" text-anchor="middle" font-size="16" font-weight="700" fill="#0d1117">2</text>
+    <text x="321" y="124" font-size="18" font-weight="700" fill="#e6edf3">Lead assigns</text>
+    <text x="283" y="166" font-size="15" fill="#9aa3ad">The lead can handle small</text>
+    <text x="283" y="188" font-size="15" fill="#9aa3ad">requests directly or launch</text>
+    <text x="283" y="210" font-size="15" fill="#9aa3ad">a lane with a brief and an</text>
+    <text x="283" y="232" font-size="15" fill="#9aa3ad">explicit Done condition.</text>
+    <rect x="283" y="278" width="186" height="32" rx="8" fill="#21262d"/>
+    <text x="376.0" y="299" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace" font-size="14" fill="#c9d1d9">brief + Done</text>
+  </g>
+  <path d="M490 206.0 H510" stroke="#8b9099" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+  <g id="step-3">
+    <rect x="513" y="84" width="222" height="244" rx="14" fill="#161b22" stroke="#3d444d" stroke-width="1.5"/>
+    <circle cx="545" cy="118" r="15" fill="#f0475f"/>
+    <text x="545" y="124" text-anchor="middle" font-size="16" font-weight="700" fill="#0d1117">3</text>
+    <text x="569" y="124" font-size="18" font-weight="700" fill="#e6edf3">Lane reports</text>
+    <text x="531" y="166" font-size="15" fill="#9aa3ad">A dedicated OMP session.</text>
+    <text x="531" y="188" font-size="15" fill="#9aa3ad">Worklogs, reports, and</text>
+    <text x="531" y="210" font-size="15" fill="#9aa3ad">checkpoints keep progress</text>
+    <text x="531" y="232" font-size="15" fill="#9aa3ad">inspectable across restarts.</text>
+    <rect x="531" y="278" width="186" height="32" rx="8" fill="#21262d"/>
+    <text x="624.0" y="299" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace" font-size="14" fill="#c9d1d9">OMP in herdr or hc</text>
+  </g>
+  <path d="M738 206.0 H758" stroke="#8b9099" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+  <g id="step-4">
+    <rect x="761" y="84" width="222" height="244" rx="14" fill="#2d1418" stroke="#f0475f" stroke-width="2"/>
+    <circle cx="793" cy="118" r="15" fill="#f0475f"/>
+    <text x="793" y="124" text-anchor="middle" font-size="16" font-weight="700" fill="#0d1117">4</text>
+    <text x="817" y="124" font-size="18" font-weight="700" fill="#e6edf3">Done is checked</text>
+    <text x="779" y="166" font-size="15" fill="#9aa3ad">A done claim is not proof.</text>
+    <text x="779" y="188" font-size="15" fill="#9aa3ad">The Done flow can read</text>
+    <text x="779" y="210" font-size="15" fill="#9aa3ad">back a command result,</text>
+    <text x="779" y="232" font-size="15" fill="#9aa3ad">file state, merged PR, or</text>
+    <text x="779" y="254" font-size="15" fill="#9aa3ad">published package version.</text>
+    <rect x="779" y="278" width="186" height="32" rx="8" fill="#21262d"/>
+    <text x="872.0" y="299" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace" font-size="14" fill="#c9d1d9">read-back signal</text>
+  </g>
+  <path d="M265 340 V346 H735 V340" stroke="#8b9099" stroke-width="1.5" fill="none"/>
+  <text x="500.0" y="376" text-anchor="middle" font-size="15" fill="#9aa3ad">The lane registry ties the work to its session and messenger thread</text>
+</svg>

@@ -3,12 +3,16 @@ import { existsSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { discordInbound, type DiscordInbound } from "../src/messenger/discord-inbound.ts";
 import { discordInboundLive } from "../src/messenger/discord-inbound-live.ts";
+import { discordInboundQueue } from "../src/messenger/discord-inbound-queue.ts";
 import { fileDiscordInboundStore } from "../src/messenger/discord-inbound-state.ts";
 import { MessengerError } from "../src/messenger/http.ts";
 import { discordRestWorld, ownerMessage } from "./discord-inbound-fakes.ts";
 import { settle } from "./discord-inbound-live-fakes.ts";
 import { FakeGateway, gatewayTimers } from "./discord-presence-fakes.ts";
 import { withState } from "./fakes.ts";
+
+// POSIX-only: the Discord cursor store requires a private (0700) uid-owned directory.
+const posix = test.skipIf(process.platform === "win32");
 
 const cursorWorld = async (explicit: boolean, onEmit?: (message: DiscordInbound) => void) => {
   const state = withState();
@@ -26,6 +30,7 @@ const cursorWorld = async (explicit: boolean, onEmit?: (message: DiscordInbound)
   const timers = gatewayTimers();
   const sockets: FakeGateway[] = [];
   const received: string[] = [];
+  const queue = discordInboundQueue(state.dir);
   const live = discordInboundLive(
     intake,
     (url) => {
@@ -40,6 +45,7 @@ const cursorWorld = async (explicit: boolean, onEmit?: (message: DiscordInbound)
       received.push(`${message.channel}:${message.message}`);
     },
     () => {},
+    queue,
   );
   let finished = false;
   const outcome = live.done.then(
@@ -69,6 +75,7 @@ const cursorWorld = async (explicit: boolean, onEmit?: (message: DiscordInbound)
     async close() {
       live.close();
       await outcome;
+      queue.close();
       state.done();
     },
   };
@@ -78,7 +85,7 @@ for (const explicit of [false, true]) {
   for (const fault of ["missing owner content", 403, 404] as const) {
     const scope = explicit ? "explicit" : "discovered";
     const label = typeof fault === "number" ? `emitter ${fault}` : fault;
-    test(`${scope} ${label} stops backfill before queued 102 and retains cursor 100`, async () => {
+    posix(`${scope} ${label} stops backfill before queued 102 and retains cursor 100`, async () => {
       const refused = typeof fault === "number" ? new MessengerError("delivery refused", fault) : undefined;
       const world = await cursorWorld(explicit, (message) => {
         if (message.message === "101" && refused) throw refused;
@@ -124,79 +131,85 @@ for (const explicit of [false, true]) {
 
 for (const explicit of [false, true]) {
   for (const status of [403, 404]) {
-    test(`remote ${status} history loss is ${explicit ? "fatal for an explicit target" : "skipped for a discovered target"}`, async () => {
-      const world = await cursorWorld(explicit);
-      try {
-        world.rest.state.messages.push(ownerMessage("101"));
-        world.rest.state.failure.set("/channels/20/messages", status);
-        world.socket.hello();
-        world.socket.ready(1);
-        world.socket.receive({ op: 0, t: "MESSAGE_CREATE", s: 2, d: ownerMessage("102", { channel_id: "21" }) });
-        await settle();
-        expect(world.cursor("20")).toBe("100");
-        if (explicit) {
-          expect(world.finished()).toBe(true);
-          const error = await world.outcome;
-          expect(error).toBeInstanceOf(MessengerError);
-          expect((error as MessengerError).status).toBe(status);
-          expect(world.received).toEqual([]);
-          expect(world.cursor("21")).toBe("100");
-          expect(world.socket.closed).toBe(true);
-          expect(world.timers.pending.size).toBe(0);
-        } else {
-          expect(world.finished()).toBe(false);
-          expect(world.received).toEqual(["21:102"]);
-          expect(world.cursor("21")).toBe("102");
-          expect(world.socket.closed).toBe(false);
-          expect(world.intake.channels()).not.toContain("20");
-          world.live.close();
-          expect(await world.outcome).toBeUndefined();
-          expect(world.timers.pending.size).toBe(0);
+    posix(
+      `remote ${status} history loss is ${explicit ? "fatal for an explicit target" : "skipped for a discovered target"}`,
+      async () => {
+        const world = await cursorWorld(explicit);
+        try {
+          world.rest.state.messages.push(ownerMessage("101"));
+          world.rest.state.failure.set("/channels/20/messages", status);
+          world.socket.hello();
+          world.socket.ready(1);
+          world.socket.receive({ op: 0, t: "MESSAGE_CREATE", s: 2, d: ownerMessage("102", { channel_id: "21" }) });
+          await settle();
+          expect(world.cursor("20")).toBe("100");
+          if (explicit) {
+            expect(world.finished()).toBe(true);
+            const error = await world.outcome;
+            expect(error).toBeInstanceOf(MessengerError);
+            expect((error as MessengerError).status).toBe(status);
+            expect(world.received).toEqual([]);
+            expect(world.cursor("21")).toBe("100");
+            expect(world.socket.closed).toBe(true);
+            expect(world.timers.pending.size).toBe(0);
+          } else {
+            expect(world.finished()).toBe(false);
+            expect(world.received).toEqual(["21:102"]);
+            expect(world.cursor("21")).toBe("102");
+            expect(world.socket.closed).toBe(false);
+            expect(world.intake.channels()).not.toContain("20");
+            world.live.close();
+            expect(await world.outcome).toBeUndefined();
+            expect(world.timers.pending.size).toBe(0);
+          }
+        } finally {
+          await world.close();
         }
-      } finally {
-        await world.close();
-      }
-    });
+      },
+    );
   }
 }
 
 for (const explicit of [false, true]) {
-  test(`${explicit ? "explicit" : "discovered"} watched cursor deletion stops live intake without rebaselining`, async () => {
-    const world = await cursorWorld(explicit);
-    try {
-      world.socket.hello();
-      world.socket.ready(1);
-      await settle();
-      expect(world.cursor("20")).toBe("100");
-      expect(world.finished()).toBe(false);
-      unlinkSync(world.path("20"));
-      const requests = world.rest.requests.length;
-      world.socket.receive({ op: 0, t: "MESSAGE_CREATE", s: 2, d: ownerMessage("101") });
-      world.socket.receive({ op: 0, t: "MESSAGE_CREATE", s: 3, d: ownerMessage("102") });
-      await settle();
-      expect({
-        finished: world.finished(),
-        received: world.received,
-        cursorExists: existsSync(world.path("20")),
-        closed: world.socket.closed,
-        timers: world.timers.pending.size,
-      }).toEqual({ finished: true, received: [], cursorExists: false, closed: true, timers: 0 });
-      const error = await world.outcome;
-      expect(error).toBeInstanceOf(MessengerError);
-      expect((error as MessengerError).status).toBe(0);
-      expect(world.rest.requests).toHaveLength(requests);
-      world.timers.advance(600_000);
-      await settle();
-      expect(existsSync(world.path("20"))).toBe(false);
-      expect(world.received).toEqual([]);
-      expect(world.sockets).toHaveLength(1);
-    } finally {
-      await world.close();
-    }
-  });
+  posix(
+    `${explicit ? "explicit" : "discovered"} watched cursor deletion stops live intake without rebaselining`,
+    async () => {
+      const world = await cursorWorld(explicit);
+      try {
+        world.socket.hello();
+        world.socket.ready(1);
+        await settle();
+        expect(world.cursor("20")).toBe("100");
+        expect(world.finished()).toBe(false);
+        unlinkSync(world.path("20"));
+        const requests = world.rest.requests.length;
+        world.socket.receive({ op: 0, t: "MESSAGE_CREATE", s: 2, d: ownerMessage("101") });
+        world.socket.receive({ op: 0, t: "MESSAGE_CREATE", s: 3, d: ownerMessage("102") });
+        await settle();
+        expect({
+          finished: world.finished(),
+          received: world.received,
+          cursorExists: existsSync(world.path("20")),
+          closed: world.socket.closed,
+          timers: world.timers.pending.size,
+        }).toEqual({ finished: true, received: [], cursorExists: false, closed: true, timers: 0 });
+        const error = await world.outcome;
+        expect(error).toBeInstanceOf(MessengerError);
+        expect((error as MessengerError).status).toBe(0);
+        expect(world.rest.requests).toHaveLength(requests);
+        world.timers.advance(600_000);
+        await settle();
+        expect(existsSync(world.path("20"))).toBe(false);
+        expect(world.received).toEqual([]);
+        expect(world.sockets).toHaveLength(1);
+      } finally {
+        await world.close();
+      }
+    },
+  );
 }
 
-test("a first-seen scope-all channel still seeds its own cursor and deduplicates live messages", async () => {
+posix("a first-seen scope-all channel still seeds its own cursor and deduplicates live messages", async () => {
   const world = await cursorWorld(false);
   try {
     world.socket.hello();

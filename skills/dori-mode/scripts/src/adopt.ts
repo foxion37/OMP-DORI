@@ -1,19 +1,31 @@
 /** `dori adopt`: a lane that is already running, registered from its session id instead of opened. */
 import { parseRef } from "../../../../src/runtime/types.ts";
+import { withLaunchLock } from "./delivery-lock.ts";
 import type { FlowDeps } from "./done-flow.ts";
-import { type LaunchInput, validateLaunch } from "./launch.ts";
+import { LaunchError } from "./launch.ts";
+import { type LaunchInput, validateLaunch } from "./launch-input.ts";
 import { laneLabel } from "./labels.ts";
 import { groupOf } from "./placement.ts";
 import { type Lane, sessionFields, upgradeLane } from "./registry.ts";
 import { iso } from "./run.ts";
 
-export const adoptLane = async (deps: FlowDeps, input: LaunchInput & { readonly pane: string }): Promise<Lane> => {
-  await validateLaunch(deps, input);
+export const adoptLane = async (
+  deps: FlowDeps,
+  input: LaunchInput & { readonly pane: string },
+  locked = false,
+): Promise<Lane> => {
+  await validateLaunch(deps, input, LaunchError);
+  if (!locked) {
+    const held = await withLaunchLock(deps, input.key, () => adoptLane(deps, input, true));
+    if (!held.ok) throw new LaunchError(`lane ${input.key} held: ${held.holder}`);
+    return held.value;
+  }
+  const thread = input.thread?.trim() ? input.thread : "none";
   const base: Lane = {
     key: input.key,
     title: input.title,
-    thread: input.thread ?? "none",
-    label: laneLabel({ title: input.title, thread: input.thread ?? "none" }),
+    thread,
+    label: laneLabel({ title: input.title, thread }),
     brief: input.brief,
     done: input.done,
     cwd: input.cwd ?? deps.config.defaultCwd,
@@ -30,6 +42,6 @@ export const adoptLane = async (deps: FlowDeps, input: LaunchInput & { readonly 
     ...(input.group === undefined ? {} : { group: input.group }),
     ...(workspace === undefined ? {} : { workspace }),
   };
-  await deps.registry.write(lane);
+  if (!(await deps.registry.create(lane))) throw new LaunchError(`lane ${input.key} is already registered`);
   return lane;
 };

@@ -9,17 +9,12 @@ import {
   type VerifyPrResult,
 } from "./verify-pr-check.ts";
 
-export const verifyPr = async (
-  repo: string,
-  number: number,
-  run: Runner,
-  options: VerifyPrOptions = {},
-): Promise<VerifyPrResult> => {
-  const errors = optionErrors(repo, number, options);
-  if (errors.length) return failed(repo, number, errors);
-  const api = async (endpoint: string): Promise<unknown> => {
+/** One read-only GitHub API call through `gh api`, killed after 120 seconds; a failure or non-JSON answer throws. */
+export const ghGet =
+  (run: Runner, cwd?: string) =>
+  async (endpoint: string): Promise<unknown> => {
     const r = await run(["gh", "api", "--method", "GET", endpoint], {
-      ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
+      ...(cwd !== undefined ? { cwd } : {}),
       timeoutMs: 120_000,
     });
     if (r.code !== 0) throw new Error(`gh api ${endpoint}: exit ${r.code}: ${(r.err || r.out).trim()}`);
@@ -29,6 +24,16 @@ export const verifyPr = async (
       throw new Error(`gh api ${endpoint}: invalid JSON`);
     }
   };
+
+export const verifyPr = async (
+  repo: string,
+  number: number,
+  run: Runner,
+  options: VerifyPrOptions = {},
+): Promise<VerifyPrResult> => {
+  const errors = optionErrors(repo, number, options);
+  if (errors.length) return failed(repo, number, errors);
+  const api = ghGet(run, options.cwd);
   try {
     const root = `repos/${repo}`;
     const metadata = (value: unknown): { body: string | null; head: { sha: string }; commits: number } => {

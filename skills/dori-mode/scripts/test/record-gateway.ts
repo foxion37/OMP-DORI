@@ -89,8 +89,7 @@ class Gateway {
     const frame = JSON.parse(data) as {
       op: number;
       d:
-        | number
-        | { token?: string; session_id?: string; seq?: number; presence?: { status?: string }; status?: string };
+        number | { token?: string; session_id?: string; seq?: number; presence?: { status?: string }; status?: string };
     };
     if (frame.op === 1) {
       if (frame.d !== (sockets.length === 1 ? 3 : 4)) throw new Error("heartbeat lost its sequence");

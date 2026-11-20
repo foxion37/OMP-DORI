@@ -5,8 +5,11 @@ import { liveWorld, settle } from "./discord-inbound-live-fakes.ts";
 
 const options = { ownerId: "10", channelIds: ["20"] };
 
+// POSIX-only: the Discord inbound queue requires a private (0700) uid-owned directory.
+const posix = test.skipIf(process.platform === "win32");
+
 for (const ending of ["stop", "terminal"] as const) {
-  test(`${ending} drains an active REST backfill before done and drops queued dispatches`, async () => {
+  posix(`${ending} drains an active REST backfill before done without delivering queued dispatches`, async () => {
     const world = await liveWorld([ownerMessage("100")], options);
     const [socket] = world.sockets;
     if (!socket) throw new Error("gateway did not open");
@@ -59,7 +62,7 @@ for (const ending of ["stop", "terminal"] as const) {
   });
 }
 
-test("stop releases a pending backfill retry and retires all owned timers", async () => {
+posix("stop releases a pending backfill retry and retires all owned timers", async () => {
   const world = await liveWorld([ownerMessage("100")], options);
   const [socket] = world.sockets;
   if (!socket) throw new Error("gateway did not open");
@@ -84,7 +87,7 @@ test("stop releases a pending backfill retry and retires all owned timers", asyn
   }
 });
 
-test("an active backfill failure after stop still rejects done without committing or emitting", async () => {
+posix("an active backfill failure after stop still rejects done without committing or emitting", async () => {
   const world = await liveWorld([ownerMessage("100")], options);
   const [socket] = world.sockets;
   if (!socket) throw new Error("gateway did not open");

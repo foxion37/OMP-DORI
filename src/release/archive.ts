@@ -43,7 +43,7 @@ export function readArchive(archive: Uint8Array, manifest: ReleaseManifest): rea
   const seen = new Set<string>();
   const files: ArchiveFile[] = [];
   let end = false;
-  for (let offset = 0; offset < tar.length; ) {
+  for (let offset = 0; offset < tar.length;) {
     const header = tar.subarray(offset, offset + 512);
     if (header.every((byte) => byte === 0)) {
       if (tar.length - offset < 1024 || tar.subarray(offset).some((byte) => byte !== 0))

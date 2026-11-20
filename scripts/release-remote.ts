@@ -39,7 +39,7 @@ export function notes(manifest: ReleaseManifest): string {
     `Pinned external omp-ulw: \`${manifest.ompUlw.commit}\`; dependency bodies are not bundled.`,
     `Verify all files in \`SHA256SUMS\` before running \`bash install.sh --version ${manifest.tag}\` from this release.`,
     `Installation, prerequisites and support limits: https://github.com/${RELEASE_REPOSITORY}/blob/${manifest.commit}/docs/releases.md`,
-    `Publication requires all four trusted own-main CI jobs at this exact commit: https://github.com/${RELEASE_REPOSITORY}/commit/${manifest.commit}/checks`,
+    `Publication requires all required trusted own-main CI jobs at this exact commit: https://github.com/${RELEASE_REPOSITORY}/commit/${manifest.commit}/checks`,
     "Installation starts no messenger, watcher, service or model work. Existing user configuration remains user-owned.",
     "Stop Dori before install/update/rollback; activation holds while a live actor is detected.",
   ].join("\n\n");

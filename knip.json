@@ -5,25 +5,30 @@
       "entry": [
         "scripts/update-supervisor.ts",
         "scripts/source-dependencies.ts",
+        "scripts/source-configuration.ts",
+        "scripts/verify-consumer-release.ts",
+        "scripts/consumer-smoke-harness.ts",
         "scripts/bench-discord-intake.ts",
         "src/update/deployment-launcher.ts",
-        "skills/dori-mode/scripts/src/cli.ts",
+        "src/release/automatic.ts",
+        "src/release/references.ts",
         "src/update/reviewer-guard.ts",
         "src/update/worker-guard.ts",
-        "test/**/*.test.ts",
-        "skills/dori-mode/scripts/test/**/*.test.ts",
-        "skills/dori-mode/scripts/test/record-gateway.ts",
-        "skills/dori-mode/scripts/test/record-discord-inbound.ts",
-        "skills/dori-mode/scripts/test/record-fetch.ts",
-        "skills/dori-mode/scripts/test/record-discord.ts"
+        "test/**/*.test.ts"
       ],
-      "project": [
-        "src/**/*.ts",
-        "scripts/**/*.ts",
-        "test/**/*.ts",
-        "skills/dori-mode/scripts/src/**/*.ts",
-        "skills/dori-mode/scripts/test/**/*.ts"
-      ]
+      "project": ["src/**/*.ts", "scripts/**/*.ts", "test/**/*.ts"]
+    },
+    "skills/dori-mode/scripts": {
+      "entry": [
+        "test/**/*.test.ts",
+        "test/record-gateway.ts",
+        "test/record-discord-inbound.ts",
+        "test/record-discord-gateway.ts",
+        "test/record-fetch.ts",
+        "test/record-discord.ts",
+        "test/record-telegram-startup.ts"
+      ],
+      "project": ["src/**/*.ts", "test/**/*.ts"]
     },
     "extension": {
       "entry": ["index.ts", "test/**/*.test.ts", "test/fake-ulw.ts"],
@@ -31,7 +36,7 @@
     },
     "test/fixtures/omp-native-host": {
       "entry": ["compose.ts"],
-      "project": ["compose.ts"]
+      "project": ["compose.ts", "host.ts"]
     }
   },
   "ignoreExportsUsedInFile": true

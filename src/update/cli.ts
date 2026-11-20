@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { UpdateDetectionUnavailable, UpdateError } from "./config.ts";
+import { UpdateDetectionUnavailable, UpdateError, UpdateLockBusy } from "./config.ts";
 import { DoriUpdater } from "./controller.ts";
 import { restartDeployment } from "./deployment.ts";
 import { loadUpdateConfig } from "./load.ts";
@@ -21,7 +21,10 @@ const USAGE = `dori upstream <check|stage|watch|status|snapshot|restore|recover|
   restart     restart only the configured managed deployment through its identity-bound lock and health readback
 Default is staging only. Explicit promotion config enables verified publication and optional running Dori replacement.`;
 
-/** Exit codes: 0 ok/unchanged/ready, 3 held/failed candidate, 4 detector unavailable (retryable), 2 operator error, 130 interrupted. */
+/**
+ * Exit codes: 0 ok/unchanged/ready, 3 held/failed candidate, 4 detector unavailable (retryable), 5 root locked by a
+ * verified live controller (retryable), 2 operator error, 130 interrupted.
+ */
 export async function runUpdate(argv: readonly string[]): Promise<number> {
   let updater: DoriUpdater | undefined;
   const stop = new AbortController();
@@ -121,7 +124,8 @@ export async function runUpdate(argv: readonly string[]): Promise<number> {
           visible && error instanceof Error ? error.message : "operation failed; inspect dedicated updater artifacts",
       }),
     );
-    return stop.signal.aborted ? 130 : error instanceof UpdateDetectionUnavailable ? 4 : 2;
+    if (stop.signal.aborted) return 130;
+    return error instanceof UpdateDetectionUnavailable ? 4 : error instanceof UpdateLockBusy ? 5 : 2;
   } finally {
     process.removeListener("SIGTERM", interrupt);
     process.removeListener("SIGINT", interrupt);

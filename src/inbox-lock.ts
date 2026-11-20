@@ -1,5 +1,7 @@
-import { linkSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
+import { basename, dirname, join } from "node:path";
 import { INBOX_LOCK_STALE_MS } from "./store-types.ts";
 
 const readOrUndefined = (path: string): string | undefined => {
@@ -43,8 +45,15 @@ function lockStale(path: string, content: string, now: number): boolean {
   return now - at > INBOX_LOCK_STALE_MS;
 }
 
+/**
+ * Takes the lock at `path` (created O_EXCL, holding pid, host, time and a unique nonce) and returns its release, or
+ * undefined while another process holds it. A stale lock is taken over under a fixed-length sibling claim named by
+ * the target basename and observed-content digest, itself taken with this function so dead claimers are recoverable.
+ * Only the claim holder removes the lock, and only when it still reads as the stale snapshot the claim names: a taker
+ * that paused after reading it can never remove a lock another process took over meanwhile.
+ */
 export function takeInboxLock(path: string, now: number): (() => void) | undefined {
-  const mine = JSON.stringify({ pid: process.pid, host: hostname(), at: now });
+  const mine = JSON.stringify({ pid: process.pid, host: hostname(), at: now, nonce: randomUUID() });
   for (let tries = 0; tries < 2; tries++) {
     try {
       writeFileSync(path, mine, { flag: "wx" });
@@ -57,22 +66,14 @@ export function takeInboxLock(path: string, now: number): (() => void) | undefin
     const seen = readOrUndefined(path);
     if (seen === undefined) continue;
     if (!lockStale(path, seen, now)) return undefined;
-    const aside = `${path}.${process.pid}.stale`;
+    const digest = createHash("sha256").update(basename(path)).update("\0").update(seen).digest("hex");
+    const claim = takeInboxLock(join(dirname(path), `.inbox-claim-${digest}`), now);
+    if (!claim) return undefined;
     try {
-      renameSync(path, aside);
-    } catch {
-      continue;
+      if (readOrUndefined(path) === seen) rmSync(path, { force: true });
+    } finally {
+      claim();
     }
-    if (readOrUndefined(aside) !== seen) {
-      try {
-        linkSync(aside, path);
-      } catch {
-        // a third process holds the lock now; either way it is not ours
-      }
-      rmSync(aside, { force: true });
-      return undefined;
-    }
-    rmSync(aside, { force: true });
   }
   return undefined;
 }

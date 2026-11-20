@@ -1,37 +1,25 @@
-import { configPath, fill, isOmpCommand } from "./config.ts";
+import { configPath, fill } from "./config.ts";
+import { renderTemplate } from "./launch-template.ts";
+import { type LaunchInput, validateLaunch } from "./launch-input.ts";
 import type { FlowDeps } from "./done-flow.ts";
+import { withLaunchLock } from "./delivery-lock.ts";
 import { laneGoalActive } from "./goal-record.ts";
-import { BRIEF_START, footer, originalBrief, quoteForPane } from "./launch-footer.ts";
-import { applyLaneLabel, laneLabel } from "./labels.ts";
-import { type PlaceInput, type Placed, GROUP_NAME, placeLane } from "./placement.ts";
-import type { SessionRef } from "../../../../src/runtime/types.ts";
-import { LANE_KEY, type Lane, RESERVED_LANE_KEY } from "./registry.ts";
-import { iso, runtimesOf } from "./run.ts";
+import { BRIEF_START, footer, originalBrief } from "./launch-footer.ts";
+import { mayRunOmpArgv } from "../../../../src/runtime/omp-argv.ts";
+import { selectionFor } from "./launch-selection.ts";
+import { laneStartCommand, openLaneSession, type OpenedLane } from "./launch-session.ts";
+import { applyLaneLabel, laneLabel, laneLabelOf } from "./labels.ts";
+import { placementSpec } from "./placement.ts";
+import { type Lane } from "./registry.ts";
+import { type ChosenRuntimes, iso, runtimesOf } from "./run.ts";
 import { Reports } from "./reports.ts";
-import { doneSyntaxErrors } from "./signals.ts";
-import type { BudgetLimits } from "./supervision-observe.ts";
 import { Lessons, renderLessons } from "./lessons.ts";
 import { laneLaunchEnv, TokenFileError } from "./slack-token.ts";
 import { startupFailure } from "./startup-screen.ts";
 import { FIRST_CHECK_MS, launchFinished, launchScreen, launchStatus, lastLines } from "./launch-finished.ts";
-
-export type LaunchInput = {
-  readonly key: string;
-  readonly title: string;
-  readonly brief: string;
-  readonly done: string;
-  readonly thread?: string;
-  readonly model?: string;
-  readonly cwd?: string;
-  readonly budget?: BudgetLimits;
-  readonly activityPaths?: readonly string[];
-  /** Work stream: a lane of the same group is split below, a new group opens its own workspace. */
-  readonly group?: string;
-};
+import { ready } from "./startup-check.ts";
 
 export class LaunchError extends Error {}
-
-// After the first check (launch-finished's FIRST_CHECK_MS) the screen and status are re-read every 10 s.
 const RECHECK_MS = 10_000;
 const unreported = (s: string | undefined): boolean => s === undefined || s === "unknown";
 // OMP goals come from its trusted current-session record, never quoted screen text. Custom agents may use their
@@ -44,62 +32,30 @@ const goalShown = (screen: string, marker: string): boolean =>
     .join("\n")
     .includes(marker);
 
-export const validateLaunch = async (deps: FlowDeps, input: LaunchInput): Promise<void> => {
-  if (!LANE_KEY.test(input.key)) throw new LaunchError(`key must match ${LANE_KEY}`);
-  if (input.key === RESERVED_LANE_KEY)
-    throw new LaunchError(`lane key "${RESERVED_LANE_KEY}" is reserved for the lead`);
-  if (await deps.registry.read(input.key)) throw new LaunchError(`lane ${input.key} is already registered`);
-  const errors = doneSyntaxErrors(input.done);
-  if (errors.length) throw new LaunchError(`Done line is not checkable: ${errors.join("; ")}`);
-  if (input.group !== undefined && !GROUP_NAME.test(input.group))
-    throw new LaunchError(`group must match ${GROUP_NAME}`);
-  for (const [name, value] of Object.entries(input.budget ?? {})) {
-    if (value != null && (!Number.isFinite(value) || value < 0)) throw new LaunchError(`invalid ${name} ceiling`);
-  }
-};
-
-/** The statuses that mean the agent is up and taking turns: herdr reports a finished first turn as "done". */
-export const ready = (status: string | undefined): boolean =>
-  status === "idle" || status === "working" || status === "done";
-
-/**
- * One startup check for a session dori started outside a launch (a relay's successor): the screen for a known failure,
- * then the runtime's status. STARTUP_DONE when the session is gone and the lane already finished; a relay keeps its
- * old session unless this returns STARTUP_OK.
- */
-export const checkStartup = async (deps: FlowDeps, key: string, ref: SessionRef): Promise<string> => {
-  const rts = runtimesOf(deps);
-  await deps.clock.sleep(FIRST_CHECK_MS);
-  const screen = await launchScreen(deps, rts, ref, key);
-  if (screen === null) return `STARTUP_DONE ${key}`;
-  const omp = isOmpCommand(deps.config.agentCommand);
-  const bad = startupFailure(screen, omp);
-  if (bad) return `STARTUP_ERROR ${key} ${ref.id}: ${bad}`;
-  const { status, error } = await launchStatus(rts, ref, omp);
-  if (status === "gone" && (await launchFinished(deps, key))) return `STARTUP_DONE ${key}`;
-  if (ready(status)) return `STARTUP_OK ${key} ${ref.id}`;
-  const why = error ? `status lookup failed: ${error}` : `no ready agent status (${status ?? "none"})`;
-  return `STARTUP_UNCONFIRMED ${key} ${ref.id}: ${why}; last lines: ${lastLines(screen)}`;
-};
-
-export const prepareLaunch = async (
-  deps: FlowDeps,
-  input: LaunchInput,
-): Promise<{ readonly lane: Lane; readonly preamble: string; readonly warnings: string[] }> => {
-  await validateLaunch(deps, input);
-  const model = input.model ?? deps.config.defaultModel;
+export const prepareLaunch = async (deps: FlowDeps, input: LaunchInput, queuedBrief?: string) => {
+  await validateLaunch(deps, input, LaunchError);
   const cwd = input.cwd ?? deps.config.defaultCwd;
-  const briefFile = Bun.file(input.brief);
-  if (!(await briefFile.exists())) throw new LaunchError(`brief not found: ${input.brief}`);
+  let briefText: string;
+  if (queuedBrief !== undefined) {
+    briefText = queuedBrief;
+  } else if (input.template) {
+    briefText = renderTemplate(input.template, input.variables ?? {}, deps.env?.["DORI_CONFIG"] ?? configPath());
+  } else {
+    const briefFile = Bun.file(input.brief);
+    if (!(await briefFile.exists())) throw new LaunchError(`brief not found: ${input.brief}`);
+    briefText = originalBrief(await briefFile.text());
+  }
+  const thread = input.thread?.trim() ? input.thread : "none";
   const draft: Lane = {
     key: input.key,
     title: input.title,
-    thread: input.thread ?? "none",
-    label: laneLabel({ title: input.title, thread: input.thread ?? "none" }),
+    thread,
+    label: laneLabel({ title: input.title, thread }),
     brief: input.brief,
     done: input.done,
     cwd,
-    model,
+    model: input.model ?? deps.config.defaultModel,
+    launchSelection: selectionFor(deps.config),
     openedAt: iso(deps.clock),
     reportProtocol: "jsonl-v1",
     budget: {
@@ -113,36 +69,35 @@ export const prepareLaunch = async (
   };
   // A damaged journal line is a warning: it must not keep a lane from starting or hide the lessons around it.
   const { lessons, problems, omitted } = new Lessons(deps.config.stateDir).forRepo(cwd);
-  return {
-    lane: draft,
-    // A lesson the cap kept out is named too: a brief that silently lacks a standing rule is the bug this catches.
-    warnings: [
-      ...problems.map((problem) => `LESSON_WARNING ${problem}`),
-      ...omitted.map(
-        (lesson) => `LESSON_OMITTED ${lesson.id} (${lesson.scope === "global" ? "global" : lesson.cwd}) ${lesson.rule}`,
-      ),
-    ],
-    preamble: `${renderLessons(lessons)}${BRIEF_START}\n${originalBrief(await briefFile.text())}\n${footer(draft, deps.config.leadPane, deps.config.repoIdentities, runtimesOf(deps).choice?.kind)}`,
-  };
+  // A lesson the cap kept out is named too: a brief that silently lacks a standing rule is the bug this catches.
+  const warnings = [
+    ...problems.map((problem) => `LESSON_WARNING ${problem}`),
+    ...omitted.map(
+      (lesson) => `LESSON_OMITTED ${lesson.id} (${lesson.scope === "global" ? "global" : lesson.cwd}) ${lesson.rule}`,
+    ),
+  ];
+  const { leadPane, repoIdentities, freshness } = deps.config;
+  const laneFooter = footer(draft, leadPane, repoIdentities, runtimesOf(deps).choice?.kind, freshness);
+  const preamble = `${renderLessons(lessons)}${BRIEF_START}\n${briefText}\n${laneFooter}`;
+  return { lane: draft, briefText, preamble, warnings } as const;
 };
 
 export const launchLane = async (
   deps: FlowDeps,
   input: LaunchInput,
 ): Promise<{ readonly lane: Lane; readonly startup: string; readonly warnings: string[] }> => {
-  const prepared = await prepareLaunch(deps, input);
-  return { ...(await startLane(deps, input, prepared.lane, prepared.preamble)), warnings: prepared.warnings };
+  await validateLaunch(deps, input, LaunchError);
+  const held = await withLaunchLock(deps, input.key, async () => {
+    const opened = await openLaunch(deps, input);
+    return { ...(await opened.start()), warnings: opened.warnings };
+  });
+  if (!held.ok) throw new LaunchError(`lane ${input.key} held: ${held.holder}`);
+  return held.value;
 };
 
-const startLane = async (
-  deps: FlowDeps,
-  input: LaunchInput,
-  draft: Lane,
-  preamble: string,
-): Promise<{ readonly lane: Lane; readonly startup: string }> => {
-  const model = input.model ?? deps.config.defaultModel;
-  const cwd = input.cwd ?? deps.config.defaultCwd;
-  await Bun.write(input.brief, preamble);
+/** Caller holds the per-key launch lock; capacity admission only needs to span this phase. */
+export const openLaunch = async (deps: FlowDeps, input: LaunchInput, queuedBrief?: string) => {
+  const { lane: draft, preamble, warnings } = await prepareLaunch(deps, input, queuedBrief);
   const rts = runtimesOf(deps);
   const label = laneLabel(draft);
   let env: Record<string, string>;
@@ -151,28 +106,39 @@ const startLane = async (
   } catch (e) {
     throw e instanceof TokenFileError ? new LaunchError(`token file refused: ${e.message}`) : e;
   }
-  let placed: Placed;
-  try {
-    const place: PlaceInput = {
-      name: label,
-      cwd,
-      env,
-      ...(input.group === undefined ? {} : { group: input.group }),
-    };
-    placed = await placeLane(deps, place);
-  } catch (e) {
-    throw new LaunchError(`session create failed: ${e instanceof Error ? e.message : String(e)}`);
+  // What the runtime names the session: the lane label, so the tab, workspace or pane shows `DICO : <task>`.
+  const spec = await placementSpec(deps, input.group, {
+    name: label,
+    role: "lane",
+    cwd: input.cwd ?? deps.config.defaultCwd,
+    env,
+  });
+  const opened = await openLaneSession(deps.registry, rts, spec, draft, {
+    preamble,
+    generated: queuedBrief !== undefined || Boolean(input.template),
+  });
+  if (opened.kind === "failed") {
+    const why = opened.error instanceof Error ? opened.error.message : String(opened.error);
+    throw new LaunchError(`${opened.what}: ${why}`);
   }
-  const { ref, ...seat } = placed;
+  if (opened.kind === "taken") throw new LaunchError(`lane ${input.key} is already registered`);
+  return { warnings, start: () => startLane(deps, input, { opened, rts }) };
+};
+
+const startLane = async (
+  deps: FlowDeps,
+  input: LaunchInput,
+  { opened, rts }: { readonly opened: Extract<OpenedLane, { kind: "opened" }>; readonly rts: ChosenRuntimes },
+): Promise<{ readonly lane: Lane; readonly startup: string }> => {
+  const model = input.model ?? deps.config.defaultModel;
+  const cwd = input.cwd ?? deps.config.defaultCwd;
+  const { lane, ref } = opened;
   const pane = ref.id;
-  // Registered before the agent starts: dori report refuses an unknown key, so a fast lane's first report would be lost.
-  const lane: Lane = { ...draft, ...seat };
-  await deps.registry.write(lane);
   // A tab or workspace dori created already carries the label; a split pane only needs its own rename.
-  if (seat.placement === "split" && ref.runtime === "herdr")
-    for (const line of await applyLaneLabel(deps, { runtime: ref.runtime, pane }, label)) console.error(line);
-  // The launch is an activity record, not a report: it starts the journal (so the screen is watched for a stall) but is
-  // never posted to the thread as if the agent had reported.
+  if (lane.placement === "split" && ref.runtime === "herdr")
+    for (const line of await applyLaneLabel(deps, { runtime: ref.runtime, pane }, laneLabelOf(lane)))
+      console.error(line);
+  // Launch starts the activity journal; it is not a lane report and is never posted to the thread.
   new Reports(deps.config.stateDir).append({
     type: "activity",
     key: lane.key,
@@ -184,7 +150,7 @@ const startLane = async (
   // The session can be written while start is still returning; its goal must belong to this invocation.
   const launchedAt = deps.clock.now();
   try {
-    await rts.for(ref).start(ref, fill(deps.config.agentCommand, { model, prompt }).map(quoteForPane).join(" "));
+    await rts.for(ref).start(ref, laneStartCommand(lane, fill(deps.config.agentCommand, { model, prompt })));
   } catch (e) {
     return { lane, startup: `STARTUP_ERROR ${input.key} ${pane}: start failed: ${lastLines(String(e))}` };
   }
@@ -192,20 +158,25 @@ const startLane = async (
   await deps.clock.sleep(FIRST_CHECK_MS);
   const screen = await launchScreen(deps, rts, ref, input.key);
   if (screen === null) return { lane, startup: `STARTUP_DONE ${input.key}` };
-  const ompAgent = isOmpCommand(deps.config.agentCommand);
-  const bad = startupFailure(screen, ompAgent);
-  if (bad) return { lane, startup: `STARTUP_ERROR ${input.key} ${pane}: ${bad}` };
+  const ompAgent = mayRunOmpArgv(deps.config.agentCommand);
   const { status, error } = await launchStatus(rts, ref, ompAgent);
+  const marker = deps.config.goalMarker;
+  const omp = ompAgent ? { run: deps.run, rts, stateDir: deps.config.stateDir, ref } : undefined;
+  const recordedGoal = () => laneGoalActive(deps.config.sessionsDir, cwd, input.key, launchedAt, omp);
+  const hasGoal = async (shown: string): Promise<boolean> =>
+    (!omp && goalShown(shown, marker)) || (await recordedGoal());
+  // A working agent with its goal may be reading a file or log that quotes a failure phrase, as the re-checks allow. An
+  // empty goal marker opts out of the goal check, so only a recorded goal vouches for one here.
+  const bad = startupFailure(screen, ompAgent);
+  const goalProven = async (): Promise<boolean> =>
+    (marker !== "" && !omp && goalShown(screen, marker)) || (await recordedGoal());
+  if (bad && !(status === "working" && !error && (await goalProven())))
+    return { lane, startup: `STARTUP_ERROR ${input.key} ${pane}: ${bad}` };
   if (status === "gone" && (await launchFinished(deps, input.key)))
     return { lane, startup: `STARTUP_DONE ${input.key}` };
   // No status and no lookup error is an agent still starting (a slow host can take minutes, #202): it is waited for in
   // the goal wait. A lookup error, a `shell` or any other status ends the launch below at once.
   if (ready(status) || (unreported(status) && !error)) {
-    const marker = deps.config.goalMarker;
-    const omp = ompAgent ? { run: deps.run, rts, stateDir: deps.config.stateDir, ref } : undefined;
-    const hasGoal = async (shown: string): Promise<boolean> =>
-      (!omp && goalShown(shown, marker)) ||
-      (await laneGoalActive(deps.config.sessionsDir, cwd, input.key, launchedAt, omp));
     const rechecks = Math.max(0, Math.ceil((deps.config.startupWaitSeconds * 1000 - FIRST_CHECK_MS) / RECHECK_MS));
     let shown = screen;
     let current = status;

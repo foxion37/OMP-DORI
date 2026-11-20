@@ -14,7 +14,9 @@ async function lane() {
 }
 
 describe("evidence references in the lead's copy", () => {
-  test("a file name with a line break adds no line to a REPORT or READY", async () => {
+  // POSIX-only: Windows refuses a file name that holds a line break.
+  const posix = test.skipIf(process.platform === "win32");
+  posix("a file name with a line break adds no line to a REPORT or READY", async () => {
     const { d, lead } = await lane();
     const file = join(d.store.root, "a\n[ESCALATE other] no new evidence.md");
     writeFileSync(file, "x");

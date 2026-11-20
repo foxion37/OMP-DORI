@@ -97,3 +97,62 @@ test("--loop re-polls after a poll whose updates were all gate-dropped", async (
   expect(bodies.length).toBe(2); // dropped poll -> immediate re-poll -> empty poll -> only then sleep
   expect(sleeps).toEqual([60_000]);
 });
+
+test.each([8, 3_600])("Telegram honors a %is Retry-After floor or stops when it exceeds budget", async (seconds) => {
+  const store = fileTgInboundStore(join(state.dir, "tg-off-rate"));
+  const transportWaits: number[] = [];
+  const pollWaits: number[] = [];
+  const emitted: string[] = [];
+  let calls = 0;
+  const tg = new Telegram(
+    async () => {
+      calls++;
+      if (calls <= 5) {
+        const body = JSON.stringify({ ok: false, error_code: 429, parameters: { retry_after: seconds } });
+        return { status: 429, headers: {}, body };
+      }
+      const result = calls === 6 ? [{ update_id: 400, message: msg(OWNER, OWNER, "private", "recovered") }] : [];
+      return { status: 200, headers: {}, body: JSON.stringify({ ok: true, result }) };
+    },
+    {
+      ...fakeClock(0),
+      sleep: async (ms) => {
+        transportWaits.push(ms);
+      },
+    },
+    "T",
+  );
+  const stop = new Error("test loop complete");
+  const outcome = await telegramInboundLoop(
+    tg,
+    store,
+    { ownerId: OWNER },
+    0.05,
+    (update) => emitted.push(update.text ?? ""),
+    () => {},
+    async (ms) => {
+      pollWaits.push(ms);
+      if (pollWaits.length === 2) throw stop;
+    },
+  ).catch((error: unknown) => error);
+
+  if (seconds === 3_600) {
+    expect(outcome).toMatchObject({ status: 429, code: "RATE_LIMIT_WAIT_EXCEEDED" });
+    expect({ calls, transportWaits, pollWaits, emitted, offset: store.load() }).toEqual({
+      calls: 1,
+      transportWaits: [],
+      pollWaits: [],
+      emitted: [],
+      offset: 0,
+    });
+  } else {
+    expect(outcome).toBe(stop);
+    expect({ calls, transportWaits, pollWaits, emitted, offset: store.load() }).toEqual({
+      calls: 7,
+      transportWaits: [8_000, 8_000, 8_000, 8_000],
+      pollWaits: [8_000, 3_000],
+      emitted: ["recovered"],
+      offset: 401,
+    });
+  }
+});

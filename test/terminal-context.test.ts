@@ -10,35 +10,44 @@ import { captureIo } from "./inbox-setup.ts";
 import { recorded, recordingOmp } from "./terminal-context-setup.ts";
 import { expectContext, managedTerminal } from "./terminal-managed-setup.ts";
 
+// POSIX-only: the transport fixture records through /bin/sh shebang programs and `env -0`.
+const posix = test.skipIf(process.platform === "win32");
+
 for (const runtime of ["herdr", "hc"] as const) {
   for (const conflicting of [false, true]) {
-    test(`${runtime}: harness agents and controllers cross a daemon with conflicting=${conflicting} defaults`, async () => {
-      const f = managedTerminal(runtime, conflicting);
-      try {
-        await captureIo(async () => {
-          await up(f.deps, f.cwd);
-          return 0;
-        });
-        await startLane(f.deps, "transport-lane", f.brief, { cwd: f.cwd, group: "w1" });
-        expect(f.daemon.captures).toHaveLength(5);
-        const agents = f.daemon.captures.filter((capture) => capture.stdout.includes("\nENV\n"));
-        expect(agents).toHaveLength(3);
-        for (const capture of agents) {
-          const child = expectContext(capture, f.expected);
-          expect(child.argv.slice(0, f.prefix.length)).toEqual(f.prefix);
+    posix(
+      `${runtime}: harness agents and controllers cross a daemon with conflicting=${conflicting} defaults`,
+      async () => {
+        const f = managedTerminal(runtime, conflicting);
+        try {
+          await captureIo(async () => {
+            await up(f.deps, f.cwd);
+            return 0;
+          });
+          await startLane(f.deps, "transport-lane", f.brief, { cwd: f.cwd, group: "w1" });
+          expect(f.daemon.captures).toHaveLength(5);
+          const agents = f.daemon.captures.filter((capture) => capture.stdout.includes("\nENV\n"));
+          expect(agents).toHaveLength(3);
+          for (const capture of agents) {
+            const child = expectContext(capture, f.expected);
+            expect(child.argv.slice(0, f.prefix.length)).toEqual(f.prefix);
+          }
+          for (const session of f.daemon.sessions.values()) {
+            for (const [key, value] of Object.entries(f.expected)) expect(session.env[key]).toBe(value);
+            expect(session.env["UNRELATED_SECRET"]).toBeUndefined();
+          }
+          expect(recorded(agents[2]!).argv.slice(f.prefix.length, f.prefix.length + 2)).toEqual([
+            "--dori-role",
+            "lane",
+          ]);
+        } finally {
+          await f.daemon.close();
         }
-        for (const session of f.daemon.sessions.values()) {
-          for (const [key, value] of Object.entries(f.expected)) expect(session.env[key]).toBe(value);
-          expect(session.env["UNRELATED_SECRET"]).toBeUndefined();
-        }
-        expect(recorded(agents[2]!).argv.slice(f.prefix.length, f.prefix.length + 2)).toEqual(["--dori-role", "lane"]);
-      } finally {
-        await f.daemon.close();
-      }
-    });
+      },
+    );
   }
 
-  test(`${runtime}: explicit harness shell commands keep literal assignments and argument semantics`, async () => {
+  posix(`${runtime}: explicit harness shell commands keep literal assignments and argument semantics`, async () => {
     const f = managedTerminal(runtime);
     const external = join(f.root, "owner tools", "custom-agent");
     mkdirSync(dirname(external), { recursive: true });
@@ -58,7 +67,7 @@ for (const runtime of ["herdr", "hc"] as const) {
   });
 }
 
-test("fresh reviewer receives the selected context and drops parent pane and managed-startup identities", async () => {
+posix("fresh reviewer receives the selected context and drops parent pane and managed-startup identities", async () => {
   const f = managedTerminal("herdr");
   let child: { argv: string[]; env: Record<string, string> } | undefined;
   f.world.gh = () => ({ code: 0, stdout: JSON.stringify({ headRefOid: "a".repeat(40) }) });

@@ -67,7 +67,13 @@ describe("supervision", () => {
       f.clock.at += 60_000;
       const result = await f.supervisor.sweep(lane, "Working 1m");
       expect(result.state).toBe("blocked");
-      expect(result.usage).toEqual({ key: lane.key, at: new Date(f.clock.at).toISOString(), tokens: 10, costUsd: 1 });
+      expect(result.usage).toEqual({
+        key: lane.key,
+        openedAt: lane.openedAt,
+        at: new Date(f.clock.at).toISOString(),
+        tokens: 10,
+        costUsd: 1,
+      });
       expect(result.alerts).toEqual([
         "wallMinutes ceiling reached (1)",
         "tokens ceiling reached (10)",

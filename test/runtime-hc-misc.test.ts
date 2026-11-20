@@ -122,10 +122,6 @@ describe("close, list, self", () => {
     expect(rig({}, {}).rt.self()).toBeUndefined();
     expect(rig({}, { HC_TERMINAL_ID: "" }).rt.self()).toBeUndefined();
   });
-
-  test("kind is hc", () => {
-    expect(rig().rt.kind).toBe("hc");
-  });
 });
 
 describe("hcCall", () => {

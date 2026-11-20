@@ -4,7 +4,7 @@
  */
 import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { doriLaunchEnv } from "../../../../src/release/runtime.ts";
+import { doriLaunchEnv, laneMessengerOverrides } from "../../../../src/release/runtime.ts";
 import { configPath, type DoriConfig } from "./config.ts";
 
 /** The token file a launcher finds next to its config when DORI_SLACK_TOKEN_FILE is not set. */
@@ -218,5 +218,9 @@ export const laneLaunchEnv = (
   const raw = env["DORI_CONFIG"];
   const relativeConfig = raw !== undefined && !isAbsolute(raw);
   const osPath = relativeConfig ? `${process.cwd()}${sep}${raw}` : (raw ?? config);
-  return { ...doriLaunchEnv(env, osPath, resolved), ...laneTokenEnv(env, osPath) };
+  return {
+    ...doriLaunchEnv(env, osPath, resolved),
+    ...laneTokenEnv(env, osPath),
+    ...laneMessengerOverrides,
+  };
 };

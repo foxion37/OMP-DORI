@@ -30,8 +30,8 @@ describe("duty loop", () => {
     const { w, d, lead } = setup();
     const broken = w.addPane("w1:p9", "idle");
     w.promptFails.set("w1:p9", "herdr exploded");
-    d.store.enqueue(href("w1:p9"), { at: w.clock, from: "cli", text: "to broken" });
-    d.store.enqueue(href("w1:p1"), { at: w.clock, from: "cli", text: "to lead" });
+    await d.store.enqueue(href("w1:p9"), { at: w.clock, from: "cli", text: "to broken" }, false);
+    await d.store.enqueue(href("w1:p1"), { at: w.clock, from: "cli", text: "to lead" }, false);
     const events = await dutyTick(d);
     expect(events).toContainEqual({
       pane: "w1:p9",
@@ -96,7 +96,7 @@ describe("duty loop", () => {
     const { w, d } = setup();
     w.addPane("w1:p9", "idle");
     w.promptFails.set("w1:p9", "herdr exploded\nsecond line");
-    d.store.enqueue(href("w1:p9"), { at: w.clock, from: "cli", text: "SECRET queued message" });
+    await d.store.enqueue(href("w1:p9"), { at: w.clock, from: "cli", text: "SECRET queued message" }, false);
     const events = await dutyTick(d);
     expect(events).toEqual([{ pane: "w1:p9", action: "delivery-ambiguous", detail: "herdr exploded" }]);
   });
@@ -105,7 +105,7 @@ describe("duty loop", () => {
     const { w, d } = setup();
     w.addPane("w1:p9", "idle");
     w.promptFails.set("w1:p9", "herdr exploded");
-    d.store.enqueue(href("w1:p9"), { at: w.clock, from: "cli", text: "to broken" });
+    await d.store.enqueue(href("w1:p9"), { at: w.clock, from: "cli", text: "to broken" }, false);
     const lines: string[] = [];
     const log = console.log;
     console.log = (...a: unknown[]) => void lines.push(a.join(" "));

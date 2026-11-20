@@ -1,7 +1,7 @@
 import { interactiveShellInFront } from "../foreground.ts";
 import { omoScreenIdle } from "../herdr/probe.ts";
 import { withOmpState } from "../omp.ts";
-import type { AgentStatus, ForegroundProcess, Probe } from "../types.ts";
+import type { AgentStatus, ForegroundProcess, Probe, ProbeOptions } from "../types.ts";
 import type { Exec } from "../exec.ts";
 import { hcCall, isKind } from "./exec.ts";
 
@@ -20,9 +20,16 @@ function foregroundOf(value: unknown): ForegroundProcess | undefined {
   const fg = rec(value);
   const name = text(fg?.["name"]);
   if (fg === undefined || name === undefined) return undefined;
-  const argv = Array.isArray(fg["argv"]) ? fg["argv"].filter((a): a is string => typeof a === "string") : [name];
+  // Keep legacy hints for delivery holds; they are not positive bare-shell proof for close recovery.
+  const raw = fg["argv"];
+  const argv = Array.isArray(raw) ? raw.filter((arg): arg is string => typeof arg === "string") : [name];
   const pid = num(fg["pid"]);
-  return { name, argv, ...(pid === undefined ? {} : { pid }) };
+  return {
+    name,
+    argv,
+    ...(pid === undefined ? {} : { pid }),
+    ...(Array.isArray(raw) && argv.length === raw.length ? {} : { argvIncomplete: true }),
+  };
 }
 
 /** The status word of hc's `status` field (an object `{state}`, or a bare word in `ls` rows); undefined when it never reported. */
@@ -71,25 +78,42 @@ async function screenShowsIdle(exec: Exec, id: string): Promise<boolean> {
 /** A probe plus hc's own status word, which `deliver` needs for its compare-and-send gate. */
 export type HcProbe = { readonly probe: Probe; readonly word: AgentStatus };
 
-/**
- * `hc get`, then the #62 screen check: omo reports `working` over OSC 7501 for as long as any monitor or background
- * session is live, even between turns (#178), so a `working` word with no shell in front reads `idle` when the screen
- * positively shows the idle input. A terminal hc no longer knows is `gone`; any other `get` failure throws.
- */
-export async function probeWithWord(exec: Exec, id: string, stateDir?: string): Promise<HcProbe> {
-  let parsed: Probe;
+async function getProbe(exec: Exec, id: string): Promise<Probe> {
   try {
-    parsed = parseProbe(await hcCall(exec, ["get", id]));
+    return parseProbe(await hcCall(exec, ["get", id]));
   } catch (e) {
-    if (isKind(e, "not_found")) return { probe: { status: "gone", shellInFront: false }, word: "gone" };
+    if (isKind(e, "not_found")) return { status: "gone", shellInFront: false };
     throw e;
   }
+}
+
+/**
+ * `working` may be an idle omo with live monitors (#178). For bound delivery, refresh `hc get` after that screen
+ * read, so process attestation and the compare-and-send word use the new foreground rather than the old sample.
+ */
+export async function probeWithWord(
+  exec: Exec,
+  id: string,
+  stateDir?: string,
+  mode: "observe" | "foreground-only" | "refresh-foreground" = "observe",
+): Promise<HcProbe> {
+  let parsed = await getProbe(exec, id);
+  let idle = false;
+  if (mode !== "foreground-only" && parsed.status === "working" && !parsed.shellInFront) {
+    idle = await screenShowsIdle(exec, id);
+    if (mode === "refresh-foreground") {
+      const fresh = await getProbe(exec, id);
+      const pid = parsed.foreground?.[0]?.pid;
+      // A screen observation only describes the same terminal root and foreground process.
+      idle = idle && pid !== undefined && fresh.foreground?.[0]?.pid === pid && fresh.rootPid === parsed.rootPid;
+      parsed = fresh;
+    }
+  }
   const word = parsed.status;
-  if (word === "working" && !parsed.shellInFront && (await screenShowsIdle(exec, id)))
-    parsed = { ...parsed, status: "idle" };
+  if (idle && word === "working" && !parsed.shellInFront) parsed = { ...parsed, status: "idle" };
   return { probe: stateDir === undefined ? parsed : await withOmpState(exec, stateDir, id, parsed), word };
 }
 
-export async function probe(exec: Exec, id: string, stateDir?: string): Promise<Probe> {
-  return (await probeWithWord(exec, id, stateDir)).probe;
+export async function probe(exec: Exec, id: string, stateDir?: string, opts?: ProbeOptions): Promise<Probe> {
+  return (await probeWithWord(exec, id, stateDir, opts?.foregroundOnly ? "foreground-only" : "observe")).probe;
 }

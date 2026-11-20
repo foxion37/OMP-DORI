@@ -119,7 +119,7 @@ describe("duty notices survive queue and settlement retries", () => {
     const kept = join(d.store.root, "duty", "lead.jsonl");
     renameSync(kept, `${kept}.merging`);
     d.store.setRole("lead", href("w1:p1"));
-    for (const m of readQueue(`${kept}.merging`)) d.store.enqueue(href("w1:p1"), m);
+    for (const m of readQueue(`${kept}.merging`)) await d.store.enqueue(href("w1:p1"), m, false);
     await dutyTick(d);
     await dutyTick(d);
     expect(told("LOST")).toBe(1);

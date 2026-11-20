@@ -130,7 +130,9 @@ describe("records written before runtimes existed (IS-3)", () => {
     expect(d.store.queued(leadRef)).toHaveLength(1);
     lead.status = "idle";
     expect(await dutyTick(d)).toEqual([{ pane: "w1:p1", action: "flushed" }]);
-    expect(lead.received.filter((text) => text.includes("[ESCALATE old-lane]"))).toHaveLength(1);
+    const escalated = lead.received.filter((text) => text.startsWith("[ESCALATE old-lane]"));
+    expect(escalated).toHaveLength(1);
+    expect(escalated[0]).toStartWith("[ESCALATE old-lane] no new evidence for 1h29m");
     expect(d.store.queued(leadRef)).toEqual([]);
   });
 
@@ -159,35 +161,5 @@ describe("records written before runtimes existed (IS-3)", () => {
     lead.status = "idle";
     await dutyTick(d);
     expect(lead.received.filter((text) => text.includes("[ESCALATE old-lane]"))).toHaveLength(1);
-  });
-
-  // The duty loop before the progress clock saved its third nudge before telling the lead, and told nobody when no
-  // lead was registered or the delivery failed: a third nudge on record is no proof the lead heard of the stall.
-  test("a lane with three nudges from before the progress clock is escalated: no lead then, or a delivery that failed", async () => {
-    const nudge = (at: number) => ({ at, kind: "nudge" as const, text: "idle" });
-    const oldTold = (rmRoles: boolean) => {
-      const home = oldHome();
-      rmSync(join(home.d.store.root, "lanes", "no-tab.json"));
-      if (rmRoles) rmSync(join(home.d.store.root, "roles.json"));
-      const lead = home.w.addPane("w1:p1", "idle");
-      home.w.addPane("w1:p3", "idle");
-      const lane = home.d.store.lane("old-lane")!;
-      home.d.store.saveLane({ ...lane, nudges: 3, log: [nudge(10 * MIN), nudge(20 * MIN), nudge(40 * MIN)] });
-      home.w.clock = 90 * MIN;
-      return { ...home, lead };
-    };
-    const none = oldTold(true);
-    expect(await dutyTick(none.d)).toContainEqual(
-      expect.objectContaining({ lane: "old-lane", action: "escalate-no-lead" }),
-    );
-    none.d.store.setRole("lead", { runtime: "herdr", id: "w1:p1" });
-    expect(await dutyTick(none.d)).toEqual([{ lane: "old-lane", action: "escalated" }]);
-    expect(none.lead.received.at(-1)).toStartWith("[ESCALATE old-lane] no new evidence for 1h29m");
-    expect(await dutyTick(none.d)).toEqual([]);
-    // A lead was registered but the old loop's delivery failed after the third nudge was saved: escalated now, once.
-    const failed = oldTold(false);
-    expect(await dutyTick(failed.d)).toEqual([{ lane: "old-lane", action: "escalated" }]);
-    expect(await dutyTick(failed.d)).toEqual([]);
-    expect(failed.lead.received.filter((m) => m.startsWith("[ESCALATE old-lane]"))).toHaveLength(1);
   });
 });

@@ -13,6 +13,10 @@
   "engines": {
     "bun": ">=1.4.4"
   },
+  "optionalDependencies": {
+    "@discordjs/opus": "^0.11.0",
+    "@discordjs/voice": "^0.19.2"
+  },
   "devDependencies": {
     "@types/bun": "^1.4.4",
     "typescript": "^5.9.0"

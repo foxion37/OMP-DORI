@@ -1,15 +1,13 @@
-import type { CloseScope, SessionRef } from "../../../../src/runtime/types.ts";
+import type { CloseScope, CreateSpec, SessionRef } from "../../../../src/runtime/types.ts";
 import type { FlowDeps } from "./done-flow.ts";
-import { LANE_KEY, type Lane, sessionFields, sessionOf } from "./registry.ts";
+import { LANE_KEY, type Lane, sessionOf } from "./registry.ts";
 import { runtimesOf } from "./run.ts";
 
 /** A group name is a lane key shape: lowercase, no spaces, and it labels the workspace a group opens. */
 export const GROUP_NAME = LANE_KEY;
 
 export type PlacementPlan =
-  | { readonly kind: "tab" }
-  | { readonly kind: "workspace" }
-  | { readonly kind: "split"; readonly near: SessionRef };
+  { readonly kind: "tab" } | { readonly kind: "workspace" } | { readonly kind: "split"; readonly near: SessionRef };
 
 /**
  * Where a new lane goes. No group: its own tab in `laneWorkspace` (the old behavior). A group with an open lane:
@@ -34,49 +32,43 @@ export type PlaceInput = {
   readonly name: string;
   readonly cwd: string;
   readonly env: Readonly<Record<string, string>>;
-  readonly group?: string | undefined;
 };
 
-/** The lane fields a placement sets, plus the session it opened. */
-export type Placed = { readonly ref: SessionRef } & Pick<
-  Lane,
-  "sessionRef" | "pane" | "tab" | "placement" | "workspace" | "workspaceCreated"
->;
-
-const placed = (ref: SessionRef, placement: NonNullable<Lane["placement"]>, created = false): Placed => ({
-  ref,
-  ...sessionFields(ref),
-  placement,
+/**
+ * The lane record fields a placement sets: how the session was placed, the workspace it sits in, and whether dori made
+ * that workspace (the only ones it closes).
+ */
+export const placementFields = (
+  container: "workspace-root" | "tab" | "split-below",
+  ref: SessionRef,
+): Pick<Lane, "placement" | "workspace" | "workspaceCreated"> => ({
+  placement: container === "workspace-root" ? "workspace" : container === "split-below" ? "split" : "tab",
   ...(ref.group === undefined ? {} : { workspace: ref.group }),
-  ...(created ? { workspaceCreated: true } : {}),
+  ...(container === "workspace-root" ? { workspaceCreated: true } : {}),
 });
 
 /**
- * Opens the lane's session where its plan says: `workspace-root` for a group's first lane, `split-below` the group's
- * newest lane, else a tab. hc has neither workspaces nor splits, so every plan there is one labelled terminal and the
- * group is that label.
+ * The create spec for a new lane: `workspace-root` for a group's first lane, `split-below` that group's newest lane,
+ * else a tab in `laneWorkspace`. hc has neither workspaces nor splits, so every plan there is one labelled terminal and
+ * the group is that label.
  */
-export const placeLane = async (deps: FlowDeps, input: PlaceInput): Promise<Placed> => {
-  const rt = runtimesOf(deps).default;
-  const plan: PlacementPlan =
-    rt.kind === "hc" ? { kind: "tab" } : planPlacement(await deps.registry.open(), input.group);
-  const base = { name: input.name, cwd: input.cwd, env: input.env, role: "lane" } as const;
-  if (plan.kind === "split") {
-    return placed(await rt.create({ ...base, container: "split-below", near: plan.near }), "split");
-  }
-  if (plan.kind === "workspace") {
-    return placed(await rt.create({ ...base, container: "workspace-root" }), "workspace", true);
-  }
-  const group = input.group ?? (deps.config.laneWorkspace || undefined);
-  return placed(await rt.create({ ...base, container: "tab", ...(group === undefined ? {} : { group }) }), "tab");
+export const placementSpec = async (
+  deps: FlowDeps,
+  group: string | undefined,
+  base: Omit<CreateSpec, "container">,
+): Promise<CreateSpec> => {
+  const plan =
+    runtimesOf(deps).default.kind === "hc"
+      ? ({ kind: "tab" } as const)
+      : planPlacement(await deps.registry.open(), group);
+  if (plan.kind === "split") return { ...base, container: "split-below", near: plan.near };
+  if (plan.kind === "workspace") return { ...base, container: "workspace-root" };
+  const workspace = group ?? (deps.config.laneWorkspace || undefined);
+  return { ...base, container: "tab", ...(workspace === undefined ? {} : { group: workspace }) };
 };
 
 /** A fresh pane next to `near`, for a lane that takes over another's work (relay). */
-export const splitFrom = async (
-  deps: FlowDeps,
-  near: SessionRef,
-  input: Omit<PlaceInput, "group">,
-): Promise<SessionRef> =>
+export const splitFrom = async (deps: FlowDeps, near: SessionRef, input: PlaceInput): Promise<SessionRef> =>
   runtimesOf(deps)
     .for(near)
     .create({ name: input.name, cwd: input.cwd, env: input.env, role: "lane", container: "split-below", near });

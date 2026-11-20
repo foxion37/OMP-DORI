@@ -24,23 +24,30 @@ const expandHome = (path: string): string =>
 /** The extension's config/state precedence; callers with loaded config pass stateDir explicitly. */
 export function ompStateDir(env: Env): string {
   if (env["DORI_STATE_DIR"] !== undefined) return expandHome(env["DORI_STATE_DIR"]);
-  const path = env["DORI_CONFIG"] ?? join(homedir(), ".dori", "config.json");
+  const doriHome = env["DORI_HOME"] ?? join(homedir(), ".dori");
+  const path = env["DORI_CONFIG"] ?? join(doriHome, "config.json");
   let raw: string;
   try {
     raw = readFileSync(path, "utf8");
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
-    return join(homedir(), ".dori", "state");
+    return join(doriHome, "state");
   }
   const config = JSON.parse(raw) as { stateDir?: string };
-  return expandHome(config.stateDir ?? join(homedir(), ".dori", "state"));
+  return expandHome(config.stateDir ?? join(doriHome, "state"));
 }
 
+// The one classification of OMP's launch forms: the `omp` command, its published package CLI under Bun or Node, and the
+// pinned source launcher (`bun --preload <pkg>/scripts/omp.ts [--preload <timer>] <pkg>/[scripts/../]src/cli.ts`).
+// Each representation has its own parser below; none of them attests a live process (withOmpState does that).
 const OMP_COMMAND =
   /^(?:(?:\S*\/)?(?:bun|node)(?:\s+-\S+)*\s+)?(?:\S*\/)?omp(?:\s|$)|^(?:\S*\/)?(?:bun|node)(?:\s+-\S+)*\s+\S*@oh-my-pi\/pi-coding-agent\/dist\/cli\.js(?:\s|$)/;
 const SOURCE_OMP_COMMAND =
   /^(?:\S*\/)?bun\s+--preload\s+(.+\/packages\/coding-agent\/)scripts\/omp\.ts\s+(?:--preload\s+\1scripts\/\.\.\/\.\.\/utils\/src\/module-timer\.ts\s+)?\1(?:scripts\/\.\.\/)?src\/cli\.ts(?:\s|$)/;
-const sourceOmpArgv = (argv: readonly string[]): boolean => {
+export const OMP_EXECUTABLE = /(?:^|\/)omp$|@oh-my-pi\/pi-coding-agent\/dist\/cli\.js$/;
+
+/** The pinned source launcher's exact argv (see SOURCE_OMP_COMMAND for its `ps` line). */
+export const sourceOmpArgv = (argv: readonly string[]): boolean => {
   if (!/(?:^|\/)bun$/.test(argv[0] ?? "") || argv[1] !== "--preload") return false;
   const root = /^(.+\/packages\/coding-agent\/)scripts\/omp\.ts$/.exec(argv[2] ?? "")?.[1];
   if (root === undefined) return false;
@@ -49,9 +56,21 @@ const sourceOmpArgv = (argv: readonly string[]): boolean => {
   const entry = argv[timing ? 5 : 3];
   return entry === `${root}src/cli.ts` || entry === `${root}scripts/../src/cli.ts`;
 };
+
+/** A `ps` command line of an OMP process. Its argument boundaries are lost, so source roots may contain spaces. */
+export const isOmpProcessCommand = (command: string): boolean =>
+  OMP_COMMAND.test(command) || SOURCE_OMP_COMMAND.test(command);
+
+/**
+ * A `ps` command line that names OMP anywhere, as `bun run <omp>` or a published CLI under a spaced root does. Only
+ * discovery without the extension's record uses it (the start-time session folder); trust keeps the exact forms above.
+ */
+export const namesOmpProcess = (command: string): boolean =>
+  isOmpProcessCommand(command) || /(?:^|\s)(?:\S*\/)?omp(?:\s|$)|pi-coding-agent\/dist\/cli\.js/.test(command);
+
 const ompProcess = (p: ForegroundProcess): boolean =>
   p.name.split("/").at(-1) === "omp" ||
-  p.argv.slice(0, 2).some((arg) => /(?:^|\/)omp$|@oh-my-pi\/pi-coding-agent\/dist\/cli\.js$/.test(arg)) ||
+  p.argv.slice(0, 2).some((arg) => OMP_EXECUTABLE.test(arg)) ||
   sourceOmpArgv(p.argv);
 
 function readState(stateDir: string, id: string): PaneState | undefined {
@@ -113,7 +132,7 @@ export async function withOmpState(exec: Exec, stateDir: string, id: string, pro
     const writer = table.find((p) => p.pid === state.pid);
     if (
       writer === undefined ||
-      (!OMP_COMMAND.test(writer.command) && !SOURCE_OMP_COMMAND.test(writer.command)) ||
+      !isOmpProcessCommand(writer.command) ||
       !under(table, writer.pid, probe.rootPid) ||
       (!probe.shellInFront && !probe.foreground?.some((p) => p.pid !== undefined && under(table, p.pid, writer.pid)))
     ) {

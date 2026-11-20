@@ -29,6 +29,7 @@ export class HcError extends ToolError {
     readonly kind: string | undefined,
     readonly hint: string | undefined,
     readonly reason: string,
+    readonly reportedKind: string | undefined,
   ) {
     super(argv, result, "hc");
     this.message = `hc ${argv.join(" ")} failed (${result.code})${kind === undefined ? "" : ` ${kind}`}: ${reason}`;
@@ -47,9 +48,10 @@ function errorOf(argv: readonly string[], result: ExecResult): HcError {
   } catch {
     // Not JSON: an old or broken hc, or the process died; fall back to the exit code.
   }
-  const kind = str(error["kind"]) ?? KIND_BY_EXIT[result.code];
+  const reportedKind = str(error["kind"]);
+  const kind = reportedKind ?? KIND_BY_EXIT[result.code];
   const hint = str(error["hint"]) ?? str(asRecord(error["data"])["hint"]);
-  return new HcError(argv, result, kind, hint, str(error["message"]) ?? (raw || "no output"));
+  return new HcError(argv, result, kind, hint, str(error["message"]) ?? (raw || "no output"), reportedKind);
 }
 
 export type HcCallOptions = { readonly redact?: string };
@@ -71,3 +73,7 @@ export async function hcCall(
 
 export const isKind = (e: unknown, ...kinds: readonly string[]): e is HcError =>
   e instanceof HcError && e.kind !== undefined && kinds.includes(e.kind);
+
+/** Only a kind in hc's reply is evidence for retrying or undoing a mutating call. */
+export const isReportedKind = (error: unknown, ...kinds: readonly string[]): error is HcError =>
+  error instanceof HcError && error.reportedKind !== undefined && kinds.includes(error.reportedKind);

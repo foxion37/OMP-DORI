@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { procChildren, procCmdline } from "../src/update/proc.ts";
-import { once } from "node:events";
-import { existsSync, readFileSync, watch, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { open } from "node:fs/promises";
 import { join } from "node:path";
 import { LaunchedProcessHeld, launchedProcess, launchRuntime } from "../src/update/deployment-launch.ts";
 import { nativeCli, requireShell } from "../src/update/deployment-native.ts";
@@ -69,17 +69,19 @@ posix.each(["suspended", "background"] as const)(
     process.kill(-f.runtime.pid, "SIGSTOP");
     try {
       if (mode === "background") {
+        // The shell's `bg` status arrives through a FIFO: the read ends exactly when the shell writes, whereas a
+        // macOS fs.watch armed just before an external write can miss its change event and wait forever.
         const resumed = join(f.root, "background-resumed");
-        writeFileSync(resumed, "");
-        const watcher = watch(resumed);
-        try {
-          const changed = once(watcher, "change");
-          f.sendLine(`bg; printf '%s' "$?" > ${JSON.stringify(resumed)}`);
-          await changed;
-          expect(readFileSync(resumed, "utf8")).toBe("0");
-        } finally {
-          watcher.close();
-        }
+        expect(Bun.spawnSync(["/usr/bin/mkfifo", resumed]).exitCode).toBe(0);
+        const bgStatus = open(resumed, "r").then(async (fifo) => {
+          try {
+            return await fifo.readFile("utf8");
+          } finally {
+            await fifo.close();
+          }
+        });
+        f.sendLine(`bg; printf '%s' "$?" > ${JSON.stringify(resumed)}`);
+        expect(await bgStatus).toBe("0");
       }
       const status = await f.cli.exec("ps", ["-o", "stat=", "-p", String(f.runtime.pid)]);
       expect(status.code).toBe(0);

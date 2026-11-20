@@ -1,10 +1,11 @@
 /** The intake implementations under test, each driven through its real code path against a fake Discord. */
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Discord } from "../../skills/dori-mode/scripts/src/messenger/discord.ts";
 import { discordInbound } from "../../skills/dori-mode/scripts/src/messenger/discord-inbound.ts";
 import { discordInboundLive } from "../../skills/dori-mode/scripts/src/messenger/discord-inbound-live.ts";
+import { discordInboundQueue } from "../../skills/dori-mode/scripts/src/messenger/discord-inbound-queue.ts";
 import type { DiscordInboundStore } from "../../skills/dori-mode/scripts/src/messenger/discord-inbound-state.ts";
 import { fetchHttp } from "../../skills/dori-mode/scripts/src/messenger/http.ts";
 import { realClock } from "../../skills/dori-mode/scripts/src/run.ts";
@@ -93,6 +94,8 @@ const gateway: Variant = {
     const stores = new Map<string, DiscordInboundStore>();
     const storeFor = (id: string) => stores.get(id) ?? stores.set(id, memoryStore()).get(id)!;
     const intake = await discordInbound(discordFor(fake), storeFor, { ownerId: OWNER_ID, channelIds: channels });
+    const stateDir = mkdtempSync(join(tmpdir(), "dori-bench-queue-"));
+    const queue = discordInboundQueue(stateDir);
     const live = discordInboundLive(
       intake,
       () => {
@@ -114,12 +117,18 @@ const gateway: Variant = {
       },
       record(emit),
       () => {},
+      queue,
     );
     live.done.catch(() => {});
     return {
       async stop() {
         live.close();
-        await live.done;
+        try {
+          await live.done;
+        } finally {
+          queue.close();
+          rmSync(stateDir, { recursive: true, force: true });
+        }
       },
     };
   },

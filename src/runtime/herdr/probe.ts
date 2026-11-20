@@ -77,8 +77,7 @@ const toProcess = (value: unknown): ForegroundProcess => {
 export async function foreground(cli: HerdrCli, paneId: string, onFail: string = AS_DOUBT): Promise<Front> {
   try {
     const info = (await cli.call(["pane", "process-info", "--pane", paneId]))["process_info"] as
-      | { foreground_process_group_id?: unknown; foreground_processes?: unknown; shell_pid?: unknown }
-      | undefined;
+      { foreground_process_group_id?: unknown; foreground_processes?: unknown; shell_pid?: unknown } | undefined;
     const pgid = info?.foreground_process_group_id;
     const rootPid = info?.shell_pid;
     const procs = info?.foreground_processes;

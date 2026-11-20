@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdirSync, symlinkSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import { runtimesFor, runtimesOf } from "../src/run.ts";
 import { resolveSession, sessionDirFor, trustedPaneState } from "../src/session-id.ts";
@@ -86,7 +86,7 @@ test("an explicit runtime environment keeps the current lane isolated from an in
 test("an exited, foreign or non-agent writer never supplies the current session id", async () => {
   const { deps, ref, rts } = setup();
   const listDir = (dir: string) =>
-    dir === "/s/--repo--" ? ["2026-01-01T12-00-02-113Z_01a10000-0000-7000-8000-000000000000.jsonl"] : [];
+    dir === sessionDirFor("/s", "/repo") ? ["2026-01-01T12-00-02-113Z_01a10000-0000-7000-8000-000000000000.jsonl"] : [];
   const run = async (argv: readonly string[]) =>
     argv[0] === "ps" && argv.includes("lstart=")
       ? { code: 0, out: "Thu Jan  1 12:00:01 2026 GMT", err: "" }
@@ -165,12 +165,18 @@ test("OMP start-time fallback uses OMP encoding and ignores legacy --session and
 
 test("OMP session folders canonicalize temp before home and keep absolute paths outside both", () => {
   const dir = (cwd: string) => sessionDirFor("/s", cwd, "/nohome/me", "/nohome/me/tmp");
-  expect(dir("/nohome/me/tmp")).toBe("/s/-tmp");
-  expect(dir("/nohome/me/tmp/build/x")).toBe("/s/-tmp-build-x");
-  expect(dir("/nohome/me")).toBe("/s/-");
-  expect(dir("/nohome/me/dev/project")).toBe("/s/-dev-project");
-  expect(dir("/nohome/meow/x")).toBe("/s/--nohome-meow-x--");
-  expect(dir("/nohome/me/dev/../dev/a:b")).toBe("/s/-dev-a-b");
+  // The folder is joined under the sessions directory as the OS joins it.
+  const under = (name: string) => join("/s", name);
+  expect(dir("/nohome/me/tmp")).toBe(under("-tmp"));
+  expect(dir("/nohome/me/tmp/build/x")).toBe(under("-tmp-build-x"));
+  expect(dir("/nohome/me")).toBe(under("-"));
+  expect(dir("/nohome/me/dev/project")).toBe(under("-dev-project"));
+  // An outside path keeps OMP's absolute form: the resolved path with its separators and drive colon dashed.
+  const absolute = resolve("/nohome/meow/x")
+    .replace(/^[/\\]/, "")
+    .replace(/[/\\:]/g, "-");
+  expect(dir("/nohome/meow/x")).toBe(under(`--${absolute}--`));
+  expect(dir("/nohome/me/dev/../dev/a:b")).toBe(under("-dev-a-b"));
   const real = join(state.dir, "real");
   mkdirSync(real);
   symlinkSync(real, join(state.dir, "alias"));
@@ -211,4 +217,29 @@ test("sync reads legacy registry records without mutation and persists trusted e
     session: "01a11440-ee81-7f90-b2ed-dcc7d51a0adf",
     sessionVia: "extension",
   });
+});
+
+test("sync --write records the session on the lane as stored now, keeping a claim written during its process read", async () => {
+  const { deps } = setup();
+  const lane = {
+    key: "omp-lane",
+    title: "omp",
+    thread: "none",
+    pane: P1.id,
+    brief: "/b.md",
+    done: "closed acme/app#1",
+  };
+  await deps.registry.write({ ...lane, openedAt: new Date(T0).toISOString() });
+  const at = new Date(T0).toISOString();
+  let pending = true;
+  const run: typeof deps.run = async (argv, opts) => {
+    if (pending && argv[0] === "ps" && argv[1] === "-A") {
+      pending = false;
+      const current = await deps.registry.read(lane.key);
+      if (current) await deps.registry.write({ ...current, status: "done-claimed", claim: { at, evidence: "done" } });
+    }
+    return deps.run(argv, opts);
+  };
+  await syncRegistry({ ...deps, run }, true);
+  expect(await deps.registry.read(lane.key)).toMatchObject({ status: "done-claimed", sessionVia: "extension" });
 });

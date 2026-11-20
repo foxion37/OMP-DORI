@@ -1,4 +1,4 @@
-import { afterEach } from "bun:test";
+import { afterEach, test } from "bun:test";
 import {
   chmodSync,
   mkdirSync,
@@ -11,7 +11,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { gzipSync } from "node:zlib";
 import type { VerifiedBundle } from "../src/release/bundle.ts";
 import { readArchive } from "../src/release/archive.ts";
@@ -20,9 +20,13 @@ import { validateReleaseManifest } from "../src/release/manifest.ts";
 import type { ReleaseManifest } from "../src/release/types.ts";
 import { digest, sourceManifest } from "../src/update/source.ts";
 
+// POSIX-only: release installation refuses non-private directories by POSIX mode bits.
+export const posix = test.skipIf(process.platform === "win32");
+
 const roots: string[] = [];
 const environmentKeys = [
   "HOME",
+  "PATH",
   "DORI_HOME",
   "DORI_CONFIG",
   "DORI_STATE_DIR",
@@ -112,12 +116,24 @@ export type ConsumerFixture = {
   readonly release: (payload: string) => { bundle: VerifiedBundle; bytes: Buffer; entries: TarEntry[]; dist: string };
 };
 
-export function fixture(): ConsumerFixture {
+/** Match source release metadata independently of the selected installation home. */
+export function portableFixture(side = false): ConsumerFixture {
+  return fixture(side, true);
+}
+
+export function fixture(side = false, portable = side): ConsumerFixture {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "dori-consumer-")));
   roots.push(root);
-  const paths = consumerPaths(join(root, "home"));
+  const home = join(root, "home");
+  const paths = consumerPaths(home, join(home, side ? ".omp-dori" : ".dori"));
   for (const key of environmentKeys) {
     if (!environment.has(key)) environment.set(key, process.env[key]);
+  }
+  if (side) {
+    const native = join(root, "native-bin");
+    mkdirSync(native, { mode: 0o700 });
+    writeFileSync(join(native, "omp"), "#!/bin/sh\nprintf '18.18.8\\n'\n", { mode: 0o755 });
+    process.env["PATH"] = `${native}:${process.env["PATH"] ?? ""}`;
   }
   process.env["HOME"] = paths.home;
   process.env["DORI_HOME"] = paths.dori;
@@ -150,9 +166,19 @@ export function fixture(): ConsumerFixture {
     const contents: Record<string, string> = {
       "omp-ulw.lock": `${pin}\n`,
       "payload.txt": payload,
+      "skills/dori-mode/SKILL.md": `---\nname: dori-mode\ndescription: Dori commands\n---\nRelease skill\n${payload}`,
       "bin-entry.sh": "#!/bin/sh\nprintf 'release fixture\\n'\n",
+      "src/release/references.ts": `export { installIsolatedReferences } from ${JSON.stringify(resolve(import.meta.dir, "../src/release/references.ts"))};\n`,
       "skills/dori-mode/references/config.example.json": '{"runtime":"herdr","stateDir":"~/.dori/state"}\n',
     };
+    if (portable)
+      contents["release-capabilities.json"] = JSON.stringify({
+        version: 1,
+        profiles: [
+          { platform: "linux", arch: "x64", runtime: "herdr" },
+          { platform: "darwin", arch: "arm64", runtime: "hc" },
+        ],
+      });
     for (const [path, bytes] of Object.entries(contents)) {
       mkdirSync(dirname(join(source, path)), { recursive: true, mode: 0o700 });
       writeFileSync(join(source, path), bytes, { mode: 0o600 });

@@ -183,8 +183,19 @@ test("OMP extension, flag and model failures retain STARTUP_ERROR classification
     ["model-lane", "Model provider/missing not found", "Model provider/missing not found"],
     ["empty-models", "No models available.", "No models available"],
   ];
+  // A failed start sets no goal for this launch.
   for (const [key = "", screen = "", phrase = ""] of failures)
-    expect((await start(key, {}, { screen })).startup).toBe(`STARTUP_ERROR ${key} w:p9: ${phrase}`);
+    expect((await start(key, { goal: { status: "none" } }, { screen })).startup).toBe(
+      `STARTUP_ERROR ${key} w:p9: ${phrase}`,
+    );
+});
+
+test("a working OMP lane with its own active goal is not failed by an old error its first screen quotes", async () => {
+  const screen = "Working on logs\nFailed to load extension /example: old error copied for analysis\nWorking on logs";
+  expect((await start("quoting-lane", {}, { screen })).startup).toBe("STARTUP_OK quoting-lane w:p9");
+  expect((await start("failing-lane", { goal: { status: "none" } }, { screen })).startup).toBe(
+    "STARTUP_ERROR failing-lane w:p9: Failed to load extension",
+  );
 });
 
 test("slow OMP readiness is waited for even with an active goal; neither goals nor opt-out bypass readiness", async () => {

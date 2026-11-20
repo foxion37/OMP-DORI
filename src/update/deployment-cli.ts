@@ -1,4 +1,5 @@
 import { basename } from "node:path";
+import { platform } from "../platform/index.ts";
 import type { Exec } from "../runtime/exec.ts";
 import { interactiveShellInFront } from "../runtime/foreground.ts";
 import { hcCall, isKind } from "../runtime/hc/exec.ts";
@@ -28,7 +29,7 @@ export function herdrDeploymentCli(exec: Exec, session?: string): DeploymentCli 
     probe: (pane, onFail, stateDir) => herdrProbe(cli, pane, false, onFail, stateDir),
     foreground: (pane, onFail) => herdrForeground(cli, pane, onFail),
     start: (pane, command) => herdrStart(cli, pane, command),
-    ...(process.platform === "linux"
+    ...(platform.supportsHerdrNativeUi
       ? {
           nativeUi: {
             read: (pane: string, lines: number) => cli.read(pane, lines),

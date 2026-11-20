@@ -3,6 +3,9 @@ import { existsSync, mkdirSync, readFileSync, readlinkSync, readdirSync, symlink
 import { join } from "node:path";
 import { git, script, setup } from "./install-setup.ts";
 
+// POSIX-only: the fixture runs scripts/install-source.sh and links commands with POSIX symlinks.
+const posix = test.skipIf(process.platform === "win32");
+
 const OTHER_CONFIG = '{"owner":"another Dori"}\n';
 
 // Another Dori's installation: its home, its dori-mode skill link and its global dori bin.
@@ -22,7 +25,7 @@ const expectOtherDoriUntouched = (home: string) => {
   expect(readlinkSync(join(home, "global-bin/dori"))).toBe("/elsewhere/cli.ts");
 };
 
-test("another Dori in ~/.dori stops an install with no terminal and no mode, and nothing changes", () => {
+posix("another Dori in ~/.dori stops an install with no terminal and no mode, and nothing changes", () => {
   // Given another Dori's ~/.dori.
   const { root, home, install } = setup();
   withOtherDori(home);
@@ -38,7 +41,7 @@ test("another Dori in ~/.dori stops an install with no terminal and no mode, and
   expect(existsSync(join(root, "bun.log"))).toBe(false);
 });
 
-test("a side install lives in ~/.omp-dori and leaves ~/.dori, the dori-mode link and the dori command alone", () => {
+posix("a side install lives in ~/.omp-dori and leaves ~/.dori, the dori-mode link and the dori command alone", () => {
   // Given another Dori's ~/.dori.
   const { home, src, ulw, install } = setup();
   withOtherDori(home);
@@ -66,9 +69,13 @@ test("a side install lives in ~/.omp-dori and leaves ~/.dori, the dori-mode link
   expect(description).toBeDefined();
   expect(description).not.toBe(original.match(/^description: (.+)$/m)?.[1]);
   expect(readlinkSync(join(side, "skills/omp-dori-mode/references"))).toBe(join(src, "skills/dori-mode/references"));
+  // And omp-dori omp never self-updates: OMP would overwrite this wrapper, the first omp on the side PATH.
+  expect(readFileSync(join(side, "bin/omp"), "utf8")).toContain(`--config ${join(side, "omp.yml")}`);
+  expect(readFileSync(join(side, "env.sh"), "utf8")).toContain(`export PATH=${join(side, "bin")}:`);
+  expect(Bun.YAML.parse(readFileSync(join(side, "omp.yml"), "utf8"))).toMatchObject({ update: { auto: false } });
 });
 
-test("a side install from a linked git worktree installs that checkout instead of cloning over it", () => {
+posix("a side install from a linked git worktree installs that checkout instead of cloning over it", () => {
   // Given another Dori's ~/.dori and a linked worktree of the omp-dori checkout, whose .git is a file.
   const { root, home, src, cli, install } = setup();
   withOtherDori(home);
@@ -82,7 +89,7 @@ test("a side install from a linked git worktree installs that checkout instead o
   expect(readFileSync(join(home, ".omp-dori/bin/dori"), "utf8")).toContain(join(worktree, cli));
 });
 
-test("OMP_DORI_HC_SPACE puts DORI_HC_SPACE into the side env; without it the side env names no space", () => {
+posix("OMP_DORI_HC_SPACE puts DORI_HC_SPACE into the side env; without it the side env names no space", () => {
   // Given another Dori's ~/.dori.
   const { home, install } = setup();
   withOtherDori(home);
@@ -98,7 +105,7 @@ test("OMP_DORI_HC_SPACE puts DORI_HC_SPACE into the side env; without it the sid
   expectOtherDoriUntouched(home);
 });
 
-test("an omp-dori install from before the marker, with its checkout elsewhere, is updated without asking", () => {
+posix("an omp-dori install from before the marker, with its checkout elsewhere, is updated without asking", () => {
   // Given an unmanaged source home whose earlier source installer linked the external checkout's extension.
   const { home, src, install } = setup();
   mkdirSync(join(home, ".dori"));
@@ -117,7 +124,7 @@ test("an omp-dori install from before the marker, with its checkout elsewhere, i
   expect(readlinkSync(join(home, "global-bin/dori"))).toBe(join(src, "skills/dori-mode/scripts/src/cli.ts"));
 });
 
-test("a later run of a side install stays a side install without asking", () => {
+posix("a later run of a side install stays a side install without asking", () => {
   // Given a side install next to another Dori.
   const { home, install } = setup();
   withOtherDori(home);
@@ -129,7 +136,7 @@ test("a later run of a side install stays a side install without asking", () => 
   expectOtherDoriUntouched(home);
 });
 
-test("primary over another Dori keeps its config and link targets, then takes ~/.dori", () => {
+posix("primary over another Dori keeps its config and link targets, then takes ~/.dori", () => {
   // Given another Dori's ~/.dori.
   const { home, src, install } = setup();
   withOtherDori(home);
@@ -149,7 +156,7 @@ test("primary over another Dori keeps its config and link targets, then takes ~/
   expect(readFileSync(join(home, ".dori/.omp-dori"), "utf8")).toBe("primary\n");
 });
 
-test.each([".bun/bin", "custom-bin"])("primary backs up and replaces a foreign dori symlink in %s", (directory) => {
+posix.each([".bun/bin", "custom-bin"])("primary backs up and replaces a foreign dori symlink in %s", (directory) => {
   const { home, src, install } = setup();
   const bin = join(home, directory);
   const untouchedBin = join(home, directory === ".bun/bin" ? "global-bin" : ".bun/bin");
@@ -176,7 +183,7 @@ test.each([".bun/bin", "custom-bin"])("primary backs up and replaces a foreign d
   expect(readFileSync(join(backup, "links.txt"), "utf8")).toBe(links);
 });
 
-test("primary preserves a regular dori command and names the conflicting destination", () => {
+posix("primary preserves a regular dori command and names the conflicting destination", () => {
   const { home, install } = setup();
   const command = join(home, "global-bin/dori");
   mkdirSync(join(home, "global-bin"));
@@ -190,7 +197,7 @@ test("primary preserves a regular dori command and names the conflicting destina
   expect(existsSync(join(home, ".dori/.omp-dori"))).toBe(false);
 });
 
-test("primary refuses a ~/.dori/src that is another repository and changes nothing", () => {
+posix("primary refuses a ~/.dori/src that is another repository and changes nothing", () => {
   // Given another Dori whose ~/.dori/src checks out a different repository.
   const { root, home, install } = setup();
   withOtherDori(home);
@@ -209,7 +216,7 @@ test("primary refuses a ~/.dori/src that is another repository and changes nothi
   expect(existsSync(join(root, "bun.log"))).toBe(false);
 });
 
-test("in a terminal the owner is asked, and the default answer installs next to the other Dori", async () => {
+posix("in a terminal the owner is asked, and the default answer installs next to the other Dori", async () => {
   // Given another Dori's ~/.dori and the source installer in a terminal with no mode.
   const { home, env } = setup();
   withOtherDori(home);

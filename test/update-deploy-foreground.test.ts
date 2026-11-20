@@ -1,9 +1,12 @@
 import { expect, test } from "bun:test";
+import { spawn } from "node:child_process";
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { captureRuntime } from "../src/update/deployment-native.ts";
 import { DeploymentBusy, DeploymentHeld, processIdentity, sameProcess } from "../src/update/deployment-process.ts";
+import { procStat, processExists } from "../src/update/proc.ts";
 import type { DeploymentRecord, MonitorSet, RuntimeIdentity } from "../src/update/deployment-types.ts";
+import { foregroundActor, silentForegroundActor } from "./update-deploy-foreground-readiness.ts";
 import { foregroundFixture } from "./update-deploy-foreground-setup.ts";
 
 function untouched(f: { runtime: RuntimeIdentity; bootstrap: MonitorSet; signalPath: string }): void {
@@ -15,6 +18,40 @@ function untouched(f: { runtime: RuntimeIdentity; bootstrap: MonitorSet; signalP
 // The kernels whose process identity deployment can bind.
 const posix = test.skipIf(process.platform !== "linux" && process.platform !== "darwin");
 const linux = test.skipIf(process.platform !== "linux");
+
+posix("foreground fixture names the launch phase when its child exits before readiness", async () => {
+  const actor = foregroundActor.spawn("prior", () =>
+    spawn("/bin/bash", ["--noprofile", "--norc", "-c", "exit 7"], { stdio: ["pipe", "pipe", "ignore", "pipe"] }),
+  );
+  try {
+    await expect(actor.waitForReady()).rejects.toThrow(/prior actor readiness:.*(stdout EOF|process exited)/);
+  } finally {
+    await actor.stop();
+  }
+  expect(actor.child.exitCode).toBe(7);
+});
+
+posix("closing control during silent monitor startup reaps the actor and monitor", async () => {
+  const actor = silentForegroundActor();
+  const ready = actor.waitForReady().then(() => "", String);
+  try {
+    const monitor = processIdentity(await actor.monitorPid());
+    const runtime = processIdentity(actor.child.pid ?? -1);
+    if (!monitor || !runtime) throw new Error("silent startup did not yield two live process identities");
+    expect(procStat(monitor.pid).ppid).toBe(runtime.pid);
+    await actor.stop();
+    const error = await ready;
+    expect(error).toMatch(/current actor readiness:.*control pipe closed before ready line/);
+    expect(error).toContain(`monitor ${monitor.pid} readiness`);
+    expect(actor.child.signalCode).toBeNull();
+    for (const { pid, startTicks } of [runtime, monitor]) {
+      expect(processExists(pid) && procStat(pid).startTicks === startTicks).toBe(false);
+    }
+  } finally {
+    await actor.dispose();
+  }
+});
+
 posix("capture admits Bash scripts beside Bun wrapper execs while the generic probe holds", async () => {
   const f = await foregroundFixture();
   expect((await f.cli.probe(f.config.pane, "held", f.config.stateDir)).shellInFront).toBe(true);

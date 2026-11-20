@@ -1,5 +1,9 @@
 import type { SourceManifest } from "../update/types.ts";
 
+export type ReleaseProfile =
+  | { readonly platform: "linux"; readonly arch: "x64"; readonly runtime: "herdr" }
+  | { readonly platform: "darwin"; readonly arch: "arm64"; readonly runtime: "hc" };
+
 export type ReleaseManifest = {
   readonly version: 1;
   readonly product: "omp-dori";

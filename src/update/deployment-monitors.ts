@@ -58,12 +58,19 @@ export function readMonitorSet(path: string, sessionId: string, trusted = false)
       !item["argv"].every((arg: unknown) => typeof arg === "string" && !arg.includes("\0")) ||
       typeof item["filter"] !== "string" ||
       typeof item["cwd"] !== "string" ||
-      !isAbsolute(item["cwd"])
+      !isAbsolute(item["cwd"]) ||
+      (item["restart"] !== undefined && item["restart"] !== "on-failure")
     )
       throw new Error("monitor metadata contains an invalid specification");
     names.add(item["name"]);
     new RegExp(item["filter"]);
-    return { name: item["name"], argv: [...item["argv"]] as string[], filter: item["filter"], cwd: item["cwd"] };
+    return {
+      name: item["name"],
+      argv: [...item["argv"]] as string[],
+      filter: item["filter"],
+      cwd: item["cwd"],
+      ...(item["restart"] === "on-failure" ? { restart: item["restart"] } : {}),
+    };
   });
   const raw = value["intake"];
   if (
@@ -137,7 +144,13 @@ export function sameMonitorSpecs(left: readonly MonitorSpec[], right: readonly M
     JSON.stringify(
       [...specs]
         .sort((a, b) => a.name.localeCompare(b.name))
-        .map(({ name, argv, filter, cwd }) => ({ name, argv, filter: new RegExp(filter).source, cwd })),
+        .map(({ name, argv, filter, cwd, restart }) => ({
+          name,
+          argv,
+          filter: new RegExp(filter).source,
+          cwd,
+          restart,
+        })),
     );
   return canonical(left) === canonical(right);
 }

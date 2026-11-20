@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { bootCheck } from "../src/boot.ts";
 import type { Manifest, Monitor } from "../src/boot-monitors.ts";
+import { shellQuote } from "../src/launch-footer.ts";
 import { type Lane, type LaneStatus, Registry } from "../src/registry.ts";
 import { Reports } from "../src/reports.ts";
 import { Worklog } from "../src/worklog.ts";
@@ -61,8 +62,8 @@ test("a manifest with a malformed monitor entry is named as unreadable and the c
   );
   // When boot runs; then both bad files are named, the good watch is still listed, and the run is incomplete.
   const result = await bootCheck(deps);
-  expect(result.lines).toContain(`MONITORS unreadable ${join(bad, "null.json")}`);
-  expect(result.lines).toContain(`MONITORS unreadable ${join(bad, "string.json")}`);
+  expect(result.lines).toContain(`MONITORS unreadable ${shellQuote(join(bad, "null.json"))}`);
+  expect(result.lines).toContain(`MONITORS unreadable ${shellQuote(join(bad, "string.json"))}`);
   expect(result.lines).toContain('STOP in the owner session only: kill_bash({"bash_id":"mon_GOOD"})');
   expect(result.exitCode).toBe(1);
 });
@@ -87,7 +88,7 @@ test("expired and delivery-paused watches are listed apart from live ones, and a
   // When boot runs.
   const result = await bootCheck(deps);
   const watchLines = result.lines.filter((l) => /^(MONITORS cleanup|CLEANUP|STOP|EXPIRED)/.test(l));
-  const owner = `ownerSession=owner metadata=${join(terminal, "owner.json")}`;
+  const owner = `ownerSession=owner metadata=${shellQuote(join(terminal, "owner.json"))}`;
   // Then live comes first, the paused one is flagged, and the expired one is listed without a stop call.
   expect(watchLines).toEqual([
     "MONITORS cleanupCandidates=2 deliveryPaused=1 expired=1 (from metadata; liveness unverified)",
@@ -134,10 +135,10 @@ test("dori boot reads the current session's terminal metadata from PI_SESSION_DI
   const [out, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
   // Then both directories were read, Slack was skipped, and the missing pane list makes the run incomplete.
   expect(out).toContain(
-    `CLEANUP closed match=closed:command:key ownerSession=owner metadata=${join(current, "a.json")}`,
+    `CLEANUP closed match=closed:command:key ownerSession=owner metadata=${shellQuote(join(current, "a.json"))}`,
   );
   expect(out).toContain(
-    `CLEANUP closed match=closed:command:key ownerSession=owner metadata=${join(fileDir, "b.json")}`,
+    `CLEANUP closed match=closed:command:key ownerSession=owner metadata=${shellQuote(join(fileDir, "b.json"))}`,
   );
   expect(out).toContain("SLACK skipped (DORI_SLACK_TOKEN not set)");
   expect(out).toContain("PANES unavailable (session list failed)");
@@ -161,9 +162,9 @@ test("one unreadable metadata file is named and the other sessions' cleanup is s
   // When boot runs.
   const result = await bootCheck(deps);
   // Then the bad file is named, the good one still yields its stop call, and its path is shell-quoted.
-  expect(result.lines).toContain(`MONITORS unreadable ${join(bad, "owner.json")}`);
+  expect(result.lines).toContain(`MONITORS unreadable ${shellQuote(join(bad, "owner.json"))}`);
   expect(result.lines).toContain(
-    `CLEANUP closed match=closed:command:key ownerSession=owner metadata='${join(good, "owner.json")}'`,
+    `CLEANUP closed match=closed:command:key ownerSession=owner metadata=${shellQuote(join(good, "owner.json"))}`,
   );
   expect(result.lines).toContain('STOP in the owner session only: kill_bash({"bash_id":"mon_GOOD"})');
   expect(result.exitCode).toBe(1);
@@ -183,7 +184,9 @@ test("boot discovers OMP desired monitor metadata under stateDir without mutatin
   });
   writeFileSync(path, metadata);
   const result = await bootCheck(deps);
-  expect(result.lines).toContain(`CLEANUP closed match=closed:argv:key ownerSession=omp-owner metadata=${path}`);
+  expect(result.lines).toContain(
+    `CLEANUP closed match=closed:argv:key ownerSession=omp-owner metadata=${shellQuote(path)}`,
+  );
   expect(result.lines).toContain('STOP in the owner session only: monitor({"op":"stop","name":"lane-watch"})');
   expect(await Bun.file(path).text()).toBe(metadata);
   expect(world.calls.some((argv) => argv.includes("stop"))).toBe(false);

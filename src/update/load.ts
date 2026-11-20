@@ -1,6 +1,8 @@
 import { existsSync, lstatSync, readFileSync } from "node:fs";
-import { dirname, isAbsolute, resolve } from "node:path";
-import { expandHome, isOmpCommand } from "../../skills/dori-mode/scripts/src/config.ts";
+import { dirname, resolve } from "node:path";
+import { expandHome } from "../../skills/dori-mode/scripts/src/config.ts";
+import { platform } from "../platform/index.ts";
+import { classifyOmpArgv, isOmpArgv, mayRunOmpArgv, nonPidPreservingPrefix } from "../runtime/omp-argv.ts";
 import { canonical, contains, object, UpdateError } from "./config.ts";
 import { checkNativeArgv } from "./native-argv.ts";
 import { parsePromotionConfig } from "./publish-config.ts";
@@ -56,9 +58,23 @@ const allow = (raw: Record<string, unknown>, names: readonly string[], label: st
   for (const key of Object.keys(raw)) if (!names.includes(key)) throw new UpdateError(`${label}.${key} is unknown`);
 };
 
-/** Direct OMP invocations get the native final-message parser, isolation flags and capability guards. */
-export const nativeAgent = (command: UpdateCommand): boolean =>
-  command.engine === "omp" || (command.engine === undefined && isOmpCommand(command.argv));
+/** Validate native update prefixes at load and again before launching their model process. */
+export const nativeAgent = (command: UpdateCommand, label = command.name): boolean => {
+  if (command.engine === "external") return false;
+  const native = command.engine === "omp" || isOmpArgv(command.argv);
+  const prefix = nonPidPreservingPrefix(command.argv);
+  if (prefix !== undefined && (native || mayRunOmpArgv(command.argv)))
+    throw new UpdateError(
+      `${label}.argv requires a PID-preserving native launch; ${prefix} may fork; use a direct/exec-preserving command or set ${label}.engine to "external"`,
+    );
+  return native;
+};
+
+/** The part of a native agent's argv that its CLI parses, after assignments and readable launch prefixes. */
+export const ompPart = (argv: readonly string[]): readonly string[] => {
+  const classified = classifyOmpArgv(argv);
+  return classified.kind === "unparsed" ? argv : classified.command;
+};
 
 const command = (value: unknown, label: string, agent = false): UpdateCommand => {
   if (!object(value)) throw new UpdateError(`${label} must configure a real argv command`);
@@ -68,9 +84,8 @@ const command = (value: unknown, label: string, agent = false): UpdateCommand =>
   const name = text(value["name"], `${label}.name`);
   if (!NAME.test(name)) throw new UpdateError(`${label}.name must match ${NAME}`);
   const cwd = value["cwd"] === undefined ? undefined : text(value["cwd"], `${label}.cwd`);
-  if (cwd !== undefined && (isAbsolute(cwd) || cwd.split(/[\\/]/).includes(".."))) {
+  if (cwd !== undefined && (platform.isAbsolutePath(cwd) || cwd.split(/[\\/]/).includes("..")))
     throw new UpdateError(`${label}.cwd must be relative to the isolated candidate`);
-  }
   const engine = value["engine"];
   if (engine !== undefined && engine !== "omp" && engine !== "external") {
     throw new UpdateError(`${label}.engine must be omp or external`);
@@ -104,13 +119,21 @@ const checkAgent = (agent: UpdateCommand, label: string): void => {
     throw new UpdateError(`${label}.argv must consume {prompt} or {brief}`);
   }
   if (agent.cwd !== undefined) throw new UpdateError(`${label}.cwd is fixed to the candidate`);
-  if (!nativeAgent(agent)) return; // an explicit external wrapper owns its own fresh-context and capability contract
-  checkNativeArgv(agent.argv, label);
+  const native = nativeAgent(agent, label);
+  // An unreadable command prefix hides which arguments OMP gets, so native checks cannot cover it:
+  // only an explicitly external wrapper, which owns its own contract, may use one.
+  if (agent.engine !== "external" && classifyOmpArgv(agent.argv).kind === "unparsed") {
+    throw new UpdateError(
+      `${label}.argv has a command prefix Dori cannot read; attach bun/node option values with = (such as --preload=FILE), drop -S and unknown env options, or set ${label}.engine to "external"; a shell script or package runner string that names OMP is not read either`,
+    );
+  }
+  if (!native) return; // an explicit external wrapper owns its own fresh-context and capability contract
+  checkNativeArgv(ompPart(agent.argv), label);
 };
 
 const remoteOf = (value: unknown, base: string): string => {
   const remote = text(value, "remote");
-  if (!/^[A-Za-z][A-Za-z0-9+.-]*:/.test(remote)) {
+  if (platform.isAbsolutePath(remote) || !/^[A-Za-z][A-Za-z0-9+.-]*:/.test(remote)) {
     const path = canonical(resolve(base, remote));
     if (!existsSync(path)) throw new UpdateError("local remote path does not exist");
     return path;

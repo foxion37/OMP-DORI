@@ -3,9 +3,12 @@ import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 
 import { join } from "node:path";
 import { git, script, setup } from "./install-setup.ts";
 
+// POSIX-only: the fixture runs scripts/install-source.sh and shebang stubs through a ':' PATH.
+const posix = test.skipIf(process.platform === "win32");
+
 // Re-runs over installs made before the marker: none of these may ask, back up or stop.
 
-test("an omp-dori checkout in ~/.dori/src is known by its files, whatever its remote is called", () => {
+posix("an omp-dori checkout in ~/.dori/src is known by its files, whatever its remote is called", () => {
   // Given the documented layout, cloned from a remote whose name is not omp-dori.
   const { root, home, install } = setup();
   mkdirSync(join(home, ".dori"));
@@ -20,7 +23,7 @@ test("an omp-dori checkout in ~/.dori/src is known by its files, whatever its re
   expect(readFileSync(join(home, ".dori/.omp-dori"), "utf8")).toBe("primary\n");
 });
 
-test("a ~/.dori that only holds omp-ulw or state is not another Dori", () => {
+posix("a ~/.dori that only holds omp-ulw or state is not another Dori", () => {
   // Given a ~/.dori with an earlier omp-ulw checkout and a state directory, but no config and no src.
   const { home, install } = setup();
   mkdirSync(join(home, ".dori/omp-ulw"), { recursive: true });
@@ -32,7 +35,7 @@ test("a ~/.dori that only holds omp-ulw or state is not another Dori", () => {
   expect(existsSync(join(home, ".omp-dori"))).toBe(false);
 });
 
-test("a failed pull over another Dori leaves no backup behind", () => {
+posix("a failed pull over another Dori leaves no backup behind", () => {
   // Given another Dori's ~/.dori and a checkout whose upstream cannot be reached.
   const { root, home, src, install } = setup();
   mkdirSync(join(home, ".dori"));
@@ -45,7 +48,7 @@ test("a failed pull over another Dori leaves no backup behind", () => {
   expect(existsSync(join(home, ".dori/backups"))).toBe(false);
 });
 
-test("closing the terminal question stops with a reason and changes nothing", async () => {
+posix("closing the terminal question stops with a reason and changes nothing", async () => {
   // Given another Dori's ~/.dori and the source installer in a terminal with no mode.
   const { home, env } = setup();
   mkdirSync(join(home, ".dori"));

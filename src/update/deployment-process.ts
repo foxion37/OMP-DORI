@@ -44,7 +44,7 @@ export function sameProcess(expected: ProcessIdentity, current = processIdentity
 export function underProcess(pid: number, root: number): boolean {
   const seen = new Set<number>();
   try {
-    for (let at = pid; at > 1 && !seen.has(at); ) {
+    for (let at = pid; at > 1 && !seen.has(at);) {
       if (at === root) return true;
       seen.add(at);
       at = procStat(at).ppid;

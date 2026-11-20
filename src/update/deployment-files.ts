@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import {
   closeSync,
+  fchmodSync,
+  fchownSync,
   fsyncSync,
   linkSync,
   lstatSync,
@@ -10,27 +12,24 @@ import {
   readlinkSync,
   readdirSync,
   renameSync,
+  rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { dlopen } from "bun:ffi";
+import { platform } from "../platform/index.ts";
 import { DeploymentHeld } from "./deployment-process.ts";
 import type { DeploymentConfig, PointerRecord } from "./deployment-types.ts";
 import { digest } from "./source.ts";
 
-function syncDirectory(path: string): void {
-  const fd = openSync(path, "r");
-  try {
-    fsyncSync(fd);
-  } finally {
-    closeSync(fd);
-  }
+export function syncDirectory(path: string): void {
+  platform.syncDirectory(path);
 }
 
 /** Darwin link(2) follows symlinks; rollback must preserve the link inode itself. */
 function preserveLink(path: string, backup: string): void {
-  if (process.platform !== "darwin") {
+  if (!platform.preservesHardLinks) {
     linkSync(path, backup);
     return;
   }
@@ -46,18 +45,39 @@ function preserveLink(path: string, backup: string): void {
   }
 }
 
-export function saveDeploymentJson(path: string, value: unknown): void {
+export function saveDeploymentText(
+  path: string,
+  text: string | Buffer,
+  options: {
+    readonly beforePublish?: () => void;
+    readonly createOnly?: boolean;
+    readonly mode?: number;
+    readonly gid?: number;
+  } = {},
+): void {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   const tmp = `${path}.${randomUUID()}.tmp`;
-  const fd = openSync(tmp, "wx", 0o600);
   try {
-    writeFileSync(fd, `${JSON.stringify(value, null, 2)}\n`);
-    fsyncSync(fd);
+    const fd = openSync(tmp, "wx", 0o600);
+    try {
+      writeFileSync(fd, text);
+      if (options.gid !== undefined) fchownSync(fd, -1, options.gid);
+      if (options.mode !== undefined) fchmodSync(fd, options.mode);
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+    options.beforePublish?.();
+    if (options.createOnly) linkSync(tmp, path);
+    else renameSync(tmp, path);
+    syncDirectory(dirname(path));
   } finally {
-    closeSync(fd);
+    rmSync(tmp, { force: true });
   }
-  renameSync(tmp, path);
-  syncDirectory(dirname(path));
+}
+
+export function saveDeploymentJson(path: string, value: unknown): void {
+  saveDeploymentText(path, `${JSON.stringify(value, null, 2)}\n`);
 }
 
 export function ownReleaseRoot(config: DeploymentConfig): void {
@@ -80,7 +100,7 @@ export function capturePointer(path: string, target: string, id: string): Pointe
   const stat = lstatSync(path, { throwIfNoEntry: false });
   if (stat && !stat.isDirectory() && !stat.isFile() && !stat.isSymbolicLink())
     throw new DeploymentHeld("installation pointer is a special file");
-  if (stat && process.getuid !== undefined && stat.uid !== process.getuid())
+  if (stat && platform.posixOwnership && stat.uid !== process.getuid?.())
     throw new DeploymentHeld("installation pointer belongs to another owner");
   const original = stat
     ? {

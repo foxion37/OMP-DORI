@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { main } from "../src/cli.ts";
-import { memFreePct } from "../src/host.ts";
 import { HOUR, loopTick, msUntilNext } from "../src/loop.ts";
 import { restore } from "../src/loop-lock.ts";
 import { setup } from "./loop-setup.ts";
@@ -78,30 +77,6 @@ describe("hardening", () => {
     restore(aside, path);
     expect(readFileSync(path, "utf8")).toContain("moved");
     expect(readdirSync(join(d.store.root, "loop")).filter((f) => f.includes(".release."))).toEqual([]);
-  });
-
-  test("macOS memory uses the kernel's available level, not free pages; Linux and a broken sysctl fall back to freemem", () => {
-    const free = () => 3;
-    expect(memFreePct("darwin", () => "72\n", free)).toBe(72);
-    expect(
-      memFreePct(
-        "linux",
-        () => {
-          throw new Error("must not be called on linux");
-        },
-        free,
-      ),
-    ).toBe(3);
-    expect(
-      memFreePct(
-        "darwin",
-        () => {
-          throw new Error("no sysctl");
-        },
-        free,
-      ),
-    ).toBe(3);
-    expect(memFreePct("darwin", () => "garbage", free)).toBe(3);
   });
 
   test("two runs in the same millisecond keep two records", async () => {

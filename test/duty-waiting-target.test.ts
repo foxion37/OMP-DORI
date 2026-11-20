@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { dutyTick } from "../src/duty.ts";
 import { hhmm } from "../src/fit.ts";
 import { report, startLane } from "../src/lanes.ts";
@@ -206,7 +206,7 @@ describe("a name with runs of spaces", () => {
     w.panes.get(lane.paneId)!.status = "idle";
     w.clock = lane.createdAt + MIN;
     const { progress } = await report(d, "talker", "built", { evidence: [file] });
-    expect(progress[0]).toEndWith("end/result  log.txt");
+    expect(progress[0]).toEndWith(`end${sep}result  log.txt`);
     expect(lead.received.at(-1)).toEndWith(`\nevidence: ${file}`);
     w.clock = lane.createdAt + 42 * MIN;
     expect(await dutyTick(d)).toContainEqual({ lane: "talker", action: "escalated" });

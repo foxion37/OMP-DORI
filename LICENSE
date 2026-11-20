@@ -1,21 +1,24 @@
-# omp-dori licensing
+# Cataly licensing
 
-This is [vntrevx/omp-dori](https://github.com/vntrevx/omp-dori), a modified OMP integration of
-dori-superagent, maintained by [vntrevx](https://github.com/vntrevx). Its source combines separately
-licensed work; the MIT notice does not apply to the whole repository.
+[Cataly](https://github.com/vntrevx/Cataly) brings together work with different
+licenses. The project name and its maintenance do not replace the rights or
+notices attached to that work.
 
-## Scope and attribution
+## License scope
 
-- dori-superagent code and its derived changes retain Sustainable Use License 1.0 below.
-- The pre-existing OMP integration retains the MIT terms and copyright notices in
-  [LICENSE.omp-dori](LICENSE.omp-dori), including the notices for YeonGyu Kim, betive37 and
-  subsequent maintenance of that MIT-covered material.
-- oh-my-pi, omp-ulw and other third-party components retain their own licenses. Linking a project
-  or pinning its revision does not change its license.
-- [NOTICE](NOTICE) identifies the imported revisions, the modified-copy status and this fork's
-  maintenance. [CONTRIBUTING.md](CONTRIBUTING.md) explains how changes enter this repository.
+- dori-superagent code and its derived changes remain under Sustainable Use
+  License 1.0, reproduced below.
+- The pre-existing OMP integration and its MIT-covered changes remain under the
+  standard MIT terms in [LICENSE.omp-dori](LICENSE.omp-dori). Preserve the YeonGyu
+  Kim, betive37, and vntrevx copyright notices.
+- oh-my-pi, omp-ulw, and other third-party components retain their own licenses.
+  A dependency pin, patch, project rename, or integration does not relicense them.
 
-## Inherited license terms
+[LICENSING.md](LICENSING.md) explains the component boundaries;
+[NOTICE](NOTICE) records source provenance and modified-copy attribution.
+The MIT notice is not a whole-repository MIT license.
+
+## Inherited terms
 
 Portions of this software are licensed as follows:
 

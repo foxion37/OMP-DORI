@@ -54,9 +54,10 @@ export async function requiredSourceRequest(
     "prewalk.enabled": false,
   });
   let session: Awaited<ReturnType<typeof createAgentSession>>["session"] | undefined;
+  let auth: AuthStorage | undefined;
   const errors: Array<{ event: string; error: string }> = [];
   try {
-    const auth = await AuthStorage.create(join(cwd, "empty-auth.db"));
+    auth = await AuthStorage.create(join(cwd, "empty-auth.db"));
     auth.keys.setRuntime("openai", "local-fixture-only");
     const registry = new ModelRegistry(auth, join(cwd, "models.yml"), {
       settings,
@@ -70,6 +71,7 @@ export async function requiredSourceRequest(
     ({ session } = await createAgentSession({
       cwd,
       agentDir: join(cwd, "agent"),
+      agentId: `required-source-${manager.getSessionId()}`,
       sessionManager: manager,
       authStorage: auth,
       modelRegistry: registry,
@@ -107,6 +109,7 @@ export async function requiredSourceRequest(
     return { requests, errors };
   } finally {
     await session?.dispose();
+    auth?.close();
     settings.stopWatching();
     await settings.flush();
     server.stop(true);

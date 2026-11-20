@@ -31,10 +31,15 @@ export async function deliver(
   opts: DeliverOptions = {},
   stateDir?: string,
 ): Promise<DeliverOutcome> {
-  const { when = "idle", force = false } = opts;
+  const { when = "idle", force = false, expectedSessionId, strictIdle = false } = opts;
   let probed: HcProbe;
   try {
-    probed = await probeWithWord(exec, id, stateDir);
+    probed = await probeWithWord(
+      exec,
+      id,
+      stateDir,
+      strictIdle || expectedSessionId !== undefined ? "refresh-foreground" : "observe",
+    );
   } catch (e) {
     process.stderr.write(`dori: hc get ${id} failed (${messageOf(e)}); holding delivery\n`);
     return { kind: "not-ready", status: "unknown" };
@@ -42,18 +47,25 @@ export async function deliver(
   const before = probed.probe;
   if (before.status === "gone" || before.status === "shell" || before.shellInFront) return { kind: "no-agent" };
   if (before.approvalPending) return { kind: "not-ready", status: "blocked" };
+  if (expectedSessionId !== undefined && (before.pid === undefined || before.sessionId !== expectedSessionId))
+    return { kind: "not-ready", status: "unknown" };
   if (!force && (before.status === "blocked" || before.status === "error"))
     return { kind: "not-ready", status: before.status };
   // A terminal that has never reported (status null, no shell in front: an editor, a program without OSC 7501) gets
   // nothing typed into it whatever `when` says: its state is unknown, so the message stays queued.
   if (before.status === "unknown") return { kind: "not-ready", status: "unknown" };
+  if (strictIdle && before.status !== "idle") return { kind: "not-ready", status: before.status };
   // `done` is the program's own "turn finished, waiting": typing is what it waits for, and `--if` takes only idle|working.
   // Idle may be confirmed by the screen (#178) or a live OMP lifecycle record before hc receives its next OSC word.
   // Gate on hc's word so a transition to blocked or idle in between still holds the message. As with the screen
-  // check, a turn starting with the same working word in this round trip can still pass.
+  // check, a turn starting with the same working word in this round trip can still pass. Strict callers always compare
+  // against native idle, never the compatibility gates.
   const screenIdle = when === "idle" && before.status === "idle" && probed.word === "working";
-  const gate =
-    when === "any" || (when === "idle" && before.status === "done") ? [] : ["--if", screenIdle ? "working" : when];
+  const gate = strictIdle
+    ? ["--if", "idle"]
+    : when === "any" || (when === "idle" && before.status === "done")
+      ? []
+      : ["--if", screenIdle ? "working" : when];
   const argv = ["send", id, ...gate, ...(force ? ["--force"] : []), "--", text];
   let result: Record<string, unknown>;
   try {

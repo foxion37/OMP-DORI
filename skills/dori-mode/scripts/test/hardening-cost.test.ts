@@ -76,6 +76,7 @@ test("a failing cost hook is reported and does not stop an authorized close", as
     });
     mkdirSync(join(state.dir, "lanes"), { recursive: true });
     const external = deps.run;
+    await deps.registry.create(lane);
     const result = await closeLane(
       {
         ...deps,
@@ -106,6 +107,7 @@ test("authorized close records known cost and keeps it in the lane journal", asy
     });
     const external = deps.run;
     const calls: (readonly string[])[] = [];
+    await deps.registry.create(lane);
     const result = await closeLane(
       {
         ...deps,

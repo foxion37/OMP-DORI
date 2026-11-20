@@ -59,9 +59,7 @@ export class RuntimeHealthWriter {
     const monitors = this.#monitors.list().flatMap((running) => {
       const spec = state.wanted.get(running.name);
       const identity = processIdentity(running.pid);
-      return spec && identity
-        ? [{ ...spec, argv: running.argv, filter: running.filter, pid: running.pid, startTicks: identity.startTicks }]
-        : [];
+      return spec && identity ? [{ ...running, startTicks: identity.startTicks }] : [];
     });
     const health: RuntimeHealth = {
       version: 1,

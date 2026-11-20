@@ -29,15 +29,20 @@ export async function rollbackFixture(options: { unknown?: boolean; parentShell?
   const frontPath = join(f.root, "foreground.json");
   writeFileSync(frontPath, JSON.stringify(f.front));
   // Only pane observation is implemented: any launch, signal or model interaction fails the test.
+  // Keep every observation a real child call, without booting Bun for a read-only JSON response.
   writeFileSync(
     config.herdr,
-    `#!${process.execPath}
-import { readFileSync } from "node:fs";
-const operation = process.argv[process.argv.indexOf("pane") + 1];
-if (operation !== "get" && operation !== "process-info") throw new Error("unexpected mutating operation");
-const result = operation === "get" ? { pane: { agent: "omp", agent_status: "idle" } }
-  : { process_info: JSON.parse(readFileSync(${JSON.stringify(frontPath)}, "utf8")) };
-console.log(JSON.stringify({ result }));
+    `#!/bin/bash
+set -eu
+while (( $# )) && [[ "$1" != pane ]]; do shift; done
+case "\${2-}" in
+  get) printf '%s\\n' '{"result":{"pane":{"agent":"omp","agent_status":"idle"}}}' ;;
+  process-info)
+    front=$(< '${frontPath.replaceAll("'", "'\\''")}')
+    printf '{"result":{"process_info":%s}}\\n' "$front"
+    ;;
+  *) printf '%s\\n' 'unexpected mutating operation' >&2; exit 1 ;;
+esac
 `,
     { mode: 0o700 },
   );

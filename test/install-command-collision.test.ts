@@ -13,6 +13,9 @@ import { join, relative, resolve } from "node:path";
 import { script, setup } from "./install-setup.ts";
 import { nativeCacheFixture, overlayFixture } from "./source-bundle-setup.ts";
 
+// POSIX-only: the fixture runs scripts/install-source.sh and shebang stubs linked through a ':' PATH.
+const posix = test.skipIf(process.platform === "win32");
+
 // Version/argv stubs only; setup records package installs without installing dependencies.
 const executable = `#!/bin/sh
 if [ -n "\${INSTALL_TEST_OMP_PROBE:-}" ]; then printf '%s\\n' "$*" >> "$INSTALL_TEST_OMP_PROBE"; fi
@@ -20,7 +23,7 @@ if [ "\${1:-}" = --version ]; then echo 'omp 18.20.0'; else printf '%s\\0' "$0" 
 `;
 
 for (const mode of ["primary", "side"]) {
-  test.each(["direct path", "relative path", "selection symlink", "destination symlink", "parent alias", "hard link"])(
+  posix.each(["direct path", "relative path", "selection symlink", "destination symlink", "parent alias", "hard link"])(
     `${mode} holds an override through %s before version, checkout or install mutations`,
     (alias) => {
       const s = setup();
@@ -80,7 +83,7 @@ for (const mode of ["primary", "side"]) {
     },
   );
 
-  test(`${mode} infers its destination before holding a selected wrapper`, () => {
+  posix(`${mode} infers its destination before holding a selected wrapper`, () => {
     const s = setup();
     const base = join(s.home, mode === "primary" ? ".dori" : ".omp-dori");
     const wrapper = join(base, "bin/omp");
@@ -97,7 +100,7 @@ for (const mode of ["primary", "side"]) {
     else expect(existsSync(join(base, ".omp-dori"))).toBe(false);
   });
 
-  test(`${mode} also holds the bound dependency producer when its launcher aliases a wrapper`, () => {
+  posix(`${mode} also holds the bound dependency producer when its launcher aliases a wrapper`, () => {
     const s = setup();
     // This fixture has synthetic addon bytes; it proves receipt/path admission, not native loading.
     const native = overlayFixture(s.src, join(s.root, "native-upstream"), true);
@@ -118,7 +121,7 @@ for (const mode of ["primary", "side"]) {
   });
 }
 
-test.each(["dori", "omp-dori"])("side holds an override before replacing its %s wrapper", (name) => {
+posix.each(["dori", "omp-dori"])("side holds an override before replacing its %s wrapper", (name) => {
   const s = setup();
   const base = join(s.home, ".omp-dori");
   const selected = join(base, "bin", name);
@@ -134,7 +137,7 @@ test.each(["dori", "omp-dori"])("side holds an override before replacing its %s 
   expect(existsSync(join(s.root, "bun.log"))).toBe(false);
 });
 
-test.each(["dori", "omp-dori"])("primary preserves the independent %s executable it does not wrap", (name) => {
+posix.each(["dori", "omp-dori"])("primary preserves the independent %s executable it does not wrap", (name) => {
   const s = setup();
   const base = join(s.home, ".dori");
   const selected = join(base, "bin", name);
@@ -150,7 +153,7 @@ test.each(["dori", "omp-dori"])("primary preserves the independent %s executable
   expect(readFileSync(selected, "utf8")).toBe(executable);
 });
 
-test("primary holds its existing generated wrapper instead of trusting its embedded executable", () => {
+posix("primary holds its existing generated wrapper instead of trusting its embedded executable", () => {
   const s = setup();
   const options = { DORI_INSTALL_MODE: "primary", DORI_NO_PULL: "1" };
   expect(s.install(options).code).toBe(0);

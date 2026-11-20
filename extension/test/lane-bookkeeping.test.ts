@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 
 import { isSol, LANE_BOOKKEEPING, withLaneBookkeeping } from "../lane-bookkeeping";
+import { ROLE_INVARIANTS } from "../role-invariants.ts";
 import { load, useConfig } from "./fake-pi";
 
 const SOL = { id: "gpt-6.1-sol", name: "GPT-6.1 Sol" };
@@ -27,17 +28,19 @@ const roleSession = async (role: string | undefined, model = SOL, agent?: Agent)
 describe("lane bookkeeping", () => {
   test("a lane's main agent on Sol gets the bookkeeping block after the base prompt", async () => {
     const [own] = await (await roleSession("lane")).emit("before_agent_start", base);
-    expect(own).toEqual({ systemPrompt: ["base prompt", LANE_BOOKKEEPING] });
+    expect(own).toEqual({ systemPrompt: ["base prompt", ROLE_INVARIANTS.lane, LANE_BOOKKEEPING] });
   });
 
-  test("the Dori session, plain sessions, subagents and other models keep their prompt", async () => {
-    for (const pi of [
-      await roleSession("dori"),
-      await roleSession(undefined),
-      await roleSession("lane", { id: "claude-opus-5-5", name: "Claude Opus 5.5" }),
-      await roleSession("lane", { id: "gpt-6.1-terra", name: "GPT-6.1 Terra" }),
-    ])
-      expect((await pi.emit("before_agent_start", base))[0]).toBeUndefined();
+  test("other roles and models get only their root core, while plain sessions stay unchanged", async () => {
+    for (const [role, model] of [
+      ["dori", SOL],
+      ["lane", { id: "claude-opus-5-5", name: "Claude Opus 5.5" }],
+      ["lane", { id: "gpt-6.1-terra", name: "GPT-6.1 Terra" }],
+    ] as const) {
+      const [own] = await (await roleSession(role, model)).emit("before_agent_start", base);
+      expect(own).toEqual({ systemPrompt: ["base prompt", ROLE_INVARIANTS[role]] });
+    }
+    expect((await (await roleSession(undefined)).emit("before_agent_start", base))[0]).toBeUndefined();
   });
 
   test("a subagent of a Sol lane inherits the lane role but not the block", async () => {

@@ -14,7 +14,13 @@ export type AgentIdentity = {
   readonly pid?: number;
   readonly sessionId?: string;
 };
-export type ForegroundProcess = { readonly name: string; readonly argv: readonly string[]; readonly pid?: number };
+export type ForegroundProcess = {
+  readonly name: string;
+  readonly argv: readonly string[];
+  readonly pid?: number;
+  /** True when argv contains only legacy partial/name hints, not a complete observation. */
+  readonly argvIncomplete?: boolean;
+};
 /** One snapshot: status, identity, foreground and discovery data together (submitTyped compares all of them; deliver re-reads them). `rootPid`: the session's root process (herdr process_info.shell_pid, hc terminal pid). */
 export type Probe = {
   readonly status: AgentStatus;
@@ -57,7 +63,14 @@ export type CreateSpec = {
 export type DeliverWhen = "idle" | "working" | "any";
 /** `when`: hc uses --if idle / --if working / no gate for "any"; unknown and shell never receive agent delivery.
  * `force`: hc may type into a blocked agent, but an OMP tool approval always holds delivery on either runtime. */
-export type DeliverOptions = { readonly when?: DeliverWhen; readonly force?: boolean };
+export type DeliverOptions = {
+  readonly when?: DeliverWhen;
+  readonly force?: boolean;
+  /** Require idle at the runtime's last delivery check, overriding `when`. */
+  readonly strictIdle?: boolean;
+  /** Require this process-bound native session in the probe immediately before delivery. */
+  readonly expectedSessionId?: string;
+};
 export type DeliverOutcome =
   | { readonly kind: "delivered"; readonly turn?: number; readonly started?: boolean }
   | { readonly kind: "no-agent" }
@@ -69,6 +82,8 @@ export type Key = "enter" | "escape";
 export type CloseScope = "session" | "container";
 /** `unwrapped`: a line the terminal wrapped over several rows comes back as one line, not one line per row. */
 export type ReadOptions = { readonly unwrapped?: boolean };
+/** `foregroundOnly`: hc skips the observational screen check; herdr already samples foreground after its screen check. */
+export type ProbeOptions = { readonly foregroundOnly?: boolean };
 export interface SessionRuntime {
   readonly kind: RuntimeKind;
   /** The caller's own session from the runtime's env (HERDR_PANE_ID + HERDR_WORKSPACE_ID / HC_TERMINAL_ID), or undefined. */
@@ -80,7 +95,7 @@ export interface SessionRuntime {
   /** herdr: `pane run <id> <command>`. hc: `send <id> <command>` into the shell (no --if: a shell reports no status). */
   start(ref: SessionRef, command: string): Promise<void>;
   list(filter?: { readonly group?: string }): Promise<readonly SessionInfo[]>;
-  probe(ref: SessionRef): Promise<Probe>;
+  probe(ref: SessionRef, opts?: ProbeOptions): Promise<Probe>;
   /** herdr: `pane read --source recent` (`recent-unwrapped` when unwrapped). hc: `read`; unwrapped joins rows as wide as the terminal's `cols`. */
   read(ref: SessionRef, lines: number, opts?: ReadOptions): Promise<string>;
   /** Never types into a session whose probe says shellInFront, whatever `status` says. Default `when` = "idle". */

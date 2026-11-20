@@ -510,21 +510,87 @@ index ad253ff78074c59f9dc86b388a647c5c4d334ce5..02abdf939fb3b088c417fb22d08ea9da
  			// Mounted xd:// readers stay out of the direct inventory, but their skill
  			// capability still drives catalog/URI guidance: project them into the
 diff --git a/packages/coding-agent/src/session/agent-session.ts b/packages/coding-agent/src/session/agent-session.ts
-index 8fdbac39ace69b277c7c24dba235bab700c0cc67..0348b2af4096081738dc839b56336417e04bb34b 100644
+index 8fdbac39ace69b277c7c24dba235bab700c0cc67..71ab328dc68543773c914403e8fd51ea06efa2eb 100644
 --- a/packages/coding-agent/src/session/agent-session.ts
 +++ b/packages/coding-agent/src/session/agent-session.ts
-@@ -1411,6 +1411,10 @@ export class AgentSession implements SettingsScope, AgentViewSession {
- 	 *  enqueue and fold/resume normally across an in-session interrupt, only a session identity
- 	 *  change should drop them. */
+@@ -626,6 +626,27 @@ export const MCP_DISCOVERY_TURN_WAIT_MS = 1500;
+ const IMAGE_DESCRIPTION_ADMISSION_TIMEOUT_MS = 20_000;
+ /** Marks work running inside the deferred extension load so it never waits on itself. */
+ const deferredExtensionLoadScope = new AsyncLocalStorage<true>();
++/** Ephemeral custom-delivery identity; a verified unchanged reload adopts its predecessor. */
++type CustomMessageOwner = { adoptedFrom?: CustomMessageOwner };
++
++type CustomMessageSubmission = {
++	readonly owner: CustomMessageOwner;
++	readonly sessionGeneration: number;
++};
++
++function customMessageOwnerRoot(owner: CustomMessageOwner): CustomMessageOwner {
++	let root = owner;
++	while (root.adoptedFrom) root = root.adoptedFrom;
++	return root;
++}
++
++type CustomMessageOptions = {
++	triggerTurn?: boolean;
++	deliverAs?: "steer" | "followUp" | "nextTurn" | "aside";
++	queueChipText?: string;
++	acceptTerminalEmptyStop?: boolean;
++};
++
+ /**
+  * One session transition in its session's tree of transitions. Transitions it starts itself queue
+  * on its `childTail`; it hands its parent's queue on once it and every one in `nested` settled.
+@@ -1402,20 +1423,26 @@ export class AgentSession implements SettingsScope, AgentViewSession {
+ 	#promptGeneration = 0;
+ 	// abort() can finish in a message_end listener before queued settle work runs.
+ 	#activeAgentPromptGeneration = this.#promptGeneration;
+-	/** Bumped by newSession()/switchSession() at the same point they clear the pending IRC/aside
+-	 *  queue (restored on a rolled-back switchSession()). A message-queueing call that spans an
+-	 *  await (image normalization, vision description) captures this before the await and checks
+-	 *  it again right before enqueueing into IrcBridge, so a record started for the outgoing
+-	 *  session cannot land in a different session's queue after the transition. Deliberately
+-	 *  distinct from #promptGeneration, which also changes on a plain abort() — asides must still
+-	 *  enqueue and fold/resume normally across an in-session interrupt, only a session identity
+-	 *  change should drop them. */
++	/** Raw runtime generation, restored on switch rollback. Unlike #promptGeneration, this
++	 *  does not change on a plain abort; even an unchanged reload gets a fresh generation. */
  	#sessionGeneration = 0;
++	/** Rollback restores the active identity but must never reuse an abandoned target identity. */
++	#nextSessionGeneration = 0;
++	#customMessageOwner: CustomMessageOwner = {};
++	/** Outside senders capture the outgoing owner and raw wake generation, not a provisional target. */
++	#customMessageBeforeTransition: CustomMessageSubmission | undefined;
 +	/** Advances when a fresh transcript starts: `/clear` or `/new`. Resuming or reloading an
 +	 *  existing session keeps it: that conversation may still have a warm provider cache, so
 +	 *  prompt content snapshotted from disk (the workspace tree) must stay byte-stable for it. */
 +	#transcriptEpoch = 0;
  	/** Latest `session_init` of the transcript the model calls ran on; `init` is null when it has none. */
  	#sessionInit: { sessionFile: string | undefined; init: PersistedSessionInit | null } | undefined;
- 	/** Settles when switchSession commits or restores its previous generation on rollback.
-@@ -1437,6 +1441,8 @@ export class AgentSession implements SettingsScope, AgentViewSession {
+-	/** Settles when switchSession commits or restores its previous generation on rollback.
+-	 *  newSession never rolls its generation back, so it does not delay stale aside/SDK calls. */
+-	#sessionGenerationSettled: Promise<void> | undefined;
++	/** Pending rollback decisions, keyed by the transcript each can restore. Nested decisions
++	 *  remain reachable even when their parent settles first. */
++	readonly #generationRestores = new Map<
++		number,
++		{ settled: Promise<void>; turn: SessionTransitionTurn | undefined }
++	>();
+ 	/** Readiness barrier for the outermost session/transcript transition, including all
+ 	 *  hooks and rollback reconciliation, independently of when its generation settles. */
+ 	#sessionTransitionSettled: Promise<void> | undefined;
+@@ -1428,15 +1455,19 @@ export class AgentSession implements SettingsScope, AgentViewSession {
+ 		childTail: Promise.resolve(),
+ 		released: false,
+ 	};
++	readonly #activeSessionTransitionTurns = new Map<SessionTransitionTurn, Promise<void>>();
+ 	/** Transitions requested from outside and not yet released (queued, running, or awaiting nested ones). */
+ 	#queuedSessionTransitions = 0;
+ 	/** Each using declaration disposes one depth, so nested transitions reuse this token. */
+ 	readonly #sessionTransitionScope: Disposable = {
+ 		[Symbol.dispose]: () => {
+ 			if (--this.#sessionTransitionDepth !== 0) return;
++			this.#customMessageBeforeTransition = undefined;
  			const resolve = this.#resolveSessionTransition;
  			this.#sessionTransitionSettled = undefined;
  			this.#resolveSessionTransition = undefined;
@@ -533,7 +599,34 @@ index 8fdbac39ace69b277c7c24dba235bab700c0cc67..0348b2af4096081738dc839b56336417
  			resolve?.();
  			// Deliveries held while the transcript was swapped go to whichever session it settled on.
  			this.yieldQueue.requestIdleFlush();
-@@ -2215,6 +2221,8 @@ export class AgentSession implements SettingsScope, AgentViewSession {
+@@ -1713,17 +1744,17 @@ export class AgentSession implements SettingsScope, AgentViewSession {
+ 		}
+ 	}
+ 
+-	/** Re-validates a #sessionGeneration snapshot captured before an aside/SDK call's await.
+-	 *  A mismatch alone does not mean the record's source session is gone —
+-	 *  switchSession() restores the exact prior generation on rollback — so wait out any in-flight
+-	 *  generation change (#sessionGenerationSettled) and recheck rather than discarding immediately.
+-	 *  Returns true when the caller should drop its record (no in-flight transition to wait for, or
+-	 *  the generation is still different once one settles); false once the generation matches again. */
++	/** A changed generation can still be restored by a pending switch. Wait only for that
++	 *  decision, never for the caller's own transition: a hook cannot await its own rollback.
++	 *  Returns true when the record should be dropped, false when its generation matches. */
+ 	async #sessionGenerationChanged(sessionGeneration: number): Promise<boolean> {
+ 		while (this.#sessionGeneration !== sessionGeneration) {
+-			const settled = this.#sessionGenerationSettled;
+-			if (!settled) return true;
+-			await settled;
++			const restore = this.#generationRestores.get(sessionGeneration);
++			if (!restore) return true;
++			for (let turn = this.#liveSessionTransitionTurn(); turn; turn = turn.parent) {
++				if (turn === restore.turn) return true;
++			}
++			await restore.settled;
+ 		}
+ 		return false;
+ 	}
+@@ -2215,6 +2246,8 @@ export class AgentSession implements SettingsScope, AgentViewSession {
  			evalToolSession: config.evalToolSession,
  			extensionRunner: () => this.#extensionRunner,
  			isStreaming: () => this.isStreaming,
@@ -542,7 +635,95 @@ index 8fdbac39ace69b277c7c24dba235bab700c0cc67..0348b2af4096081738dc839b56336417
  			appendSessionMessage: message => {
  				this.agent.appendMessage(message);
  				this.sessionManager.appendMessage(message);
-@@ -7138,6 +7146,7 @@ export class AgentSession implements SettingsScope, AgentViewSession {
+@@ -6364,6 +6397,10 @@ export class AgentSession implements SettingsScope, AgentViewSession {
+ 		// a pending idle check or an in-flight recap that belong to the transcript being replaced.
+ 		this.#idleMaintenance?.invalidate();
+ 		if (this.#sessionTransitionDepth++ === 0) {
++			this.#customMessageBeforeTransition = {
++				owner: this.#customMessageOwner,
++				sessionGeneration: this.#sessionGeneration,
++			};
+ 			const settled = Promise.withResolvers<void>();
+ 			this.#sessionTransitionSettled = settled.promise;
+ 			this.#resolveSessionTransition = settled.resolve;
+@@ -6371,6 +6408,34 @@ export class AgentSession implements SettingsScope, AgentViewSession {
+ 		return this.#sessionTransitionScope;
+ 	}
+ 
++	/** The innermost still-running transition on this caller's path, excluding the shared root. */
++	#liveSessionTransitionTurn(): SessionTransitionTurn | undefined {
++		let turn = sessionTransitionTurnScope.getStore()?.turns.get(this);
++		while (turn?.released) turn = turn.parent;
++		return turn === this.#sessionTransitionRoot ? undefined : turn;
++	}
++
++	/** Wait for full readiness from outside. A live hook may wait for another transition,
++	 *  but never for its own turn or any ancestor (which may be awaiting this hook). */
++	#pendingCustomMessageTransition(): Promise<void> | undefined {
++		const live = this.#liveSessionTransitionTurn();
++		if (!live) {
++			return (
++				this.#sessionTransitionSettled ??
++				(this.#queuedSessionTransitions > 0 ? this.#sessionTransitionRoot.childTail : undefined)
++			);
++		}
++		for (const [candidate, settled] of this.#activeSessionTransitionTurns) {
++			let enclosing: SessionTransitionTurn | undefined = live;
++			while (enclosing && enclosing !== candidate) enclosing = enclosing.parent;
++			if (!enclosing) return settled;
++		}
++	}
++
++	#ownsCustomMessage(owner: CustomMessageOwner): boolean {
++		return !this.#isDisposed && customMessageOwnerRoot(this.#customMessageOwner) === customMessageOwnerRoot(owner);
++	}
++
+ 	/**
+ 	 * Starts a session transition (switch, new session, fork, branch, tree navigation, context reset).
+ 	 * Each entry point calls this first with a call of itself, and runs its own body when this returns
+@@ -6390,10 +6455,11 @@ export class AgentSession implements SettingsScope, AgentViewSession {
+ 			body.entered = true;
+ 			return undefined;
+ 		}
+-		// The innermost transition of this session on the caller's path, if it is still running.
+-		let parent = store?.turns.get(this);
+-		while (parent?.released) parent = parent.parent;
+-		return this.#runSessionTransition(rerun, parent ?? this.#sessionTransitionRoot, store?.turns);
++		return this.#runSessionTransition(
++			rerun,
++			this.#liveSessionTransitionTurn() ?? this.#sessionTransitionRoot,
++			store?.turns,
++		);
+ 	}
+ 
+ 	/**
+@@ -6421,6 +6487,7 @@ export class AgentSession implements SettingsScope, AgentViewSession {
+ 				if (this.#isDisposed && !disposedWhenRequested) {
+ 					throw new Error("The session was disposed before this session transition could run.");
+ 				}
++				this.#activeSessionTransitionTurns.set(turn, done.promise);
+ 				return await sessionTransitionTurnScope.run({ turns, body: { session: this, entered: false } }, rerun);
+ 			} finally {
+ 				void this.#releaseSessionTransitionTurn(turn, done, fromOutside);
+@@ -6442,6 +6509,7 @@ export class AgentSession implements SettingsScope, AgentViewSession {
+ 		fromOutside: boolean,
+ 	): Promise<void> {
+ 		while (turn.nested.size > 0) await Promise.allSettled(turn.nested);
++		this.#activeSessionTransitionTurns.delete(turn);
+ 		turn.released = true;
+ 		if (fromOutside) this.#queuedSessionTransitions--;
+ 		done.resolve();
+@@ -7089,7 +7157,8 @@ export class AgentSession implements SettingsScope, AgentViewSession {
+ 		this.agent.reset();
+ 		// The cleared context is a new transcript: an aside or held message captured for the old one drops
+ 		// its record instead of landing here (mirrors newSession()).
+-		this.#sessionGeneration++;
++		this.#sessionGeneration = ++this.#nextSessionGeneration;
++		this.#customMessageOwner = {};
+ 		this.#pendingNextTurnMessages = [];
+ 		this.#experimentalContextNotesReminder = undefined;
+ 		this.#scheduledHiddenNextTurnGeneration = undefined;
+@@ -7138,6 +7207,7 @@ export class AgentSession implements SettingsScope, AgentViewSession {
  		this.sessionManager.appendResetBoundary();
  
  		resetCapabilities();
@@ -550,7 +731,7 @@ index 8fdbac39ace69b277c7c24dba235bab700c0cc67..0348b2af4096081738dc839b56336417
  		await this.refreshBaseSystemPrompt();
  
  		return { droppedCount };
-@@ -7316,6 +7325,11 @@ export class AgentSession implements SettingsScope, AgentViewSession {
+@@ -7316,6 +7386,11 @@ export class AgentSession implements SettingsScope, AgentViewSession {
  		return this.agent.state.isStreaming || this.#promptInFlightCount > 0;
  	}
  
@@ -562,7 +743,379 @@ index 8fdbac39ace69b277c7c24dba235bab700c0cc67..0348b2af4096081738dc839b56336417
  	/**
  	 * Fold background results into context until the next deliberate prompt instead of
  	 * waking on them. Used when the user ends a background-job wait; a plain `abort` stops
-@@ -12404,6 +12418,7 @@ export class AgentSession implements SettingsScope, AgentViewSession {
+@@ -10696,22 +10771,52 @@ export class AgentSession implements SettingsScope, AgentViewSession {
+ 	 *  are expected) must not assume dispatch happened just because this was awaited. */
+ 	async #promptAgentInitiatedMessage(
+ 		message: CustomMessage,
++		submission: CustomMessageSubmission,
+ 		options?: { acceptTerminalEmptyStop?: boolean },
+ 	): Promise<boolean> {
+ 		const inFlightEpoch = this.#beginInFlight();
+-		const sessionGeneration = this.#sessionGeneration;
++		const { owner, sessionGeneration } = submission;
+ 		const setupAbort = new AbortController();
+ 		this.#promptSetupAbortController = setupAbort;
++		const wakeIsCurrent = () =>
++			!setupAbort.signal.aborted && this.#sessionGeneration === sessionGeneration && !this.#isDisposed;
++		let retainWithoutTurn = false;
+ 		try {
+-			if (!(await this.#runUsageAwarePreflightForNextModelCall())) return false;
+-			const acceptTerminalEmptyStop = options?.acceptTerminalEmptyStop === true;
+-			if (acceptTerminalEmptyStop) {
+-				this.#resetPromptMaintenanceState();
++			const preflightAllowed = await this.#runUsageAwarePreflight(setupAbort.signal);
++			const checkedModel = this.model;
++			retainWithoutTurn = true;
++			if (!preflightAllowed || !wakeIsCurrent()) return false;
++			for (
++				let pending = this.#pendingCustomMessageTransition();
++				pending && wakeIsCurrent();
++				pending = this.#pendingCustomMessageTransition()
++			) {
++				await pending;
++			}
++			if (!wakeIsCurrent()) return false;
++			const preparation = await this.#prepareUserAuthoredWake(message, setupAbort.signal);
++			// A foreign transition can cancel before it aborts setup or replaces the transcript.
++			// Wait for its decision without turning that still-current wake into a passive notice.
++			for (
++				let pending = this.#pendingCustomMessageTransition();
++				pending && wakeIsCurrent();
++				pending = this.#pendingCustomMessageTransition()
++			) {
++				await pending;
+ 			}
++			if (!wakeIsCurrent()) return false;
++			const additionalMessages = preparation?.commit();
++			if (preparation && !additionalMessages) return false;
++			const acceptTerminalEmptyStop = options?.acceptTerminalEmptyStop === true;
++			if (acceptTerminalEmptyStop) this.#resetPromptMaintenanceState();
+ 			this.#recovery.setAcceptTerminalEmptyStop(acceptTerminalEmptyStop);
+-			const prepared = await this.#prepareUserAuthoredWake(message, setupAbort.signal, sessionGeneration);
+-			if (!prepared) return false;
+-			const run = this.agent.prompt(prepared.length > 1 ? prepared : message);
++			this.#usagePreflightReadyForNextModelCall = true;
++			// The start hook may have changed model metadata even within the same provider/id.
++			// The provider gate must recheck any model other than the one preflight saw.
++			this.#usagePreflightReadyModel = checkedModel;
++			if (!wakeIsCurrent()) return false;
++			retainWithoutTurn = false;
++			const run = this.agent.prompt(additionalMessages?.length ? [message, ...additionalMessages] : message);
+ 			// No dispatch-live wake here: an agent-initiated turn has no
+ 			// client promptTurn, so steers parked on a dispatching CLIENT
+ 			// prompt must keep parking through it — waking on this claim
+@@ -10720,51 +10825,54 @@ export class AgentSession implements SettingsScope, AgentViewSession {
+ 			await this.#waitForPostPromptRecovery();
+ 			return true;
+ 		} finally {
+-			// The per-turn before_agent_start override lives only for this turn.
+-			this.#tools.clearTurnSystemPromptOverride();
+-			this.#usagePreflightReadyForNextModelCall = false;
+-			this.#recovery.setAcceptTerminalEmptyStop(false);
++			if (this.#promptSetupAbortController === setupAbort) {
++				if (this.#sessionGeneration === sessionGeneration) {
++					// The per-turn before_agent_start override lives only for this turn.
++					this.#tools.clearTurnSystemPromptOverride();
++					this.#usagePreflightReadyForNextModelCall = false;
++					this.#recovery.setAcceptTerminalEmptyStop(false);
++				}
++				this.#promptSetupAbortController = undefined;
++			}
+ 			this.#endInFlight(inFlightEpoch);
+-			if (this.#promptSetupAbortController === setupAbort) this.#promptSetupAbortController = undefined;
++			if (retainWithoutTurn) {
++				for (
++					let pending = this.#pendingCustomMessageTransition();
++					pending;
++					pending = this.#pendingCustomMessageTransition()
++				) {
++					await pending;
++				}
++				if (this.#ownsCustomMessage(owner)) {
++					if (this.agent.state.isStreaming) this.#queueHiddenNextTurnMessage(message, false);
++					else this.#recordWithoutTurn([message]);
++				}
++			}
+ 		}
+ 	}
+ 
+ 	/**
+ 	 * A user-authored message starts user work, so it gets the same before_agent_start preparation as a
+-	 * prompt; agent-attributed wakes go out unprepared, matching queued delivery. Returns the messages
+-	 * to send, or undefined when preparation was cancelled: the message is then kept in the transcript
+-	 * without a turn (dropped only when the session it belonged to is gone).
++	 * prompt; agent-attributed wakes go out unprepared, matching queued delivery. Prepare only;
++	 * the caller commits after checking transition readiness and the raw wake generation.
+ 	 */
+ 	async #prepareUserAuthoredWake(
+ 		message: CustomMessage,
+ 		signal: AbortSignal,
+-		sessionGeneration: number,
+-	): Promise<AgentMessage[] | undefined> {
+-		if (!isUserAuthoredQueuedMessage(message)) return [message];
++	): Promise<QueuedMessagePreparation | undefined> {
++		if (!isUserAuthoredQueuedMessage(message)) return undefined;
+ 		const images =
+ 			typeof message.content === "string"
+ 				? []
+ 				: message.content.filter((part): part is ImageContent => part.type === "image");
+-		let preparedMessages: readonly AgentMessage[] | undefined;
+-		try {
+-			const preparation = await this.#prepareAgentStart(
+-				message,
+-				this.#getCustomMessageTextContent(message),
+-				images.length > 0 ? images : undefined,
+-				this.#promptGeneration,
+-				signal,
+-				"direct",
+-			);
+-			preparedMessages = preparation.commit();
+-		} catch (error) {
+-			if (!(await this.#sessionGenerationChanged(sessionGeneration))) this.#recordWithoutTurn([message]);
+-			throw error;
+-		}
+-		if (!preparedMessages) {
+-			if (!(await this.#sessionGenerationChanged(sessionGeneration))) this.#recordWithoutTurn([message]);
+-			return undefined;
+-		}
+-		return [message, ...preparedMessages];
++		return this.#prepareAgentStart(
++			message,
++			this.#getCustomMessageTextContent(message),
++			images.length > 0 ? images : undefined,
++			this.#promptGeneration,
++			signal,
++			"direct",
++		);
+ 	}
+ 
+ 	/** Queue a custom message without starting a turn, matching steer/follow-up/aside delivery. */
+@@ -10858,32 +10966,33 @@ export class AgentSession implements SettingsScope, AgentViewSession {
+ 	 *   (no deliverAs) a display:true message also paints to the interactive transcript
+ 	 *   immediately (message_start/message_end, no turn)
+ 	 *
++	 * During a session transition, outside senders still own the outgoing transcript;
++	 * await the transition before sending to its replacement. Live transition hooks
++	 * own their current target, but never wait for their own rollback decision.
++	 *
+ 	 * @returns true iff this call synchronously started a new turn (awaited
+-	 * `agent.prompt`); false when the message was queued/appended without a turn
++	 * `agent.prompt`); false when the message was dropped with its transcript or
++	 * queued/appended without a turn
+ 	 * — including when `triggerTurn` is downgraded because the client defers
+ 	 * agent-initiated turns. Callers that must mirror the resulting `agent_end`
+ 	 * use this to avoid acting on a turn that never ran.
+ 	 */
+ 	async sendCustomMessage<T = unknown>(
+ 		message: CustomMessagePayload<T>,
+-		options?: {
+-			triggerTurn?: boolean;
+-			deliverAs?: "steer" | "followUp" | "nextTurn" | "aside";
+-			queueChipText?: string;
+-			acceptTerminalEmptyStop?: boolean;
+-		},
++		options?: CustomMessageOptions,
+ 	): Promise<boolean> {
+-		return this.#admitSubmission(() => this.#sendCustomMessage(message, options));
++		const submission =
++			(!this.#liveSessionTransitionTurn() && this.#customMessageBeforeTransition) || {
++				owner: this.#customMessageOwner,
++				sessionGeneration: this.#sessionGeneration,
++			};
++		return this.#admitSubmission(() => this.#sendCustomMessage(message, submission, options));
+ 	}
+ 
+ 	async #sendCustomMessage<T = unknown>(
+ 		message: CustomMessagePayload<T>,
+-		options?: {
+-			triggerTurn?: boolean;
+-			deliverAs?: "steer" | "followUp" | "nextTurn" | "aside";
+-			queueChipText?: string;
+-			acceptTerminalEmptyStop?: boolean;
+-		},
++		submission: CustomMessageSubmission,
++		options?: CustomMessageOptions,
+ 	): Promise<boolean> {
+ 		// An extension command parked on a manual compaction may fire this
+ 		// (`pi.sendMessage(..., { triggerTurn: true })`) and return without awaiting
+@@ -10893,9 +11002,9 @@ export class AgentSession implements SettingsScope, AgentViewSession {
+ 		// live agent turn this message was queued into, counts as a claim.
+ 		const release = this.#maintenance.claimPendingResume();
+ 		const outcome: PromptDispatchOutcome = { sessionClaimed: false };
+-		if (!release) return this.#dispatchCustomMessage(message, options, outcome);
++		if (!release) return this.#dispatchCustomMessage(message, submission, options, outcome);
+ 		try {
+-			return await this.#dispatchCustomMessage(message, options, outcome);
++			return await this.#dispatchCustomMessage(message, submission, options, outcome);
+ 		} finally {
+ 			release(outcome.sessionClaimed);
+ 		}
+@@ -10903,41 +11012,26 @@ export class AgentSession implements SettingsScope, AgentViewSession {
+ 
+ 	async #dispatchCustomMessage<T = unknown>(
+ 		message: CustomMessagePayload<T>,
+-		options:
+-			| {
+-					triggerTurn?: boolean;
+-					deliverAs?: "steer" | "followUp" | "nextTurn" | "aside";
+-					queueChipText?: string;
+-					acceptTerminalEmptyStop?: boolean;
+-			  }
+-			| undefined,
++		submission: CustomMessageSubmission,
++		options: CustomMessageOptions | undefined,
+ 		outcome: PromptDispatchOutcome,
+ 	): Promise<boolean> {
+-		// Captured before the awaits below — see #sessionGeneration's doc comment.
+-		const sessionGeneration = this.#sessionGeneration;
+ 		// A turn-triggering message waits out context replacement; plain appends do not.
+-		const contextReplacement =
+-			options?.triggerTurn || options?.deliverAs === "aside"
+-				? this.#maintenance.waitForContextReplacement()
+-				: undefined;
++		const requestsWake = options?.triggerTurn || options?.deliverAs === "aside";
++		const contextReplacement = requestsWake ? this.#maintenance.waitForContextReplacement() : undefined;
++		let wakeSuperseded = false;
+ 		if (contextReplacement) {
+ 			const promptGeneration = this.#promptGeneration;
+ 			await contextReplacement;
+-			// A transition (/new, /clear, a switch) aborts long before it replaces the transcript, so let it
+-			// settle first: only then does the session generation tell an abort from a session change.
+-			if (this.isSessionTransitioning) await this.waitForSessionTransition();
+-			// A session change or disposal during the wait drops the message with the transcript it was sent to.
+-			if (
+-				this.#isDisposed ||
+-				(this.#sessionGeneration !== sessionGeneration && (await this.#sessionGenerationChanged(sessionGeneration)))
++			for (
++				let pending = this.#pendingCustomMessageTransition();
++				pending;
++				pending = this.#pendingCustomMessageTransition()
+ 			) {
+-				return false;
+-			}
+-			// An abort supersedes only the turn. The message stays in this session's transcript, as it did when the
+-			// aborted turn had already started, and is delivered like any message that triggers none.
+-			if (this.#promptGeneration !== promptGeneration) {
+-				options = { ...options, triggerTurn: false, deliverAs: undefined };
++				await pending;
+ 			}
++			if (!this.#ownsCustomMessage(submission.owner)) return false;
++			wakeSuperseded = this.#promptGeneration !== promptGeneration;
+ 		}
+ 		const normalizedPayload = normalizeCustomMessagePayload<T>(message);
+ 		const suppressQueueChip = options?.deliverAs === "nextTurn" || options?.deliverAs === "aside";
+@@ -10960,6 +11054,27 @@ export class AgentSession implements SettingsScope, AgentViewSession {
+ 			timestamp: Date.now(),
+ 		};
+ 		const normalizedAppMessage = await this.#normalizeAgentMessageImages(appMessage);
++		for (
++			let pending = this.#pendingCustomMessageTransition();
++			pending;
++			pending = this.#pendingCustomMessageTransition()
++		) {
++			await pending;
++		}
++		// Check synchronously at publication, even for appends. A generation match says nothing
++		// about readiness before the transition's bump or during rollback reconciliation.
++		if (!this.#ownsCustomMessage(submission.owner)) return false;
++		if (requestsWake && (wakeSuperseded || this.#sessionGeneration !== submission.sessionGeneration)) {
++			if (this.isStreaming) {
++				this.#queueHiddenNextTurnMessage(normalizedAppMessage, false);
++				return false;
++			}
++			options = {
++				...options,
++				triggerTurn: false,
++				deliverAs: wakeSuperseded || options?.deliverAs !== "nextTurn" ? undefined : "nextTurn",
++			};
++		}
+ 		if (this.isStreaming) {
+ 			// Queued into a turn the agent owns: that turn holds the session. Busy only
+ 			// from another prompt's setup claims nothing (that prompt decides).
+@@ -10969,7 +11084,6 @@ export class AgentSession implements SettingsScope, AgentViewSession {
+ 				return false;
+ 			}
+ 			if (options?.deliverAs === "aside") {
+-				if (await this.#sessionGenerationChanged(sessionGeneration)) return false;
+ 				// Non-interrupting: the agent loop's step-boundary poll (see the setAsideMessageProvider
+ 				// registration in the constructor) picks this up without interrupting the current tool
+ 				// batch. Not an agent-core queue entry, so no drain-retry latch and no idle-queue drain
+@@ -10994,7 +11108,7 @@ export class AgentSession implements SettingsScope, AgentViewSession {
+ 					this.#queueHiddenNextTurnMessage(normalizedAppMessage, false);
+ 					return false;
+ 				}
+-				outcome.sessionClaimed = await this.#promptAgentInitiatedMessage(normalizedAppMessage, {
++				outcome.sessionClaimed = await this.#promptAgentInitiatedMessage(normalizedAppMessage, submission, {
+ 					acceptTerminalEmptyStop: options.acceptTerminalEmptyStop === true,
+ 				});
+ 				return outcome.sessionClaimed;
+@@ -11011,7 +11125,6 @@ export class AgentSession implements SettingsScope, AgentViewSession {
+ 		}
+ 
+ 		if (options?.deliverAs === "aside") {
+-			if (await this.#sessionGenerationChanged(sessionGeneration)) return false;
+ 			if (this.#planModeState?.enabled) {
+ 				// Plan mode stays user-driven: fold into context without an autonomous turn, same as
+ 				// IrcBridge.deliver()/#resumeStrandedIrcAsides do in plan mode. Routed through the
+@@ -11034,16 +11147,7 @@ export class AgentSession implements SettingsScope, AgentViewSession {
+ 				this.#queueHiddenNextTurnMessage(normalizedAppMessage, false);
+ 				return false;
+ 			}
+-			// The generation check suspends after the isStreaming check above, so a concurrent
+-			// send (two asides in one tick) can start its turn in between. Re-check and queue
+-			// behind that turn like the streaming branch, instead of losing the prompt race to
+-			// AgentBusyError; no await sits between this check and #beginInFlight below.
+-			if (this.isStreaming) {
+-				outcome.sessionClaimed = this.agent.state.isStreaming;
+-				this.#irc.queueAside([normalizedAppMessage]);
+-				return false;
+-			}
+-			outcome.sessionClaimed = await this.#promptAgentInitiatedMessage(normalizedAppMessage, {
++			outcome.sessionClaimed = await this.#promptAgentInitiatedMessage(normalizedAppMessage, submission, {
+ 				acceptTerminalEmptyStop: options.acceptTerminalEmptyStop === true,
+ 			});
+ 			return outcome.sessionClaimed;
+@@ -11054,7 +11158,7 @@ export class AgentSession implements SettingsScope, AgentViewSession {
+ 				this.#queueHiddenNextTurnMessage(normalizedAppMessage, false);
+ 				return false;
+ 			}
+-			outcome.sessionClaimed = await this.#promptAgentInitiatedMessage(normalizedAppMessage);
++			outcome.sessionClaimed = await this.#promptAgentInitiatedMessage(normalizedAppMessage, submission);
+ 			return outcome.sessionClaimed;
+ 		}
+ 
+@@ -12330,6 +12434,13 @@ export class AgentSession implements SettingsScope, AgentViewSession {
+ 			try {
+ 				this.#releaseQueuedTtsrReservations();
+ 				this.agent.reset();
++				// Retire outgoing queues and their identity before any replacement await or callback.
++				// An aborted turn may have left asides that must not enter this new transcript.
++				this.#irc.clearPending();
++				this.#sessionGeneration = ++this.#nextSessionGeneration;
++				this.#customMessageOwner = {};
++				this.#pendingNextTurnMessages = [];
++				this.#scheduledHiddenNextTurnGeneration = undefined;
+ 				this.tokenRate.reset();
+ 				if (options?.drop && previousSessionFile) {
+ 					try {
+@@ -12372,16 +12483,6 @@ export class AgentSession implements SettingsScope, AgentViewSession {
+ 			this.agent.appendOnlyContext?.invalidateForModelChange();
+ 			this.#memory.rekeyForCurrentSessionId();
+ 			await this.#memory.resetContextForNewTranscript();
+-			this.#pendingNextTurnMessages = [];
+-			// The abort above may have skipped the loop's final aside poll (issue: stranded
+-			// asides survive an aborted turn by design so a resumed session can still see
+-			// them); discard here so they cannot leak into the new session's transcript via
+-			// the first ordinary prompt's IrcBridge.flushPending(). Bump #sessionGeneration in
+-			// the same breath so an aside-queueing call still awaiting normalization for the
+-			// outgoing session also drops its record instead of landing in this new one.
+-			this.#irc.clearPending();
+-			this.#sessionGeneration++;
+-			this.#scheduledHiddenNextTurnGeneration = undefined;
+ 			this.#queuedMessageDrainBlocked = false;
+ 			this.#usagePreflightReadyForNextModelCall = false;
+ 
+@@ -12404,6 +12505,7 @@ export class AgentSession implements SettingsScope, AgentViewSession {
  			// directory set, not the previous session's — refresh before the next
  			// turn goes out.
  			resetCapabilities();
@@ -570,6 +1123,97 @@ index 8fdbac39ace69b277c7c24dba235bab700c0cc67..0348b2af4096081738dc839b56336417
  			await this.refreshBaseSystemPrompt();
  
  			this.#reseedCostGate();
+@@ -14096,6 +14198,7 @@ export class AgentSession implements SettingsScope, AgentViewSession {
+ 		// error-recovery path rebuilds the context on demand from the restored
+ 		// state instead.
+ 		const previousSessionContext = switchingToDifferentSession ? undefined : this.buildDisplaySessionContext();
++		const previousBranchIds = previousSessionContext && this.sessionManager.getBranchView().map(entry => entry.id);
+ 		// switchSession replaces these arrays wholesale during load/rollback, so retaining
+ 		// the existing message objects is sufficient and avoids structured-clone failures for
+ 		// extension/custom metadata that is valid to persist but not cloneable.
+@@ -14139,10 +14242,16 @@ export class AgentSession implements SettingsScope, AgentViewSession {
+ 		// aside-queueing call still awaiting normalization when the switch started drops its
+ 		// record on success but stays valid if the switch is rolled back to this same session.
+ 		const previousIrcPending = this.#irc.clearPending();
+-		const previousSessionGeneration = this.#sessionGeneration++;
++		const previousSessionGeneration = this.#sessionGeneration;
++		this.#sessionGeneration = ++this.#nextSessionGeneration;
++		const previousCustomMessageOwner = this.#customMessageOwner;
++		const targetCustomMessageOwner: CustomMessageOwner = {};
++		this.#customMessageOwner = targetCustomMessageOwner;
+ 		const generationSettled = Promise.withResolvers<void>();
+-		const previousSessionGenerationSettled = this.#sessionGenerationSettled;
+-		this.#sessionGenerationSettled = generationSettled.promise;
++		this.#generationRestores.set(previousSessionGeneration, {
++			settled: generationSettled.promise,
++			turn: this.#liveSessionTransitionTurn(),
++		});
+ 		this.#pendingNextTurnMessages = [];
+ 		this.#scheduledHiddenNextTurnGeneration = undefined;
+ 		this.#queuedMessageDrainBlocked = false;
+@@ -14227,6 +14336,34 @@ export class AgentSession implements SettingsScope, AgentViewSession {
+ 			const didReloadConversationChange =
+ 				previousSessionContext !== undefined &&
+ 				didSessionMessagesChange(previousSessionContext.messages, sessionContext.messages);
++			const targetSessionFile = this.sessionManager.getSessionFile();
++			const targetHeader = this.sessionManager.getHeader();
++			const targetBranch = previousBranchIds && this.sessionManager.getBranchView();
++			const unchangedCustomMessageOwner =
++				this.#customMessageOwner === targetCustomMessageOwner &&
++				previousSessionState.onDisk &&
++				previousSessionState.sessionFile !== undefined &&
++				targetSessionFile !== undefined &&
++				path.resolve(previousSessionState.sessionFile) === path.resolve(targetSessionFile) &&
++				targetHeader !== null &&
++				targetHeader.id === previousSessionState.header.id &&
++				targetHeader.cwd === previousSessionState.header.cwd &&
++				path.resolve(this.sessionManager.getCwd()) === path.resolve(previousSessionState.cwd) &&
++				Bun.deepEquals(
++					targetHeader.additionalDirectories ?? [],
++					previousSessionState.header.additionalDirectories ?? [],
++				) &&
++				Bun.deepEquals(targetModel ?? this.model, previousModel) &&
++				previousBranchIds !== undefined &&
++				targetBranch !== undefined &&
++				previousBranchIds.length === targetBranch.length &&
++				targetBranch.every((entry, index) => entry.id === previousBranchIds[index]) &&
++				!didReloadConversationChange;
++			if (unchangedCustomMessageOwner) {
++				// The old wake was cancelled by abort(). Carry only its passive payloads
++				// before resume hooks can start another transition and snapshot this queue.
++				this.#pendingNextTurnMessages = [...previousPendingNextTurnMessages, ...this.#pendingNextTurnMessages];
++			}
+ 			this.#rehydrateCheckpointRewindState();
+ 
+ 			// As on /new: the outgoing session's background jobs share this agent id, so their
+@@ -14370,12 +14507,15 @@ export class AgentSession implements SettingsScope, AgentViewSession {
+ 			if (previousSessionState.sessionId !== this.sessionManager.getSessionId()) {
+ 				this.#notifySessionChangeCallbacks();
+ 			}
++			this.#generationRestores.delete(previousSessionGeneration);
+ 			generationSettled.resolve();
+-			this.#sessionGenerationSettled = previousSessionGenerationSettled;
+ 			if (modelFallbackWarning) {
+ 				if (options?.onModelFallback) options.onModelFallback(modelFallbackWarning);
+ 				else this.emitNotice("warning", modelFallbackWarning);
+ 			}
++			if (unchangedCustomMessageOwner) {
++				targetCustomMessageOwner.adoptedFrom = customMessageOwnerRoot(previousCustomMessageOwner);
++			}
+ 			return true;
+ 		} catch (error) {
+ 			this.sessionManager.restoreState(previousSessionState);
+@@ -14393,8 +14533,9 @@ export class AgentSession implements SettingsScope, AgentViewSession {
+ 			);
+ 			this.#irc.restorePending(previousIrcPending);
+ 			this.#sessionGeneration = previousSessionGeneration;
++			this.#customMessageOwner = previousCustomMessageOwner;
++			this.#generationRestores.delete(previousSessionGeneration);
+ 			generationSettled.resolve();
+-			this.#sessionGenerationSettled = previousSessionGenerationSettled;
+ 			this.#pendingNextTurnMessages = previousPendingNextTurnMessages;
+ 			this.#scheduledHiddenNextTurnGeneration = previousScheduledHiddenNextTurnGeneration;
+ 			this.#queuedMessageDrainBlocked = previousQueuedMessageDrainBlocked;
 diff --git a/packages/coding-agent/src/session/eval-runner.ts b/packages/coding-agent/src/session/eval-runner.ts
 index a8da48e5a32deef9bcee7f176242d9b6b576375e..09285765c0164a141fbe8d1ebe80d02691162af8 100644
 --- a/packages/coding-agent/src/session/eval-runner.ts
@@ -1373,6 +2017,1130 @@ index 0abffc373f77a5213dc011c40b25584d2db18478..5858bec672fb5a6bfe7e1f44f8f99059
 +			expect(session.systemPrompt.join("\n")).not.toContain("disabled_entry.txt");
 +		} finally {
 +			await close();
++		}
++	});
++});
+diff --git a/packages/coding-agent/test/agent-session-next-turn-ownership.test.ts b/packages/coding-agent/test/agent-session-next-turn-ownership.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..aa98d5db4313f707b01f1690f804d3f251d89954
+--- /dev/null
++++ b/packages/coding-agent/test/agent-session-next-turn-ownership.test.ts
+@@ -0,0 +1,1118 @@
++import { afterEach, beforeEach, describe, expect, it, spyOn, vi } from "bun:test";
++import { AsyncResource } from "node:async_hooks";
++import { setImmediate } from "node:timers/promises";
++import { Agent, type AgentMessage } from "@oh-my-pi/pi-agent-core";
++import { createMockModel } from "@oh-my-pi/pi-ai/providers/mock";
++import { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-registry";
++import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
++import { ExtensionRuntime, loadExtensionFromFactory } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/loader";
++import { ExtensionRunner } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/runner";
++import { AgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session";
++import { AuthStorage } from "@oh-my-pi/pi-coding-agent/session/auth-storage";
++import { convertToLlm } from "@oh-my-pi/pi-coding-agent/session/messages";
++import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
++import { SessionMemory } from "@oh-my-pi/pi-coding-agent/session/session-memory";
++import { SessionProviderBoundary } from "@oh-my-pi/pi-coding-agent/session/session-provider-boundary";
++import { cfgRetryUsageAwareFallback, cfgRetryUsageReservePolicy } from "@oh-my-pi/pi-coding-agent/session/settings";
++import { EventBus } from "@oh-my-pi/pi-coding-agent/utils/event-bus";
++import { TempDir } from "@oh-my-pi/pi-utils";
++
++const notice = { customType: "old-monitor-notice", content: "LANE_WATCH_READY old-session", display: true };
++const seed = { customType: "reload-fixture-seed", content: "original fixture transcript", display: true };
++
++// Exercise real AgentSession transitions, normalization and persistence. Barriers
++// order existing awaits; only the model provider is local, with no network calls.
++describe("AgentSession next-turn session ownership", () => {
++	let directory: TempDir;
++	let auth: AuthStorage;
++	let agent: Agent;
++	let session: AgentSession;
++	let manager: SessionManager;
++	let streamCalls: number;
++	let beforeSwitch: (() => Promise<{ cancel: boolean } | undefined>) | undefined;
++	let beforeAgentStart: (() => Promise<void>) | undefined;
++	let providerEntered: ReturnType<typeof Promise.withResolvers<void>> | undefined;
++	let releaseProvider: ReturnType<typeof Promise.withResolvers<void>> | undefined;
++
++	beforeEach(async () => {
++		directory = TempDir.createSync("@pi-next-turn-ownership-");
++		auth = await AuthStorage.create(":memory:");
++		auth.keys.setRuntime("openai", "test-key");
++		const mock = createMockModel({
++			provider: "openai",
++			id: "gpt-test",
++			responses: [{ content: ["Done"] }, { content: ["Done"] }],
++		});
++		streamCalls = 0;
++		beforeSwitch = undefined;
++		beforeAgentStart = undefined;
++		providerEntered = undefined;
++		releaseProvider = undefined;
++		agent = new Agent({
++			getApiKey: () => "test-key",
++			initialState: { model: mock.model, systemPrompt: ["Test"], tools: [], messages: [] },
++			convertToLlm,
++			streamFn: async (model, context, options) => {
++				streamCalls++;
++				providerEntered?.resolve();
++				if (releaseProvider) await releaseProvider.promise;
++				return mock.stream(model, context, options);
++			},
++		});
++		manager = SessionManager.create(directory.path(), directory.join("sessions"));
++		const settings = Settings.isolated({ "compaction.enabled": false, "todo.enabled": false });
++		settings.setModelRole("default", "openai/gpt-test");
++		const registry = new ModelRegistry(auth);
++		const runtime = new ExtensionRuntime();
++		const extension = await loadExtensionFromFactory(
++			api => {
++				api.on("session_before_switch", async () => beforeSwitch?.());
++				api.on("before_agent_start", async () => beforeAgentStart?.());
++			},
++			directory.path(),
++			new EventBus(),
++			runtime,
++			"session-ownership-regression",
++		);
++		session = new AgentSession({
++			agent,
++			sessionManager: manager,
++			settings,
++			modelRegistry: registry,
++			extensionRunner: new ExtensionRunner([extension], runtime, directory.path(), manager, registry),
++			toolRegistry: new Map(),
++			rebuildSystemPrompt: async () => ({ systemPrompt: ["Test"] }),
++		});
++	});
++
++	afterEach(async () => {
++		releaseProvider?.resolve();
++		vi.restoreAllMocks();
++		await session?.dispose();
++		auth?.close();
++		directory?.removeSync();
++	});
++
++	async function createTarget(content: string) {
++		const target = SessionManager.create(directory.path(), directory.join("sessions"));
++		target.appendMessage({ role: "user", content, timestamp: 1 });
++		await target.ensureOnDisk();
++		await target.flush();
++		const file = target.getSessionFile();
++		if (!file) throw new Error("Expected a persisted target session");
++		const id = target.getSessionId();
++		await target.close();
++		return { file, id };
++	}
++
++	function holdNormalization() {
++		const entered = Promise.withResolvers<void>();
++		const release = Promise.withResolvers<void>();
++		const original = SessionProviderBoundary.prototype.normalizeAgentMessageImages;
++		spyOn(SessionProviderBoundary.prototype, "normalizeAgentMessageImages").mockImplementation(async function <
++			T extends AgentMessage,
++		>(this: SessionProviderBoundary, message: T): Promise<T> {
++			const normalized = await original.bind(this)(message);
++			if (message.role === "custom" && message.customType === notice.customType) {
++				entered.resolve();
++				await release.promise;
++			}
++			return normalized;
++		});
++		return { entered: entered.promise, release: () => release.resolve() };
++	}
++
++	function noticeMessages() {
++		return agent.state.messages.filter(
++			message => message.role === "custom" && message.customType === notice.customType,
++		);
++	}
++
++	function noticeEntries() {
++		return manager
++			.getEntries()
++			.filter(entry => entry.type === "custom_message" && entry.customType === notice.customType);
++	}
++
++	async function persistActiveJournal(): Promise<string> {
++		expect(await session.sendCustomMessage(seed)).toBe(false);
++		await manager.ensureOnDisk();
++		await manager.flush();
++		const file = manager.getSessionFile();
++		if (!file) throw new Error("Expected the active session's persisted journal");
++		return file;
++	}
++
++	async function readNoticeRows(file: string): Promise<unknown[]> {
++		await manager.flush();
++		const journal = await Bun.file(file).text();
++		const rows: unknown[] = journal.trimEnd().split("\n").map(line => JSON.parse(line));
++		return rows.filter(
++			row =>
++				typeof row === "object" &&
++				row !== null &&
++				"type" in row &&
++				row.type === "custom_message" &&
++				"customType" in row &&
++				row.customType === notice.customType,
++		);
++	}
++
++	it.each([
++		["unchanged reload", "nextTurn", false],
++		["reload parked before the generation bump", "nextTurn", false],
++		["reload parked before the generation bump", "append", false],
++		["changed replay at the same journal path", "nextTurn", false],
++		["unchanged reload that supersedes a wake", "nextTurn", true],
++	] as const)("settles custom delivery across %s (%s)", async (scenario, mode, triggerTurn) => {
++		const file = await persistActiveJournal();
++		const sessionId = manager.getSessionId();
++		const normalization = holdNormalization();
++		const hookEntered = Promise.withResolvers<void>();
++		const releaseHook = Promise.withResolvers<void>();
++		const parked = scenario === "reload parked before the generation bump";
++		if (parked) {
++			beforeSwitch = async () => {
++				hookEntered.resolve();
++				await releaseHook.promise;
++				return undefined;
++			};
++		}
++		const changed = scenario === "changed replay at the same journal path";
++		const changedContent = "modified fixture transcript";
++		let settled = false;
++		let transition: Promise<void> | undefined;
++		const delivery = session
++			.sendCustomMessage(notice, { deliverAs: mode === "append" ? undefined : mode, triggerTurn })
++			.then(result => {
++				settled = true;
++				return result;
++			});
++		try {
++			await normalization.entered;
++			if (changed) {
++				const journal = await Bun.file(file).text();
++				// Keep the file, header and entry IDs; only the replayed message changes.
++				const editedJournal = journal.replace(JSON.stringify(seed.content), JSON.stringify(changedContent));
++				expect(editedJournal).not.toBe(journal);
++				await Bun.write(file, editedJournal);
++			}
++			transition = session.reload();
++			if (parked) {
++				await hookEntered.promise;
++				normalization.release();
++				await setImmediate();
++				expect(settled).toBe(false);
++				expect(noticeMessages()).toEqual([]);
++				expect(await readNoticeRows(file)).toEqual([]);
++				releaseHook.resolve();
++			}
++			await transition;
++			normalization.release();
++			expect(await delivery).toBe(false);
++			expect(manager.getSessionFile()).toBe(file);
++			expect(manager.getSessionId()).toBe(sessionId);
++			if (changed) {
++				expect(agent.state.messages).toContainEqual(
++					expect.objectContaining({ customType: seed.customType, content: changedContent }),
++				);
++				expect(noticeMessages()).toEqual([]);
++				expect(await readNoticeRows(file)).toEqual([]);
++			} else {
++				expect(noticeMessages()).toEqual([expect.objectContaining({ content: notice.content })]);
++				expect(await readNoticeRows(file)).toEqual([expect.objectContaining({ content: notice.content })]);
++			}
++			expect(streamCalls).toBe(0);
++		} finally {
++			releaseHook.resolve();
++			normalization.release();
++			await Promise.allSettled([transition, delivery]);
++		}
++	});
++
++	it("holds an outside notice until rollback finishes reconciling the restored transcript", async () => {
++		const file = await persistActiveJournal();
++		const target = await createTarget("target rejected during switch");
++		const reconcileEntered = Promise.withResolvers<void>();
++		const releaseReconcile = Promise.withResolvers<void>();
++		const original = SessionMemory.prototype.resetContextForNewTranscript;
++		spyOn(SessionMemory.prototype, "resetContextForNewTranscript").mockImplementation(
++			async function (this: SessionMemory) {
++				await original.call(this);
++				if (manager.getSessionId() === target.id) throw new Error("target reset rejected");
++			},
++		);
++		session.setSessionSwitchReconciler(async () => {
++			reconcileEntered.resolve();
++			await releaseReconcile.promise;
++		});
++		const transition = session.switchSession(target.file).then(
++			value => ({ value }),
++			error => ({ error }),
++		);
++		let delivery: Promise<boolean> | undefined;
++		let settled = false;
++		try {
++			await reconcileEntered.promise;
++			expect(manager.getSessionFile()).toBe(file);
++			delivery = session.sendCustomMessage(notice, { deliverAs: "nextTurn" }).then(result => {
++				settled = true;
++				return result;
++			});
++			await setImmediate();
++			expect(settled).toBe(false);
++			expect(noticeMessages()).toEqual([]);
++			expect(await readNoticeRows(file)).toEqual([]);
++			releaseReconcile.resolve();
++			expect(await transition).toMatchObject({ error: { message: "target reset rejected" } });
++			expect(await delivery).toBe(false);
++			expect(noticeMessages()).toEqual([expect.objectContaining({ content: notice.content })]);
++			expect(await readNoticeRows(file)).toEqual([expect.objectContaining({ content: notice.content })]);
++			expect(streamCalls).toBe(0);
++		} finally {
++			releaseReconcile.resolve();
++			await Promise.allSettled([transition, delivery]);
++		}
++	});
++
++	it("keeps an in-flight user-authored wake passive when an unchanged reload aborts its start hook", async () => {
++		const file = await persistActiveJournal();
++		const startEntered = Promise.withResolvers<void>();
++		const releaseStart = Promise.withResolvers<void>();
++		beforeAgentStart = async () => {
++			startEntered.resolve();
++			await releaseStart.promise;
++		};
++		const delivery = session.sendCustomMessage(
++			{ ...notice, attribution: "user" },
++			{ deliverAs: "nextTurn", triggerTurn: true },
++		);
++		try {
++			await startEntered.promise;
++			await session.reload();
++			releaseStart.resolve();
++			expect(await delivery).toBe(false);
++			expect(noticeMessages()).toEqual([expect.objectContaining({ content: notice.content })]);
++			expect(await readNoticeRows(file)).toEqual([expect.objectContaining({ content: notice.content })]);
++			expect(streamCalls).toBe(0);
++		} finally {
++			releaseStart.resolve();
++			await Promise.allSettled([delivery]);
++		}
++	});
++
++	it("checks usage again when a custom wake's start hook updates the active model metadata", async () => {
++		cfgRetryUsageAwareFallback.set(session.settings, true);
++		cfgRetryUsageReservePolicy.set(session.settings, "fail-closed");
++		const originalModel = session.model;
++		if (!originalModel) throw new Error("Expected a local fixture model");
++		const refreshedModel = { ...originalModel, baseUrl: "https://refreshed-model.invalid/v1" };
++		const checkedBaseUrls: Array<string | undefined> = [];
++		spyOn(auth.health, "model").mockImplementation(async (_provider, options) => {
++			checkedBaseUrls.push(options.baseUrl);
++			const limitReached = options.baseUrl === refreshedModel.baseUrl;
++			const state = limitReached ? "reserve" : "healthy";
++			return {
++				state,
++				accounts: [
++					{
++						credentialId: 1,
++						credentialType: "oauth",
++						state,
++						remainingFraction: limitReached ? 0.05 : 0.8,
++					},
++				],
++			};
++		});
++		beforeAgentStart = async () => {
++			agent.setModel(refreshedModel);
++		};
++
++		const delivered = await session.sendCustomMessage(
++			{ ...notice, attribution: "user" },
++			{ deliverAs: "nextTurn", triggerTurn: true },
++		);
++		await session.waitForIdle();
++
++		expect(delivered).toBe(true);
++		expect(checkedBaseUrls).toEqual([originalModel.baseUrl, refreshedModel.baseUrl]);
++		expect(streamCalls).toBe(0);
++		expect(agent.state.messages.at(-1)).toMatchObject({
++			role: "assistant",
++			stopReason: "error",
++			errorMessage: expect.stringContaining("reserve policy is fail-closed"),
++		});
++	});
++
++	it("starts an unchanged custom wake after a pending switch cancels before aborting setup", async () => {
++		const file = await persistActiveJournal();
++		const target = await createTarget("cancelled switch target");
++		const startEntered = Promise.withResolvers<void>();
++		const releaseStart = Promise.withResolvers<void>();
++		const switchEntered = Promise.withResolvers<void>();
++		const cancelSwitch = Promise.withResolvers<void>();
++		beforeAgentStart = async () => {
++			startEntered.resolve();
++			await releaseStart.promise;
++		};
++		beforeSwitch = async () => {
++			switchEntered.resolve();
++			await cancelSwitch.promise;
++			return { cancel: true };
++		};
++		const delivery = session.sendCustomMessage(
++			{ ...notice, attribution: "user" },
++			{ deliverAs: "nextTurn", triggerTurn: true },
++		);
++		let transition: Promise<boolean> | undefined;
++		try {
++			await startEntered.promise;
++			transition = session.switchSession(target.file);
++			await switchEntered.promise;
++			releaseStart.resolve();
++			await setImmediate();
++			expect(streamCalls).toBe(0);
++			expect(noticeMessages()).toEqual([]);
++			cancelSwitch.resolve();
++
++			expect(await transition).toBe(false);
++			expect(await delivery).toBe(true);
++			expect(manager.getSessionFile()).toBe(file);
++			expect(streamCalls).toBe(1);
++			expect(noticeMessages()).toEqual([expect.objectContaining({ content: notice.content })]);
++			expect(await readNoticeRows(file)).toEqual([expect.objectContaining({ content: notice.content })]);
++		} finally {
++			releaseStart.resolve();
++			cancelSwitch.resolve();
++			await Promise.allSettled([transition, delivery]);
++		}
++	});
++
++	it.each(["unchanged reload", "genuine switch"] as const)(
++		"only carries already parked next-turn payloads to the deliberate prompt after %s",
++		async scenario => {
++			const file = await persistActiveJournal();
++			session.setClientBridge({ capabilities: {}, deferAgentInitiatedTurns: true });
++			expect(await session.sendCustomMessage(notice, { deliverAs: "nextTurn", triggerTurn: true })).toBe(false);
++			expect(noticeMessages()).toEqual([]);
++			expect(await readNoticeRows(file)).toEqual([]);
++			const retained = scenario === "unchanged reload";
++			const targetFile = retained ? file : (await createTarget("different transcript")).file;
++			if (retained) await session.reload();
++			else expect(await session.switchSession(targetFile)).toBe(true);
++			await session.waitForIdle();
++			expect(streamCalls).toBe(0);
++			expect(noticeMessages()).toEqual([]);
++			expect(await readNoticeRows(targetFile)).toEqual([]);
++			await session.sendUserMessage("deliberate fixture prompt");
++			expect(streamCalls).toBe(1);
++			const expected = retained ? [expect.objectContaining({ content: notice.content })] : [];
++			expect(noticeMessages()).toEqual(expected);
++			expect(await readNoticeRows(targetFile)).toEqual(expected);
++		},
++	);
++
++	it.each(["idle", "streaming"] as const)("drops an old notice after /new before %s dispatch", async state => {
++		const resetEntered = Promise.withResolvers<void>();
++		const releaseReset = Promise.withResolvers<void>();
++		const original = SessionMemory.prototype.resetContextForNewTranscript;
++		spyOn(SessionMemory.prototype, "resetContextForNewTranscript").mockImplementation(
++			async function (this: SessionMemory) {
++				await original.call(this);
++				resetEntered.resolve();
++				await releaseReset.promise;
++			},
++		);
++		const normalization = holdNormalization();
++		const oldId = manager.getSessionId();
++		let transition: Promise<boolean> | undefined;
++		let delivery: Promise<boolean> | undefined;
++		let targetTurn: Promise<unknown> | undefined;
++		try {
++			transition = session.newSession();
++			await resetEntered.promise;
++			expect(manager.getSessionId()).not.toBe(oldId);
++			delivery = session.sendCustomMessage(notice, { triggerTurn: false, deliverAs: "nextTurn" });
++			await normalization.entered;
++			releaseReset.resolve();
++			expect(await transition).toBe(true);
++			if (state === "streaming") {
++				providerEntered = Promise.withResolvers<void>();
++				releaseProvider = Promise.withResolvers<void>();
++				targetTurn = session.sendUserMessage("new session turn");
++				await providerEntered.promise;
++				expect(session.isStreaming).toBe(true);
++			}
++			normalization.release();
++			expect(await delivery).toBe(false);
++			if (state === "streaming") {
++				releaseProvider?.resolve();
++				await targetTurn;
++				// Hidden next-turn messages surface on a later deliberate prompt, not
++				// in queuedMessageCount. Flush through that real public entry point.
++				await session.sendUserMessage("next deliberate prompt");
++			}
++			expect(streamCalls).toBe(state === "streaming" ? 2 : 0);
++			expect(noticeMessages()).toEqual([]);
++			expect(noticeEntries()).toEqual([]);
++		} finally {
++			releaseReset.resolve();
++			normalization.release();
++			releaseProvider?.resolve();
++			await Promise.allSettled([transition, delivery, targetTurn]);
++		}
++	});
++
++	it.each(["commit", "rollback"] as const)(
++		"waits for a session switch to %s before deciding ownership",
++		async outcome => {
++			const { file: targetFile } = await createTarget("target");
++			const oldId = manager.getSessionId();
++			const normalization = holdNormalization();
++			const delivery = session.sendCustomMessage(notice, { triggerTurn: false, deliverAs: "nextTurn" });
++			await normalization.entered;
++			const targetEntered = Promise.withResolvers<void>();
++			const releaseTarget = Promise.withResolvers<void>();
++			const reset = SessionMemory.prototype.resetContextForNewTranscript;
++			spyOn(SessionMemory.prototype, "resetContextForNewTranscript").mockImplementation(
++				async function (this: SessionMemory) {
++					await reset.call(this);
++					if (manager.getSessionId() !== oldId) {
++						targetEntered.resolve();
++						await releaseTarget.promise;
++						if (outcome === "rollback") throw new Error("target memory reset rejected");
++					}
++				},
++			);
++			const transition = session.switchSession(targetFile);
++			const settled = transition.then(
++				value => ({ value, error: undefined }),
++				error => ({ value: undefined, error }),
++			);
++			let delivered = false;
++			void delivery.then(() => {
++				delivered = true;
++			});
++			try {
++				await targetEntered.promise;
++				normalization.release();
++				// Let released normalization microtasks finish while the switch remains
++				// parked. This is one event-loop boundary, not a timing or polling wait.
++				await setImmediate();
++				expect(delivered).toBe(false);
++				expect(noticeEntries()).toEqual([]);
++				releaseTarget.resolve();
++				const result = await settled;
++				if (outcome === "rollback") expect(result.error?.message).toBe("target memory reset rejected");
++				else expect(result.value).toBe(true);
++				expect(await delivery).toBe(false);
++				expect(manager.getSessionId() === oldId).toBe(outcome === "rollback");
++				expect(noticeMessages()).toHaveLength(outcome === "rollback" ? 1 : 0);
++				expect(noticeEntries()).toHaveLength(outcome === "rollback" ? 1 : 0);
++				expect(streamCalls).toBe(0);
++			} finally {
++				normalization.release();
++				releaseTarget.resolve();
++				await Promise.allSettled([settled, delivery]);
++			}
++		},
++	);
++
++	const deliveries = [
++		["nextTurn", { triggerTurn: false, deliverAs: "nextTurn" }],
++		["aside", { triggerTurn: false, deliverAs: "aside" }],
++		["triggered", { triggerTurn: true, deliverAs: undefined }],
++		["triggered nextTurn", { triggerTurn: true, deliverAs: "nextTurn" }],
++		["steer", { triggerTurn: false, deliverAs: "steer" }],
++		["followUp", { triggerTurn: false, deliverAs: "followUp" }],
++		["append", { triggerTurn: false, deliverAs: undefined }],
++	] as const;
++
++	for (const [mode, options] of deliveries) {
++		it.each(["before", "during"] as const)(
++			"drops " + mode + " normalization started %s /new even before the transition finishes",
++			async start => {
++				const resetEntered = Promise.withResolvers<void>();
++				const releaseReset = Promise.withResolvers<void>();
++				const original = SessionMemory.prototype.resetContextForNewTranscript;
++				spyOn(SessionMemory.prototype, "resetContextForNewTranscript").mockImplementation(
++					async function (this: SessionMemory) {
++						await original.call(this);
++						resetEntered.resolve();
++						await releaseReset.promise;
++					},
++				);
++				const normalization = holdNormalization();
++				const oldId = manager.getSessionId();
++				let transition: Promise<boolean> | undefined;
++				let delivery: Promise<boolean> | undefined;
++				try {
++					if (start === "before") {
++						delivery = session.sendCustomMessage(notice, options);
++						await normalization.entered;
++					}
++					transition = session.newSession();
++					await resetEntered.promise;
++					expect(manager.getSessionId()).not.toBe(oldId);
++					if (start === "during") {
++						delivery = session.sendCustomMessage(notice, options);
++						await normalization.entered;
++					}
++					normalization.release();
++					await setImmediate();
++					expect(noticeMessages()).toEqual([]);
++					expect(noticeEntries()).toEqual([]);
++					expect(streamCalls).toBe(0);
++					releaseReset.resolve();
++					expect(await transition).toBe(true);
++					expect(await delivery).toBe(false);
++					expect(noticeMessages()).toEqual([]);
++					expect(noticeEntries()).toEqual([]);
++					expect(streamCalls).toBe(0);
++				} finally {
++					releaseReset.resolve();
++					normalization.release();
++					await Promise.allSettled([transition, delivery]);
++				}
++			},
++		);
++	}
++
++	for (const [mode, options] of deliveries.filter(
++		([, options]) => options.triggerTurn || options.deliverAs === "aside",
++	)) {
++		it.each(["commit", "rollback"] as const)(
++			"defers external " + mode + " until a switch started before generation advancement will %s",
++			async outcome => {
++				const { file: targetFile } = await createTarget("target");
++				const oldId = manager.getSessionId();
++				const reconcileEntered = Promise.withResolvers<void>();
++				const releaseReconcile = Promise.withResolvers<void>();
++				session.setSessionBeforeSwitchReconciler(async () => {
++					reconcileEntered.resolve();
++					await releaseReconcile.promise;
++				});
++				const original = SessionMemory.prototype.resetContextForNewTranscript;
++				spyOn(SessionMemory.prototype, "resetContextForNewTranscript").mockImplementation(
++					async function (this: SessionMemory) {
++						await original.call(this);
++						if (outcome === "rollback" && manager.getSessionId() !== oldId) {
++							throw new Error("target memory reset rejected");
++						}
++					},
++				);
++				const transition = session.switchSession(targetFile);
++				const settled = transition.then(
++					value => ({ value, error: undefined }),
++					error => ({ value: undefined, error }),
++				);
++				let delivery: Promise<boolean> | undefined;
++				let delivered = false;
++				try {
++					await reconcileEntered.promise;
++					delivery = session.sendCustomMessage(notice, options).then(value => {
++						delivered = true;
++						return value;
++					});
++					await setImmediate();
++					expect(delivered).toBe(false);
++					expect(noticeMessages()).toEqual([]);
++					expect(noticeEntries()).toEqual([]);
++					expect(streamCalls).toBe(0);
++					releaseReconcile.resolve();
++					const result = await settled;
++					if (outcome === "rollback") expect(result.error?.message).toBe("target memory reset rejected");
++					else expect(result.value).toBe(true);
++					expect(await delivery).toBe(outcome === "rollback");
++					expect(manager.getSessionId() === oldId).toBe(outcome === "rollback");
++					expect(noticeMessages()).toHaveLength(outcome === "rollback" ? 1 : 0);
++					expect(noticeEntries()).toHaveLength(outcome === "rollback" ? 1 : 0);
++					expect(streamCalls).toBe(outcome === "rollback" ? 1 : 0);
++				} finally {
++					releaseReconcile.resolve();
++					await Promise.allSettled([settled, delivery]);
++				}
++			},
++		);
++
++		it("retains external " + mode + " when the before-switch hook cancels /new", async () => {
++			const hookEntered = Promise.withResolvers<void>();
++			const releaseHook = Promise.withResolvers<void>();
++			beforeSwitch = async () => {
++				hookEntered.resolve();
++				await releaseHook.promise;
++				return { cancel: true };
++			};
++			const oldId = manager.getSessionId();
++			const transition = session.newSession();
++			let delivery: Promise<boolean> | undefined;
++			try {
++				await hookEntered.promise;
++				delivery = session.sendCustomMessage(notice, options);
++				await setImmediate();
++				expect(noticeMessages()).toEqual([]);
++				expect(noticeEntries()).toEqual([]);
++				expect(streamCalls).toBe(0);
++				releaseHook.resolve();
++				expect(await transition).toBe(false);
++				expect(await delivery).toBe(true);
++				expect(manager.getSessionId()).toBe(oldId);
++				expect(noticeMessages()).toHaveLength(1);
++				expect(noticeEntries()).toHaveLength(1);
++				expect(streamCalls).toBe(1);
++			} finally {
++				releaseHook.resolve();
++				await Promise.allSettled([transition, delivery]);
++			}
++		});
++	}
++
++	for (const [mode, options] of deliveries) {
++		it("allows " + mode + " from a live switch reconciler without waiting for itself", async () => {
++			let delivered: boolean | undefined;
++			session.setSessionSwitchReconciler(async () => {
++				delivered = await session.sendCustomMessage(notice, options);
++			});
++			expect(await session.newSession()).toBe(true);
++			const wakes = options.triggerTurn || options.deliverAs === "aside";
++			expect(delivered).toBe(wakes);
++			expect(noticeMessages()).toHaveLength(1);
++			expect(noticeEntries()).toHaveLength(1);
++			expect(streamCalls).toBe(wakes ? 1 : 0);
++		});
++
++		it("does not give a released hook token ownership of " + mode + " during another /new", async () => {
++			let lateDelivery: (() => Promise<boolean>) | undefined;
++			session.setSessionSwitchReconciler(async () => {
++				lateDelivery = AsyncResource.bind(() => session.sendCustomMessage(notice, options));
++			});
++			expect(await session.newSession()).toBe(true);
++			await session.waitForSessionTransition();
++			session.setSessionSwitchReconciler(null);
++			if (!lateDelivery) throw new Error("Expected a callback captured inside the completed transition");
++			const resetEntered = Promise.withResolvers<void>();
++			const releaseReset = Promise.withResolvers<void>();
++			const original = SessionMemory.prototype.resetContextForNewTranscript;
++			spyOn(SessionMemory.prototype, "resetContextForNewTranscript").mockImplementation(
++				async function (this: SessionMemory) {
++					await original.call(this);
++					resetEntered.resolve();
++					await releaseReset.promise;
++				},
++			);
++			const normalization = holdNormalization();
++			const transition = session.newSession();
++			let delivery: Promise<boolean> | undefined;
++			try {
++				await resetEntered.promise;
++				delivery = lateDelivery();
++				await normalization.entered;
++				normalization.release();
++				await setImmediate();
++				expect(noticeMessages()).toEqual([]);
++				expect(noticeEntries()).toEqual([]);
++				expect(streamCalls).toBe(0);
++				releaseReset.resolve();
++				expect(await transition).toBe(true);
++				expect(await delivery).toBe(false);
++				expect(noticeMessages()).toEqual([]);
++				expect(noticeEntries()).toEqual([]);
++				expect(streamCalls).toBe(0);
++			} finally {
++				releaseReset.resolve();
++				normalization.release();
++				await Promise.allSettled([transition, delivery]);
++			}
++		});
++
++		it("drops " + mode + " after a nested committed transition without waiting for its own hook", async () => {
++			const { file: targetFile } = await createTarget("target");
++			const normalization = holdNormalization();
++			let delivery: Promise<boolean> | undefined;
++			let delivered = false;
++			let nestedResult: boolean | undefined;
++			let duringHook: { settled: boolean; messages: number; entries: number; streams: number } | undefined;
++			session.setSessionSwitchReconciler(async () => {
++				session.setSessionSwitchReconciler(null);
++				delivery = session.sendCustomMessage(notice, options).then(value => {
++					delivered = true;
++					return value;
++				});
++				await normalization.entered;
++				nestedResult = await session.newSession();
++				normalization.release();
++				await setImmediate();
++				duringHook = {
++					settled: delivered,
++					messages: noticeMessages().length,
++					entries: noticeEntries().length,
++					streams: streamCalls,
++				};
++			});
++			try {
++				expect(await session.switchSession(targetFile)).toBe(true);
++				expect(nestedResult).toBe(true);
++				// Reconciler errors are logged by the SDK, so assertions belong outside the hook.
++				expect(duringHook).toEqual({ settled: true, messages: 0, entries: 0, streams: 0 });
++				expect(await delivery).toBe(false);
++				expect(noticeMessages()).toEqual([]);
++				expect(noticeEntries()).toEqual([]);
++				expect(streamCalls).toBe(0);
++			} finally {
++				normalization.release();
++				await delivery;
++			}
++		});
++
++		it("does not reuse a rolled-back generation for " + mode + " normalized in the abandoned target", async () => {
++			const { file: targetFile, id: targetId } = await createTarget("target");
++			const normalization = holdNormalization();
++			let delivery: Promise<boolean> | undefined;
++			const original = SessionMemory.prototype.resetContextForNewTranscript;
++			const reset = spyOn(SessionMemory.prototype, "resetContextForNewTranscript").mockImplementation(
++				async function (this: SessionMemory) {
++					await original.call(this);
++					if (manager.getSessionId() === targetId) {
++						delivery = session.sendCustomMessage(notice, options);
++						await normalization.entered;
++						throw new Error("target memory reset rejected");
++					}
++				},
++			);
++			try {
++				await expect(session.switchSession(targetFile)).rejects.toThrow("target memory reset rejected");
++				expect(delivery).toBeDefined();
++				reset.mockRestore();
++				expect(await session.newSession()).toBe(true);
++				normalization.release();
++				expect(await delivery).toBe(false);
++				expect(noticeMessages()).toEqual([]);
++				expect(noticeEntries()).toEqual([]);
++				expect(streamCalls).toBe(0);
++			} finally {
++				reset.mockRestore();
++				normalization.release();
++				await delivery;
++			}
++		});
++	}
++
++	function observeDelivery(settled: boolean) {
++		return { settled, messages: noticeMessages().length, entries: noticeEntries().length, streams: streamCalls };
++	}
++
++	it.each(["commit", "rollback"] as const)(
++		"waits for a pending nested switch to %s without waiting for its outer hook",
++		async outcome => {
++			const outer = await createTarget("outer target");
++			const inner = await createTarget("inner target");
++			const entered = Promise.withResolvers<void>();
++			const release = Promise.withResolvers<void>();
++			const original = SessionMemory.prototype.resetContextForNewTranscript;
++			spyOn(SessionMemory.prototype, "resetContextForNewTranscript").mockImplementation(
++				async function (this: SessionMemory) {
++					await original.call(this);
++					if (manager.getSessionId() !== inner.id) return;
++					entered.resolve();
++					await release.promise;
++					if (outcome === "rollback") throw new Error("inner reset rejected");
++				},
++			);
++			const normalization = holdNormalization();
++			let delivery: Promise<boolean> | undefined;
++			let delivered = false;
++			let pending: ReturnType<typeof observeDelivery> | undefined;
++			let finished: ReturnType<typeof observeDelivery> | undefined;
++			let nested: Promise<{ value?: boolean; error?: unknown }> | undefined;
++			let nestedResult: { value?: boolean; error?: unknown } | undefined;
++			session.setSessionSwitchReconciler(async () => {
++				session.setSessionSwitchReconciler(null);
++				delivery = session.sendCustomMessage(notice, { triggerTurn: false, deliverAs: "nextTurn" }).then(value => {
++					delivered = true;
++					return value;
++				});
++				await normalization.entered;
++				nested = session.switchSession(inner.file).then(
++					value => ({ value }),
++					error => ({ error }),
++				);
++				await entered.promise;
++				normalization.release();
++				await setImmediate();
++				pending = observeDelivery(delivered);
++				release.resolve();
++				nestedResult = await nested;
++				await setImmediate();
++				finished = observeDelivery(delivered);
++			});
++			try {
++				expect(await session.switchSession(outer.file)).toBe(true);
++				expect(pending).toEqual({ settled: false, messages: 0, entries: 0, streams: 0 });
++				expect(nestedResult).toMatchObject(
++					outcome === "rollback" ? { error: { message: "inner reset rejected" } } : { value: true },
++				);
++				const retained = outcome === "rollback" ? 1 : 0;
++				expect(finished).toEqual({ settled: true, messages: retained, entries: retained, streams: 0 });
++				expect(await delivery).toBe(false);
++			} finally {
++				release.resolve();
++				normalization.release();
++				await Promise.allSettled([nested, delivery]);
++			}
++		},
++	);
++
++	it.each(["commit", "rollback"] as const)(
++		"never waits for its own rollback decision before a switch will %s",
++		async outcome => {
++			const target = await createTarget("target");
++			const normalization = holdNormalization();
++			let delivery: Promise<boolean> | undefined;
++			let delivered = false;
++			let duringReset: ReturnType<typeof observeDelivery> | undefined;
++			session.setSessionBeforeSwitchReconciler(async () => {
++				delivery = session.sendCustomMessage(notice, { triggerTurn: false, deliverAs: "nextTurn" }).then(value => {
++					delivered = true;
++					return value;
++				});
++				await normalization.entered;
++			});
++			const original = SessionMemory.prototype.resetContextForNewTranscript;
++			spyOn(SessionMemory.prototype, "resetContextForNewTranscript").mockImplementation(
++				async function (this: SessionMemory) {
++					await original.call(this);
++					if (manager.getSessionId() !== target.id) return;
++					normalization.release();
++					await setImmediate();
++					duringReset = observeDelivery(delivered);
++					if (outcome === "rollback") throw new Error("target reset rejected");
++				},
++			);
++			try {
++				const result = await session.switchSession(target.file).then(
++					value => ({ value }),
++					error => ({ error }),
++				);
++				expect(result).toMatchObject(
++					outcome === "rollback" ? { error: { message: "target reset rejected" } } : { value: true },
++				);
++				expect(duringReset).toEqual({ settled: true, messages: 0, entries: 0, streams: 0 });
++				expect(await delivery).toBe(false);
++				expect(noticeMessages()).toEqual([]);
++				expect(noticeEntries()).toEqual([]);
++				expect(streamCalls).toBe(0);
++			} finally {
++				normalization.release();
++				await delivery;
++			}
++		},
++	);
++
++	it("finds an outer restoration record while a nested switch is pending", async () => {
++		const outer = await createTarget("outer target");
++		const inner = await createTarget("inner target");
++		const oldId = manager.getSessionId();
++		const normalization = holdNormalization();
++		let delivered = false;
++		const delivery = session.sendCustomMessage(notice, { triggerTurn: false, deliverAs: "nextTurn" }).then(value => {
++			delivered = true;
++			return value;
++		});
++		await normalization.entered;
++		const entered = Promise.withResolvers<void>();
++		const release = Promise.withResolvers<void>();
++		let pending: ReturnType<typeof observeDelivery> | undefined;
++		let nested: Promise<{ value?: boolean; error?: unknown }> | undefined;
++		let nestedResult: { value?: boolean; error?: unknown } | undefined;
++		const original = SessionMemory.prototype.resetContextForNewTranscript;
++		spyOn(SessionMemory.prototype, "resetContextForNewTranscript").mockImplementation(
++			async function (this: SessionMemory) {
++				await original.call(this);
++				if (manager.getSessionId() === inner.id) {
++					entered.resolve();
++					await release.promise;
++					throw new Error("inner reset rejected");
++				}
++				if (manager.getSessionId() !== outer.id) return;
++				nested = session.switchSession(inner.file).then(
++					value => ({ value }),
++					error => ({ error }),
++				);
++				await entered.promise;
++				normalization.release();
++				await setImmediate();
++				pending = observeDelivery(delivered);
++				release.resolve();
++				nestedResult = await nested;
++				throw new Error("outer reset rejected");
++			},
++		);
++		try {
++			await expect(session.switchSession(outer.file)).rejects.toThrow("outer reset rejected");
++			expect(pending).toEqual({ settled: false, messages: 0, entries: 0, streams: 0 });
++			expect(nestedResult).toMatchObject({ error: { message: "inner reset rejected" } });
++			expect(await delivery).toBe(false);
++			expect(manager.getSessionId()).toBe(oldId);
++			expect(noticeMessages()).toHaveLength(1);
++			expect(noticeEntries()).toHaveLength(1);
++			expect(streamCalls).toBe(0);
++		} finally {
++			release.resolve();
++			normalization.release();
++			await Promise.allSettled([nested, delivery]);
++		}
++	});
++
++	it("clears out-of-order restoration decisions before the next delivery", async () => {
++		const outer = await createTarget("outer target");
++		const inner = await createTarget("inner target");
++		const normalization = holdNormalization();
++		const delivery = session.sendCustomMessage(notice, { triggerTurn: false, deliverAs: "nextTurn" });
++		await normalization.entered;
++		const entered = Promise.withResolvers<void>();
++		const release = Promise.withResolvers<void>();
++		const original = SessionMemory.prototype.resetContextForNewTranscript;
++		spyOn(SessionMemory.prototype, "resetContextForNewTranscript").mockImplementation(
++			async function (this: SessionMemory) {
++				await original.call(this);
++				if (manager.getSessionId() !== inner.id) return;
++				entered.resolve();
++				await release.promise;
++			},
++		);
++		let nested: Promise<boolean> | undefined;
++		session.setSessionSwitchReconciler(async () => {
++			session.setSessionSwitchReconciler(null);
++			nested = session.switchSession(inner.file);
++			await entered.promise;
++		});
++		try {
++			expect(await session.switchSession(outer.file)).toBe(true);
++			expect(nested).toBeDefined();
++			release.resolve();
++			expect(await nested).toBe(true);
++			await session.waitForSessionTransition();
++			normalization.release();
++			expect(await delivery).toBe(false);
++			expect(noticeMessages()).toEqual([]);
++			expect(noticeEntries()).toEqual([]);
++			expect(streamCalls).toBe(0);
++		} finally {
++			release.resolve();
++			normalization.release();
++			await Promise.allSettled([nested, delivery]);
++		}
++	});
++
++	it("invalidates old normalization when /new fails after replacing the transcript", async () => {
++		const normalization = holdNormalization();
++		const delivery = session.sendCustomMessage(notice, { triggerTurn: false, deliverAs: "nextTurn" });
++		await normalization.entered;
++		const original = SessionMemory.prototype.resetContextForNewTranscript;
++		spyOn(SessionMemory.prototype, "resetContextForNewTranscript").mockImplementation(
++			async function (this: SessionMemory) {
++				await original.call(this);
++				throw new Error("new memory reset rejected");
++			},
++		);
++		try {
++			await expect(session.newSession()).rejects.toThrow("new memory reset rejected");
++			normalization.release();
++			expect(await delivery).toBe(false);
++			expect(noticeMessages()).toEqual([]);
++			expect(noticeEntries()).toEqual([]);
++			expect(streamCalls).toBe(0);
++		} finally {
++			normalization.release();
++			await delivery;
++		}
++	});
++
++	for (const attribution of ["agent", "user"] as const) {
++		it.each(deliveries)(
++			`does not cross a rollback at the final ${attribution} %s dispatch boundary`,
++			async (_name, options) => {
++				const target = await createTarget("target before rollback");
++				const oldId = manager.getSessionId();
++				const normalization = holdNormalization();
++				const original = SessionMemory.prototype.resetContextForNewTranscript;
++				let delivery: Promise<boolean> | undefined;
++				spyOn(SessionMemory.prototype, "resetContextForNewTranscript").mockImplementation(
++					async function (this: SessionMemory) {
++						await original.call(this);
++						if (manager.getSessionId() !== target.id) return;
++						delivery = session.sendCustomMessage({ ...notice, attribution }, options);
++						await normalization.entered;
++						normalization.release();
++						// Release normalization first, then reject the target reset. The real
++						// rollback is queued immediately after normalized dispatch resumes.
++						await Promise.resolve();
++						throw new Error("target reset rejected at dispatch boundary");
++					},
++				);
++				try {
++					await expect(session.switchSession(target.file)).rejects.toThrow(
++						"target reset rejected at dispatch boundary",
++					);
++					await delivery;
++					await session.waitForIdle();
++					expect(manager.getSessionId()).toBe(oldId);
++					expect(noticeMessages()).toEqual([]);
++					expect(noticeEntries()).toEqual([]);
++					expect(streamCalls).toBe(0);
++				} finally {
++					normalization.release();
++					await delivery;
++				}
++			},
++		);
++	}
++
++	it("keeps new-session normalization started by a session-change callback", async () => {
++		const normalization = holdNormalization();
++		let delivery: Promise<boolean> | undefined;
++		const unregister = session.registerSessionChangeCallback(() => {
++			delivery = session.sendCustomMessage(notice, { triggerTurn: false, deliverAs: "nextTurn" });
++		});
++		try {
++			expect(await session.newSession()).toBe(true);
++			await normalization.entered;
++			normalization.release();
++			expect(await delivery).toBe(false);
++			expect(noticeMessages()).toHaveLength(1);
++			expect(noticeEntries()).toHaveLength(1);
++			expect(streamCalls).toBe(0);
++		} finally {
++			unregister();
++			normalization.release();
++			await delivery;
++		}
++	});
++
++	it("still wakes the current session for an ordinary triggered next-turn message", async () => {
++		expect(await session.sendCustomMessage(notice, { triggerTurn: true, deliverAs: "nextTurn" })).toBe(true);
++		expect(noticeMessages()).toHaveLength(1);
++		expect(noticeEntries()).toHaveLength(1);
++		expect(streamCalls).toBe(1);
++	});
++
++	it("retains a notice across an abort of the same session without waking it", async () => {
++		const oldId = manager.getSessionId();
++		const normalization = holdNormalization();
++		const delivery = session.sendCustomMessage(notice, { triggerTurn: false, deliverAs: "nextTurn" });
++		try {
++			await normalization.entered;
++			await session.abort();
++			normalization.release();
++			expect(await delivery).toBe(false);
++			expect(manager.getSessionId()).toBe(oldId);
++			expect(noticeMessages()).toHaveLength(1);
++			expect(noticeEntries()).toHaveLength(1);
++			expect(noticeEntries()[0]).toMatchObject({ content: notice.content });
++			expect(streamCalls).toBe(0);
++		} finally {
++			normalization.release();
++			await delivery;
 +		}
 +	});
 +});

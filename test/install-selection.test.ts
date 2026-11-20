@@ -3,7 +3,10 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, writeFile
 import { join } from "node:path";
 import { git, withUlwRemote } from "./install-setup.ts";
 
-test.each(["", "/../.omp-dori"])(
+// POSIX-only: the fixture runs scripts/install-source.sh and shebang stubs through a ':' PATH.
+const posix = test.skipIf(process.platform === "win32");
+
+posix.each(["", "/../.omp-dori"])(
   "selecting an existing side%s default clears the external choice and restores managed ref updates",
   (suffix) => {
     const { root, home, remote, first, commit, install } = withUlwRemote();
@@ -33,7 +36,7 @@ test.each(["", "/../.omp-dori"])(
   },
 );
 
-test.each([
+posix.each([
   ["side repeated slash", "", "//", "side"],
   ["primary default with parent HOME", "/../home", "", "primary"],
 ])(
@@ -69,7 +72,7 @@ test.each([
   },
 );
 
-test("a non-normalized custom config retains its real checkout without fetching or selecting a managed ref", () => {
+posix("a non-normalized custom config retains its real checkout without fetching or selecting a managed ref", () => {
   const { root, home, remote, first, commit, install } = withUlwRemote();
   const side = join(home, ".omp-dori");
   const external = join(home, "owner-ulw");
@@ -97,22 +100,25 @@ test("a non-normalized custom config retains its real checkout without fetching 
   expect(existsSync(join(side, "omp-ulw"))).toBe(false);
 });
 
-test("selecting the managed default preserves a foreign regular retention path before checkout or config changes", () => {
-  const { home, src, first, commit, upstreamCommit, install } = withUlwRemote();
-  const side = join(home, ".omp-dori");
-  const managed = join(side, "omp-ulw");
-  const retained = join(side, ".omp-dori-ulw");
-  expect(install({ DORI_INSTALL_MODE: "side" }).code).toBe(0);
-  const sourceHead = git(src, "rev-parse", "HEAD");
-  const config = readFileSync(join(side, "config.json"), "utf8");
-  writeFileSync(retained, "owner data\n");
-  upstreamCommit("pending source update\n");
-  commit("u2");
+posix(
+  "selecting the managed default preserves a foreign regular retention path before checkout or config changes",
+  () => {
+    const { home, src, first, commit, upstreamCommit, install } = withUlwRemote();
+    const side = join(home, ".omp-dori");
+    const managed = join(side, "omp-ulw");
+    const retained = join(side, ".omp-dori-ulw");
+    expect(install({ DORI_INSTALL_MODE: "side" }).code).toBe(0);
+    const sourceHead = git(src, "rev-parse", "HEAD");
+    const config = readFileSync(join(side, "config.json"), "utf8");
+    writeFileSync(retained, "owner data\n");
+    upstreamCommit("pending source update\n");
+    commit("u2");
 
-  expect(install({ OMP_ULW_SRC: `${managed}/.` }).code).toBe(1);
-  expect(readFileSync(retained, "utf8")).toBe("owner data\n");
-  expect(lstatSync(retained).isFile()).toBe(true);
-  expect(git(src, "rev-parse", "HEAD")).toBe(sourceHead);
-  expect(git(managed, "rev-parse", "HEAD")).toBe(first);
-  expect(readFileSync(join(side, "config.json"), "utf8")).toBe(config);
-});
+    expect(install({ OMP_ULW_SRC: `${managed}/.` }).code).toBe(1);
+    expect(readFileSync(retained, "utf8")).toBe("owner data\n");
+    expect(lstatSync(retained).isFile()).toBe(true);
+    expect(git(src, "rev-parse", "HEAD")).toBe(sourceHead);
+    expect(git(managed, "rev-parse", "HEAD")).toBe(first);
+    expect(readFileSync(join(side, "config.json"), "utf8")).toBe(config);
+  },
+);

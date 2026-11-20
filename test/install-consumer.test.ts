@@ -5,7 +5,10 @@ import { consumerPaths } from "../src/release/files.ts";
 import { consumerEnv, installedConsumer, protectedSnapshot, snapshot } from "./install-consumer-setup.ts";
 import { setup } from "./install-setup.ts";
 
-test("a consumer home with its extension link holds a non-terminal source install before any effects", async () => {
+// POSIX-only: the fixture runs scripts/install-source.sh and asserts POSIX link and mode behaviour.
+const posix = test.skipIf(process.platform === "win32");
+
+posix("a consumer home with its extension link holds a non-terminal source install before any effects", async () => {
   const source = setup();
   const { paths } = await installedConsumer();
   source.upstreamCommit("pending upstream\n");
@@ -20,22 +23,25 @@ test("a consumer home with its extension link holds a non-terminal source instal
   expect(existsSync(join(source.root, "bun.log"))).toBe(false);
 });
 
-test("explicit primary source installation preserves the consumer pointer, config, pin, links and permissions", async () => {
-  const source = setup();
-  const { paths } = await installedConsumer();
-  const before = protectedSnapshot(paths);
-  const checkout = snapshot(source.src);
-  for (const selectedSource of [source.src, ""]) {
-    const r = source.install({ ...consumerEnv(paths), DORI_INSTALL_MODE: "primary", DORI_SRC: selectedSource });
-    expect(r.code).toBe(1);
-    expect(protectedSnapshot(paths)).toEqual(before);
-    expect(snapshot(source.src)).toBe(checkout);
-  }
-  expect(existsSync(join(paths.dori, "backups"))).toBe(false);
-  expect(existsSync(join(source.root, "bun.log"))).toBe(false);
-});
+posix(
+  "explicit primary source installation preserves the consumer pointer, config, pin, links and permissions",
+  async () => {
+    const source = setup();
+    const { paths } = await installedConsumer();
+    const before = protectedSnapshot(paths);
+    const checkout = snapshot(source.src);
+    for (const selectedSource of [source.src, ""]) {
+      const r = source.install({ ...consumerEnv(paths), DORI_INSTALL_MODE: "primary", DORI_SRC: selectedSource });
+      expect(r.code).toBe(1);
+      expect(protectedSnapshot(paths)).toEqual(before);
+      expect(snapshot(source.src)).toBe(checkout);
+    }
+    expect(existsSync(join(paths.dori, "backups"))).toBe(false);
+    expect(existsSync(join(source.root, "bun.log"))).toBe(false);
+  },
+);
 
-test("a separate side source install and its reinstall preserve an installed consumer home", async () => {
+posix("a separate side source install and its reinstall preserve an installed consumer home", async () => {
   const source = setup();
   const { paths } = await installedConsumer();
   const before = protectedSnapshot(paths);
@@ -56,24 +62,27 @@ test("a separate side source install and its reinstall preserve an installed con
   expect(readlinkSync(join(options.OMP_DORI_BIN_DIR, "omp-dori"))).toBe(join(side, "bin/omp-dori"));
 });
 
-test("side mode holds when its selected home is a consumer home or a symlink alias outside the primary home", async () => {
-  const source = setup();
-  const { paths } = await installedConsumer();
-  const alias = join(source.home, "consumer-home");
-  symlinkSync(paths.dori, alias);
-  const before = protectedSnapshot(paths);
-  const checkout = snapshot(source.src);
-  for (const base of [paths.dori, alias]) {
-    const r = source.install({ DORI_INSTALL_MODE: "side", OMP_DORI_HOME: base });
-    expect(r.code).toBe(1);
-    expect(protectedSnapshot(paths)).toEqual(before);
-    expect(snapshot(source.src)).toBe(checkout);
-  }
-  expect(existsSync(join(source.home, "global-bin"))).toBe(false);
-  expect(existsSync(join(source.root, "bun.log"))).toBe(false);
-});
+posix(
+  "side mode holds when its selected home is a consumer home or a symlink alias outside the primary home",
+  async () => {
+    const source = setup();
+    const { paths } = await installedConsumer();
+    const alias = join(source.home, "consumer-home");
+    symlinkSync(paths.dori, alias);
+    const before = protectedSnapshot(paths);
+    const checkout = snapshot(source.src);
+    for (const base of [paths.dori, alias]) {
+      const r = source.install({ DORI_INSTALL_MODE: "side", OMP_DORI_HOME: base });
+      expect(r.code).toBe(1);
+      expect(protectedSnapshot(paths)).toEqual(before);
+      expect(snapshot(source.src)).toBe(checkout);
+    }
+    expect(existsSync(join(source.home, "global-bin"))).toBe(false);
+    expect(existsSync(join(source.root, "bun.log"))).toBe(false);
+  },
+);
 
-test.each(["consumer-owner.json", "consumer-installed.json", "consumer-journal.json"])(
+posix.each(["consumer-owner.json", "consumer-installed.json", "consumer-journal.json"])(
   "an incomplete selected consumer home with only %s holds side installation",
   (control) => {
     const source = setup();
@@ -91,27 +100,30 @@ test.each(["consumer-owner.json", "consumer-installed.json", "consumer-journal.j
   },
 );
 
-test("side path overrides that resolve into the primary consumer home stop before checkout or package changes", async () => {
-  const source = setup();
-  const { paths, ownedDependency } = await installedConsumer();
-  const before = protectedSnapshot(paths);
-  const checkout = snapshot(source.src);
-  const overrides: Record<string, string>[] = [
-    { OMP_DORI_HOME: join(paths.dori, "experiment") },
-    { DORI_SRC: paths.live },
-    { OMP_ULW_SRC: ownedDependency },
-    { OMP_DORI_BIN_DIR: join(paths.dori, "bin") },
-  ];
-  for (const override of overrides) {
-    const r = source.install({ ...consumerEnv(paths), DORI_INSTALL_MODE: "side", ...override });
-    expect(r.code).toBe(1);
-    expect(protectedSnapshot(paths)).toEqual(before);
-    expect(snapshot(source.src)).toBe(checkout);
-  }
-  expect(existsSync(join(source.root, "bun.log"))).toBe(false);
-});
+posix(
+  "side path overrides that resolve into the primary consumer home stop before checkout or package changes",
+  async () => {
+    const source = setup();
+    const { paths, ownedDependency } = await installedConsumer();
+    const before = protectedSnapshot(paths);
+    const checkout = snapshot(source.src);
+    const overrides: Record<string, string>[] = [
+      { OMP_DORI_HOME: join(paths.dori, "experiment") },
+      { DORI_SRC: paths.live },
+      { OMP_ULW_SRC: ownedDependency },
+      { OMP_DORI_BIN_DIR: join(paths.dori, "bin") },
+    ];
+    for (const override of overrides) {
+      const r = source.install({ ...consumerEnv(paths), DORI_INSTALL_MODE: "side", ...override });
+      expect(r.code).toBe(1);
+      expect(protectedSnapshot(paths)).toEqual(before);
+      expect(snapshot(source.src)).toBe(checkout);
+    }
+    expect(existsSync(join(source.root, "bun.log"))).toBe(false);
+  },
+);
 
-test("side config and wrapper symlinks cannot redirect generated files into the consumer home", async () => {
+posix("side config and wrapper symlinks cannot redirect generated files into the consumer home", async () => {
   const source = setup();
   const { paths } = await installedConsumer();
   const options = consumerEnv(paths);
@@ -132,7 +144,7 @@ test("side config and wrapper symlinks cannot redirect generated files into the 
   expect(existsSync(join(source.root, "bun.log"))).toBe(false);
 });
 
-test.each(["config", "retained"])(
+posix.each(["config", "retained"])(
   "a side %s ULW alias into the consumer home holds before source changes",
   async (choice) => {
     const source = setup();

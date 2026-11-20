@@ -8,31 +8,35 @@ import { recoverInstalled, releasePath } from "../src/release/state.ts";
 import { processIdentity } from "../src/update/deployment-process.ts";
 import { fixture } from "./release-consumer-setup.ts";
 
-const linux = test.skipIf(process.platform !== "linux");
+// POSIX-only: release installation refuses non-private directories by POSIX mode bits.
+const posix = test.skipIf(process.platform === "win32");
 
-test("local release installation preserves config/auth/work and updates every stable reference through one source pointer", async () => {
-  const f = fixture();
-  const config = '{"stateDir":"~/.dori/state","ompUlwPath":"/owner/custom.ts","defaultModel":"owner/model"}\n';
-  writeFileSync(f.paths.config, config, { mode: 0o600 });
-  writeFileSync(join(f.paths.dori, "auth.json"), "owner authentication\n", { mode: 0o600 });
-  mkdirSync(join(f.paths.dori, "work"), { mode: 0o700 });
-  writeFileSync(join(f.paths.dori, "work", "owner.txt"), "owner work\n", { mode: 0o600 });
-  const first = f.release("first\n");
-  const before = await installBundle(f.paths, await acquireBundle({ from: first.dist }), undefined);
-  const old = readlinkSync(f.paths.live);
-  const second = f.release("second\n");
-  const after = await installBundle(f.paths, await acquireBundle({ from: second.dist }), before);
-  expect(readlinkSync(f.paths.live)).toBe(releasePath(f.paths, second.bundle.manifest));
-  expect(after.previous).toEqual(first.bundle.manifest);
-  expect(readFileSync(join(old, "payload.txt"), "utf8")).toBe("first\n");
-  expect(readFileSync(join(f.paths.live, "payload.txt"), "utf8")).toBe("second\n");
-  for (const [path, target] of f.paths.links) expect(readlinkSync(path)).toBe(target);
-  expect(readFileSync(f.paths.config, "utf8")).toBe(config);
-  expect(readFileSync(join(f.paths.dori, "auth.json"), "utf8")).toBe("owner authentication\n");
-  expect(readFileSync(join(f.paths.dori, "work", "owner.txt"), "utf8")).toBe("owner work\n");
-});
+posix(
+  "local release installation preserves config/auth/work and updates every stable reference through one source pointer",
+  async () => {
+    const f = fixture();
+    const config = '{"stateDir":"~/.dori/state","ompUlwPath":"/owner/custom.ts","defaultModel":"owner/model"}\n';
+    writeFileSync(f.paths.config, config, { mode: 0o600 });
+    writeFileSync(join(f.paths.dori, "auth.json"), "owner authentication\n", { mode: 0o600 });
+    mkdirSync(join(f.paths.dori, "work"), { mode: 0o700 });
+    writeFileSync(join(f.paths.dori, "work", "owner.txt"), "owner work\n", { mode: 0o600 });
+    const first = f.release("first\n");
+    const before = await installBundle(f.paths, await acquireBundle({ from: first.dist }), undefined);
+    const old = readlinkSync(f.paths.live);
+    const second = f.release("second\n");
+    const after = await installBundle(f.paths, await acquireBundle({ from: second.dist }), before);
+    expect(readlinkSync(f.paths.live)).toBe(releasePath(f.paths, second.bundle.manifest));
+    expect(after.previous).toEqual(first.bundle.manifest);
+    expect(readFileSync(join(old, "payload.txt"), "utf8")).toBe("first\n");
+    expect(readFileSync(join(f.paths.live, "payload.txt"), "utf8")).toBe("second\n");
+    for (const [path, target] of f.paths.links) expect(readlinkSync(path)).toBe(target);
+    expect(readFileSync(f.paths.config, "utf8")).toBe(config);
+    expect(readFileSync(join(f.paths.dori, "auth.json"), "utf8")).toBe("owner authentication\n");
+    expect(readFileSync(join(f.paths.dori, "work", "owner.txt"), "utf8")).toBe("owner work\n");
+  },
+);
 
-test("rollback verifies and restores the exact previous release while retaining the displaced one", async () => {
+posix("rollback verifies and restores the exact previous release while retaining the displaced one", async () => {
   const f = fixture();
   const first = f.release("first\n");
   const one = await installBundle(f.paths, first.bundle, undefined);
@@ -49,7 +53,7 @@ test("rollback verifies and restores the exact previous release while retaining 
   expect(existsSync(releasePath(f.paths, two.current))).toBe(true);
 });
 
-linux("a live identity-bound Dori receipt holds both install and rollback without signalling the process", async () => {
+posix("a live identity-bound Dori receipt holds both install and rollback without signalling the process", async () => {
   const f = fixture();
   const one = await installBundle(f.paths, f.release("first\n").bundle, undefined);
   const two = await installBundle(f.paths, f.release("second\n").bundle, one);
@@ -65,7 +69,7 @@ linux("a live identity-bound Dori receipt holds both install and rollback withou
   expect(readFileSync(f.paths.state)).toEqual(state);
 });
 
-test("tampered rollback executable modes leave the active source and installed-state bytes unchanged", async () => {
+posix("tampered rollback executable modes leave the active source and installed-state bytes unchanged", async () => {
   const f = fixture();
   const one = await installBundle(f.paths, f.release("first\n").bundle, undefined);
   const two = await installBundle(f.paths, f.release("second\n").bundle, one);
@@ -77,7 +81,7 @@ test("tampered rollback executable modes leave the active source and installed-s
   expect(readFileSync(f.paths.state)).toEqual(state);
 });
 
-test("interruption after the atomic pointer switch publishes the matching verified state on recovery", async () => {
+posix("interruption after the atomic pointer switch publishes the matching verified state on recovery", async () => {
   const f = fixture();
   const one = await installBundle(f.paths, f.release("first\n").bundle, undefined);
   const two = await installBundle(f.paths, f.release("second\n").bundle, one);
@@ -89,20 +93,23 @@ test("interruption after the atomic pointer switch publishes the matching verifi
   expect(existsSync(f.paths.journal)).toBe(false);
 });
 
-test("interruption before the pointer switch retains the old source and state and consumes only its journal", async () => {
-  const f = fixture();
-  const one = await installBundle(f.paths, f.release("first\n").bundle, undefined);
-  const two = await installBundle(f.paths, f.release("second\n").bundle, one);
-  replacePointer(f.paths.live, releasePath(f.paths, two.current), releasePath(f.paths, one.current));
-  saveJson(f.paths.state, one);
-  saveJson(f.paths.journal, { version: 1, before: one, after: two });
-  expect(recoverInstalled(f.paths)).toEqual(one);
-  expect(readlinkSync(f.paths.live)).toBe(releasePath(f.paths, one.current));
-  expect(JSON.parse(readFileSync(f.paths.state, "utf8"))).toEqual(one);
-  expect(existsSync(f.paths.journal)).toBe(false);
-});
+posix(
+  "interruption before the pointer switch retains the old source and state and consumes only its journal",
+  async () => {
+    const f = fixture();
+    const one = await installBundle(f.paths, f.release("first\n").bundle, undefined);
+    const two = await installBundle(f.paths, f.release("second\n").bundle, one);
+    replacePointer(f.paths.live, releasePath(f.paths, two.current), releasePath(f.paths, one.current));
+    saveJson(f.paths.state, one);
+    saveJson(f.paths.journal, { version: 1, before: one, after: two });
+    expect(recoverInstalled(f.paths)).toEqual(one);
+    expect(readlinkSync(f.paths.live)).toBe(releasePath(f.paths, one.current));
+    expect(JSON.parse(readFileSync(f.paths.state, "utf8"))).toEqual(one);
+    expect(existsSync(f.paths.journal)).toBe(false);
+  },
+);
 
-test("consumer status works before user configuration parsing and performs no runtime launch", () => {
+posix("consumer status works before user configuration parsing and performs no runtime launch", () => {
   const f = fixture();
   writeFileSync(f.paths.config, "invalid user config\n", { mode: 0o600 });
   const cli = resolve(import.meta.dir, "../skills/dori-mode/scripts/src/cli.ts");

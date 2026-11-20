@@ -1,40 +1,34 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { Glob } from "bun";
+import ts from "typescript";
 
 const ROOT = resolve(import.meta.dir, "..");
 const TREES = ["src", "skills/dori-mode/scripts/src"];
 // The skill CLI runs its command at import; it is an entry point, never imported.
-const ENTRY_ONLY = new Set(["skills/dori-mode/scripts/src/cli.ts"]);
+const ENTRY_ONLY = new Set([join(ROOT, "skills/dori-mode/scripts/src/cli.ts")]);
 
 const modules = (): string[] =>
-  TREES.flatMap((tree) =>
-    [...new Glob("**/*.ts").scanSync({ cwd: join(ROOT, tree) })].map((file) => join(tree, file)),
-  ).sort();
+  TREES.flatMap((tree) => {
+    const cwd = join(ROOT, tree);
+    return [...new Glob("**/*.ts").scanSync({ cwd })].map((file) => join(cwd, file));
+  }).sort();
 
-/** Relative imports that load the module at run time: `import type` is erased, an inline `type` specifier is not. */
-const runtimeImports = (file: string): string[] =>
-  [
-    ...readFileSync(join(ROOT, file), "utf8").matchAll(/^(?:import|export)\s+(?!type\b)[^;]*?\sfrom\s+"(\.[^"]+)"/gm),
-  ].map((m) => relative(ROOT, resolve(dirname(join(ROOT, file)), m[1] ?? "")));
-
-test("no module imports a module that imports it back", () => {
-  const graph = new Map(modules().map((file) => [file, runtimeImports(file)]));
-  const cycles: string[] = [];
-  const done = new Set<string>();
-  const visit = (file: string, path: string[]): void => {
-    const at = path.indexOf(file);
-    if (at >= 0) {
-      cycles.push([...path.slice(at), file].join(" -> "));
-      return;
-    }
-    if (done.has(file)) return;
-    for (const next of graph.get(file) ?? []) if (graph.has(next)) visit(next, [...path, file]);
-    done.add(file);
-  };
-  for (const file of graph.keys()) visit(file, []);
-  expect(cycles).toEqual([]);
+// Oxlint's import/no-cycle owns the general cycle guard; this also forbids a one-way dependency.
+test("launch validation does not import its coordinator", () => {
+  const skillSrc = join(ROOT, "skills/dori-mode/scripts/src");
+  const input = join(skillSrc, "launch-input.ts");
+  const source = ts.createSourceFile(input, readFileSync(input, "utf8"), ts.ScriptTarget.Latest);
+  const imports = source.statements.flatMap((statement) => {
+    if (!ts.isImportDeclaration(statement) && !ts.isExportDeclaration(statement)) return [];
+    const typeOnly = ts.isImportDeclaration(statement) ? statement.importClause?.isTypeOnly : statement.isTypeOnly;
+    const specifier = statement.moduleSpecifier;
+    if (typeOnly || !specifier || !ts.isStringLiteral(specifier) || !specifier.text.startsWith(".")) return [];
+    return [Bun.resolveSync(specifier.text, skillSrc)];
+  });
+  expect(imports).not.toContain(Bun.resolveSync("./launch.ts", skillSrc));
 });
 
 test("every module loads on its own in a fresh process", async () => {
@@ -43,12 +37,14 @@ test("every module loads on its own in a fresh process", async () => {
   const failures: string[] = [];
   await Promise.all(
     files.map(async (file) => {
-      const proc = Bun.spawn([process.execPath, "-e", `await import(${JSON.stringify(join(ROOT, file))})`], {
+      // Each path comes from discovery and must be imported in its own process.
+      const proc = Bun.spawn([process.execPath, "-e", `await import(${JSON.stringify(pathToFileURL(file).href)})`], {
         stdout: "pipe",
         stderr: "pipe",
       });
       const [code, err] = await Promise.all([proc.exited, new Response(proc.stderr).text()]);
-      if (code !== 0 || err.trim()) failures.push(`${file}: exit ${code} ${err.trim().split("\n")[0] ?? ""}`);
+      if (code !== 0 || err.trim())
+        failures.push(`${relative(ROOT, file)}: exit ${code} ${err.trim().split("\n")[0] ?? ""}`);
     }),
   );
   expect(failures).toEqual([]);

@@ -1,7 +1,10 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+// These installer/gate cases use POSIX executables and a shell PATH.
+const posix = test.skipIf(process.platform === "win32");
 
 const script = join(import.meta.dir, "../scripts/ci-install-herdr.sh");
 const fixture = () => {
@@ -52,7 +55,7 @@ test "$(cat "$path")" = verified`,
   };
 };
 
-test.each([0, 2])("installs only verified bytes after %s transient failures", (failures) => {
+posix.each([0, 2])("installs only verified bytes after %s transient failures", (failures) => {
   const f = fixture();
   try {
     expect(f.run(failures).exitCode).toBe(0);
@@ -65,7 +68,7 @@ test.each([0, 2])("installs only verified bytes after %s transient failures", (f
   }
 });
 
-test.each([1, 124])("bounds retries and cleans partial bytes on download exit %s", (code) => {
+posix.each([1, 124])("bounds retries and cleans partial bytes on download exit %s", (code) => {
   const f = fixture();
   try {
     expect(f.run(3, "verified", code).exitCode).toBe(22);
@@ -77,7 +80,7 @@ test.each([1, 124])("bounds retries and cleans partial bytes on download exit %s
   }
 });
 
-test("checksum rejection preserves existing binary and cleans download", () => {
+posix("checksum rejection preserves existing binary and cleans download", () => {
   const f = fixture();
   try {
     expect(f.run(0, "tampered").exitCode).not.toBe(0);
@@ -89,9 +92,36 @@ test("checksum rejection preserves existing binary and cleans download", () => {
   }
 });
 
-test("hc gate requires its E2E file instead of reporting skipped success", () => {
-  const workflow = readFileSync(join(import.meta.dir, "../.github/workflows/ci.yml"), "utf8");
-  expect(workflow).toContain("test -f test/e2e-hc.test.ts\n          bun test test/e2e-hc.test.ts");
-  expect(workflow).toContain("test -f test/e2e-hc-deploy.test.ts\n          bun test test/e2e-hc-deploy.test.ts");
-  expect(workflow).not.toContain("SKIP e2e-hc");
+posix("the hc gate requires both E2E files and runs each through bun", () => {
+  const workflow = Bun.YAML.parse(readFileSync(join(import.meta.dir, "../.github/workflows/ci.yml"), "utf8")) as {
+    jobs?: Record<string, { steps?: readonly { name?: string; run?: string }[] }>;
+  };
+  const step = workflow.jobs?.["e2e-hc"]?.steps?.find((candidate) => candidate.name === "hc e2e");
+  const script = step?.run;
+  if (!script) throw new Error("ci.yml must keep the named hc e2e step");
+  const gate = (present: readonly string[]) => {
+    const dir = mkdtempSync(join(tmpdir(), "dori-ci-hc-"));
+    try {
+      const bin = join(dir, "bin");
+      mkdirSync(bin);
+      const calls = join(dir, "bun-calls");
+      writeFileSync(join(bin, "bun"), `#!/bin/sh\nprintf '%s\\n' "$*" >> ${JSON.stringify(calls)}\n`, { mode: 0o755 });
+      mkdirSync(join(dir, "test"));
+      for (const file of present) writeFileSync(join(dir, file), "");
+      const result = Bun.spawnSync(["bash", "-eo", "pipefail", "-c", script], {
+        cwd: dir,
+        env: { ...process.env, PATH: `${bin}:${process.env["PATH"]}` },
+      });
+      const invoked = existsSync(calls) ? readFileSync(calls, "utf8").trim().split("\n") : [];
+      return { code: result.exitCode, invoked };
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  };
+  expect(gate([]).code).not.toBe(0);
+  expect(gate(["test/e2e-hc.test.ts"]).code).not.toBe(0);
+  expect(gate(["test/e2e-hc.test.ts", "test/e2e-hc-deploy.test.ts"])).toEqual({
+    code: 0,
+    invoked: ["test test/e2e-hc.test.ts", "test test/e2e-hc-deploy.test.ts"],
+  });
 });

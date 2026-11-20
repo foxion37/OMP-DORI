@@ -1,20 +1,7 @@
-import { randomUUID } from "node:crypto";
-import {
-  closeSync,
-  existsSync,
-  fsyncSync,
-  linkSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  writeSync,
-} from "node:fs";
-import { hostname } from "node:os";
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-import { alive, inspect, LOCK_STALE_MS, type LockOwner, ownerOf } from "./checkpoint-lock.ts";
+import { takeLock } from "./checkpoint-lock.ts";
 import { LANE_KEY } from "./registry.ts";
 
 export type CheckpointInput = {
@@ -84,94 +71,13 @@ export class Checkpoints {
       });
   }
 
-  /**
-   * Take the journal's writer lock and return its release. The lock file records pid, host, time and a nonce. A live
-   * writer's lock is refused. A lock whose pid is dead on this host, or that is LOCK_STALE_MS old, is taken over: so a
-   * writer killed mid-write never locks the lane. A lock with no owner record or an unreadable time is aged by its mtime.
-   */
+  /** Take the journal's writer lock (see takeLock) and return its release; a live writer's lock is refused. */
   lock(key: string, now: number): () => void {
     const path = this.path(key);
     mkdirSync(dirname(path), { recursive: true });
-    const lock = `${path}.lock`;
-    const record = JSON.stringify({
-      pid: process.pid,
-      host: hostname(),
-      at: new Date(now).toISOString(),
-      nonce: randomUUID(),
-    } satisfies LockOwner);
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        const fd = openSync(lock, "wx", 0o600);
-        try {
-          writeSync(fd, record);
-          fsyncSync(fd);
-        } finally {
-          closeSync(fd);
-        }
-        // A lock taken over after LOCK_STALE_MS belongs to its new owner; leave it. Move the lock aside first, so no
-        // takeover can land between the ownership check and the removal, and remove it only if its record is ours.
-        return () => {
-          const aside = `${lock}.${process.pid}.${randomUUID()}.release`;
-          try {
-            renameSync(lock, aside);
-          } catch (error) {
-            if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
-            throw error;
-          }
-          if (inspect(aside)?.raw === record) {
-            rmSync(aside, { force: true });
-            return;
-          }
-          // Another writer's lock: put it back without replacing a newer one, and never delete it.
-          try {
-            linkSync(aside, lock);
-          } catch (error) {
-            throw new CheckpointError(
-              `checkpoint writer lock of ${key} belongs to another writer and could not be put back; it is at ${aside}: ${(error as Error).message}`,
-            );
-          }
-          rmSync(aside, { force: true });
-        };
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      }
-      const seen = inspect(lock);
-      if (!seen) continue;
-      const owner = ownerOf(seen.raw);
-      const at = owner ? Date.parse(owner.at) : NaN;
-      const since = Number.isFinite(at) ? at : seen.mtimeMs;
-      const dead = owner !== null && owner.host === hostname() && !alive(owner.pid);
-      if (!dead && now - since < LOCK_STALE_MS) {
-        throw new CheckpointError(
-          `checkpoint writer locked: ${key} (${owner ? `pid ${owner.pid}` : "no owner record"}, ${Math.max(0, Math.round((now - since) / 1000))} s old)`,
-        );
-      }
-      // Move the stale lock aside under a unique name, then check it is the one judged stale: another writer may have
-      // taken it over and locked again in between. Rename keeps the inode, so the inode and record identify it.
-      const moved = `${lock}.${process.pid}.${randomUUID()}.stale`;
-      try {
-        renameSync(lock, moved);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
-        throw error;
-      }
-      const taken = inspect(moved);
-      if (taken?.ino === seen.ino && taken.raw === seen.raw) {
-        rmSync(moved, { recursive: true, force: true });
-        continue;
-      }
-      // That was a live writer's lock: put it back without replacing a newer one.
-      try {
-        linkSync(moved, lock);
-      } catch (error) {
-        throw new CheckpointError(
-          `checkpoint writer locked: ${key} (a live writer's lock could not be put back: ${(error as Error).message})`,
-        );
-      } finally {
-        rmSync(moved, { recursive: true, force: true });
-      }
-    }
-    throw new CheckpointError(`checkpoint writer locked: ${key} (the lock changed hands while taking it over; retry)`);
+    const held = takeLock(`${path}.lock`, now, (m) => new CheckpointError(`checkpoint writer lock of ${key} ${m}`));
+    if (typeof held === "string") throw new CheckpointError(`checkpoint writer locked: ${key} (${held})`);
+    return held;
   }
 
   write(key: string, input: CheckpointInput, now: number): { checkpoint: Checkpoint; unchanged: boolean } {
@@ -204,7 +110,7 @@ export class Checkpoints {
         closeSync(fd);
       }
       // A new journal's directory entry must be durable too, or a crash could lose the first checkpoint after it was acknowledged.
-      if (created) {
+      if (created && process.platform !== "win32") {
         const dir = openSync(dirname(path), "r");
         try {
           fsyncSync(dir);

@@ -56,7 +56,8 @@ test("each handled message appends one line carrying its identity", () => {
   record({ ...base, updateId: 91, date: 1_700_000_000 }, 1_700_000_004_000);
   const lines = readFileSync(path, "utf8").trim().split("\n");
   expect(lines.length).toBe(2);
-  expect(statSync(path).mode & 0o777).toBe(0o600);
+  // Windows reports 0666 for any writable file; the 0600 check is POSIX-only.
+  if (process.platform !== "win32") expect(statSync(path).mode & 0o777).toBe(0o600);
   const [first, second] = lines.map(parseRecord);
   expect(first?.messageId).toBe(7);
   expect(first?.updateId).toBe(90);

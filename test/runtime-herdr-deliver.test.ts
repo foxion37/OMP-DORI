@@ -46,6 +46,25 @@ describe("deliver outcomes", () => {
     expect(herdr().some((a) => a[1] === "read")).toBe(false);
   });
 
+  test.each(["working", "done"] as const)(
+    "idle-only holds when a pane goes from idle to %s before the delivery probe",
+    async (status) => {
+      const { w, rt, herdr } = world();
+      const target = ref("w1:p1");
+      const pane = w.addPane(target.id);
+      expect((await rt.probe(target)).status).toBe("idle");
+      pane.status = status;
+
+      expect(await rt.deliver(target, "nudge", { when: "idle", strictIdle: true })).toEqual({
+        kind: "not-ready",
+        status,
+      });
+      expect(herdr().some((a) => a.includes("nudge"))).toBe(false);
+      expect(await rt.deliver(target, "next", { when: "idle", strictIdle: false })).toEqual({ kind: "delivered" });
+      expect(pane.received).toEqual(["next"]);
+    },
+  );
+
   test("unknown agent status is held even with a non-shell foreground and force", async () => {
     const { w, rt, herdr } = world();
     w.addPane("w1:p1", "unknown");

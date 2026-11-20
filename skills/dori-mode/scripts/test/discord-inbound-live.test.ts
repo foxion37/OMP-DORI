@@ -5,7 +5,10 @@ import { liveWorld, settle } from "./discord-inbound-live-fakes.ts";
 
 const options = { ownerId: "10", channelIds: ["20"] };
 
-test("a live owner message is emitted at once, with the minimum intents and no presence override", async () => {
+// POSIX-only: the Discord inbound queue requires a private (0700) uid-owned directory.
+const posix = test.skipIf(process.platform === "win32");
+
+posix("a live owner message is emitted at once, with the minimum intents and no presence override", async () => {
   const world = await liveWorld([ownerMessage("100")], options);
   const [socket] = world.sockets;
   if (!socket) throw new Error("gateway did not open");
@@ -22,7 +25,7 @@ test("a live owner message is emitted at once, with the minimum intents and no p
   expect(world.logs.join("\n")).not.toContain("unit-private-token");
 });
 
-test("non-owner, bot, webhook, system and unwatched-channel messages are ignored but advance the cursor", async () => {
+posix("non-owner, bot, webhook, system and unwatched-channel messages are ignored but advance the cursor", async () => {
   const world = await liveWorld([], options, { "20": "100" });
   const [socket] = world.sockets;
   if (!socket) throw new Error("gateway did not open");
@@ -39,7 +42,7 @@ test("non-owner, bot, webhook, system and unwatched-channel messages are ignored
   expect(world.received).toEqual(["20:107"]);
 });
 
-test("READY backfills what was posted before the connection and a later live copy is not repeated", async () => {
+posix("READY backfills what was posted before the connection and a later live copy is not repeated", async () => {
   const world = await liveWorld([ownerMessage("100")], options);
   world.rest.state.messages.push(ownerMessage("101"), ownerMessage("102"));
   const [socket] = world.sockets;
@@ -52,29 +55,32 @@ test("READY backfills what was posted before the connection and a later live cop
   expect(world.cursor("20")).toBe("102");
 });
 
-test("a message sent during an outage is backfilled once after RESUMED, even when the gateway replays it", async () => {
-  const world = await liveWorld([ownerMessage("100")], options);
-  const [first] = world.sockets;
-  if (!first) throw new Error("gateway did not open");
-  await world.connect(first);
-  await world.dispatch(first, ownerMessage("101"));
-  first.disconnect(1006);
-  world.rest.state.messages.push(ownerMessage("102"), ownerMessage("103"));
-  world.advance(10_000);
-  const second = world.sockets[1];
-  if (!second) throw new Error("gateway did not reconnect");
-  await world.connect(second, true);
-  expect(second.frames[0]?.op).toBe(6);
-  expect(world.received).toEqual(["20:101", "20:102", "20:103"]);
-  await world.dispatch(second, ownerMessage("103")); // Replayed by the resumed session.
-  await world.dispatch(second, ownerMessage("104"));
-  expect(world.received).toEqual(["20:101", "20:102", "20:103", "20:104"]);
-  expect(world.logs.some((line) => line.startsWith("DISCORD_GATEWAY_RECONNECT discord reason=closed code=1006"))).toBe(
-    true,
-  );
-});
+posix(
+  "a message sent during an outage is backfilled once after RESUMED, even when the gateway replays it",
+  async () => {
+    const world = await liveWorld([ownerMessage("100")], options);
+    const [first] = world.sockets;
+    if (!first) throw new Error("gateway did not open");
+    await world.connect(first);
+    await world.dispatch(first, ownerMessage("101"));
+    first.disconnect(1006);
+    world.rest.state.messages.push(ownerMessage("102"), ownerMessage("103"));
+    world.advance(10_000);
+    const second = world.sockets[1];
+    if (!second) throw new Error("gateway did not reconnect");
+    await world.connect(second, true);
+    expect(second.frames[0]?.op).toBe(6);
+    expect(world.received).toEqual(["20:101", "20:102", "20:103"]);
+    await world.dispatch(second, ownerMessage("103")); // Replayed by the resumed session.
+    await world.dispatch(second, ownerMessage("104"));
+    expect(world.received).toEqual(["20:101", "20:102", "20:103", "20:104"]);
+    expect(
+      world.logs.some((line) => line.startsWith("DISCORD_GATEWAY_RECONNECT discord reason=closed code=1006")),
+    ).toBe(true);
+  },
+);
 
-test("a terminal close code ends intake with an actionable error and does not retry", async () => {
+posix("a terminal close code ends intake with an actionable error and does not retry", async () => {
   const world = await liveWorld([], options, { "20": "100" });
   const [socket] = world.sockets;
   if (!socket) throw new Error("gateway did not open");
@@ -91,29 +97,32 @@ test("a terminal close code ends intake with an actionable error and does not re
   expect(world.sockets).toHaveLength(1);
 });
 
-test("a failing emitter stops intake: nothing queued behind it is delivered and its cursor is not advanced", async () => {
-  let calls = 0;
-  const world = await liveWorld([], options, { "20": "100" }, () => {
-    if (++calls === 1) throw new Error("delivery failed");
-  });
-  const [socket] = world.sockets;
-  if (!socket) throw new Error("gateway did not open");
-  const outcome = world.live.done.then(
-    () => "resolved",
-    (error: Error) => error.message,
-  );
-  await world.connect(socket);
-  socket.receive({ op: 0, t: "MESSAGE_CREATE", s: 5, d: ownerMessage("101") });
-  socket.receive({ op: 0, t: "MESSAGE_CREATE", s: 6, d: ownerMessage("102") }); // Already queued behind the failure.
-  expect(await outcome).toBe("delivery failed");
-  await settle();
-  expect(world.received).toEqual([]);
-  expect(world.cursor("20")).toBe("100");
-  expect(socket.closed).toBe(true);
-});
+posix(
+  "a failing emitter stops intake: nothing queued behind it is delivered and its cursor is not advanced",
+  async () => {
+    let calls = 0;
+    const world = await liveWorld([], options, { "20": "100" }, () => {
+      if (++calls === 1) throw new Error("delivery failed");
+    });
+    const [socket] = world.sockets;
+    if (!socket) throw new Error("gateway did not open");
+    const outcome = world.live.done.then(
+      () => "resolved",
+      (error: Error) => error.message,
+    );
+    await world.connect(socket);
+    socket.receive({ op: 0, t: "MESSAGE_CREATE", s: 5, d: ownerMessage("101") });
+    socket.receive({ op: 0, t: "MESSAGE_CREATE", s: 6, d: ownerMessage("102") }); // Already queued behind the failure.
+    expect(await outcome).toBe("delivery failed");
+    await settle();
+    expect(world.received).toEqual([]);
+    expect(world.cursor("20")).toBe("100");
+    expect(socket.closed).toBe(true);
+  },
+);
 
 for (const failure of [429, 500, 502, 503, 504, "network"] as const) {
-  test(`transient ${failure} backfill holds live messages and reconciles once when healthy`, async () => {
+  posix(`transient ${failure} backfill holds live messages and reconciles once when healthy`, async () => {
     const world = await liveWorld([ownerMessage("100")], options);
     const [socket] = world.sockets;
     if (!socket) throw new Error("gateway did not open");
@@ -132,7 +141,10 @@ for (const failure of [429, 500, 502, 503, 504, "network"] as const) {
       world.rest.state.unreachable.clear();
       world.advance(2_000);
       await settle();
-      expect(world.rest.requests).toHaveLength(requests + 1);
+      expect(world.rest.requests).toHaveLength(requests + 2);
+      expect(
+        world.rest.requests.slice(requests).map((request) => new URL(request.url).searchParams.get("limit")),
+      ).toEqual(["1", "100"]);
       expect(world.received).toEqual(["20:101", "20:102", "20:103"]);
       expect(world.cursor("20")).toBe("103");
       await world.dispatch(socket, ownerMessage("102"));
@@ -146,7 +158,7 @@ for (const failure of [429, 500, 502, 503, 504, "network"] as const) {
 }
 
 for (const fault of ["json", "page", "message", "oversized", "pagination", "channel"] as const) {
-  test(`local ${fault} fault stops the actual backfill queue without delivery or cursor advancement`, async () => {
+  posix(`local ${fault} fault stops the actual backfill queue without delivery or cursor advancement`, async () => {
     const world = await liveWorld([], { ...options, all: fault === "channel" }, { "20": "100" });
     const [socket] = world.sockets;
     if (!socket) throw new Error("gateway did not open");
@@ -155,7 +167,8 @@ for (const fault of ["json", "page", "message", "oversized", "pagination", "chan
       failure = error;
     });
     try {
-      const path = "/channels/20/messages";
+      const path = "/channels/20/messages?limit=100";
+      if (["json", "page", "message", "oversized"].includes(fault)) world.rest.state.messages.push(ownerMessage("101"));
       if (fault === "json") world.rest.state.responses.set(path, "{");
       if (fault === "page") world.rest.state.responses.set(path, "{}");
       if (fault === "message") world.rest.state.responses.set(path, '[{"id":"bad"}]');
@@ -173,6 +186,12 @@ for (const fault of ["json", "page", "message", "oversized", "pagination", "chan
       socket.ready(1);
       socket.receive({ op: 0, t: "MESSAGE_CREATE", s: 2, d: ownerMessage("300") });
       await settle();
+      if (["json", "page", "message", "oversized"].includes(fault)) {
+        const limits = world.rest.requests
+          .filter((request) => new URL(request.url).pathname.endsWith("/channels/20/messages"))
+          .map((request) => new URL(request.url).searchParams.get("limit"));
+        expect(limits.slice(-2)).toEqual(["1", "100"]);
+      }
       expect(failure).toBeInstanceOf(MessengerError);
       expect((failure as MessengerError).status).toBe(502);
       expect(world.received).toEqual([]);
@@ -192,7 +211,7 @@ for (const fault of ["json", "page", "message", "oversized", "pagination", "chan
 }
 
 for (const status of [400, 405]) {
-  test(`remote HTTP ${status} stops backfill instead of being retried as a network failure`, async () => {
+  posix(`remote HTTP ${status} stops backfill instead of being retried as a network failure`, async () => {
     const world = await liveWorld([ownerMessage("100")], options);
     const [socket] = world.sockets;
     if (!socket) throw new Error("gateway did not open");

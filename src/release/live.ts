@@ -1,6 +1,7 @@
 import { lstatSync, readdirSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { processIdentity, sameProcess } from "../update/deployment-process.ts";
+import { processExists } from "../update/proc.ts";
 import { type ConsumerPaths, readJson, realDirectory, regularFile } from "./files.ts";
 
 const object = (value: unknown): value is Record<string, unknown> =>
@@ -12,8 +13,7 @@ function live(value: unknown): number | undefined {
   if (pid <= 0) throw new Error("Dori runtime PID metadata is invalid");
   const observed = processIdentity(pid);
   if (!observed) {
-    if (lstatSync(`/proc/${pid}`, { throwIfNoEntry: false }))
-      throw new Error(`Dori PID ${pid} identity is unavailable; activation remains held`);
+    if (processExists(pid)) throw new Error(`Dori PID ${pid} identity is unavailable; activation remains held`);
     return undefined;
   }
   if (typeof value["startTicks"] === "string" && typeof value["bootId"] === "string") {

@@ -17,12 +17,10 @@ interface ProjectRun {
 }
 
 const runProject = async (root: string, project: string): Promise<ProjectRun> => {
-  // `bun run` puts node_modules/.bin on PATH but a direct `bun scripts/typecheck.ts` does not, so
-  // resolve tsc through the project's own bin directory either way.
-  const env = { ...process.env, PATH: `${join(root, "node_modules", ".bin")}:${process.env["PATH"] ?? ""}` };
-  const proc = Bun.spawn(["tsc", "--noEmit", "-p", join(root, project)], {
+  // Use the pinned compiler directly; `.bin` wrappers and PATH lookup differ by host.
+  const tsc = join(root, "node_modules", "typescript", "bin", "tsc");
+  const proc = Bun.spawn([process.execPath, tsc, "--noEmit", "-p", join(root, project)], {
     cwd: root,
-    env,
     stdout: "pipe",
     stderr: "pipe",
   });

@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { resolve } from "node:path";
+import { runLock, runPriority } from "./cli-lock.ts";
 import { runBacklog, runDuty, runLoop } from "./cli-loops.ts";
 import { status, up } from "./cli-up.ts";
 import { done, ready, report, startLane } from "./lanes.ts";
@@ -32,6 +33,8 @@ const COMMANDS = new Set([
   "loop",
   "backlog",
   "migrate",
+  "lock",
+  "priority",
 ]);
 
 /** Prints the line for a delivery that did not land now and returns the exit code: HELD 3, everything else 0. */
@@ -72,9 +75,11 @@ export async function main(argv: readonly string[], d: Deps = defaultDeps()): Pr
     case "start": {
       const cwd = one(a, "cwd");
       const workspace = one(a, "workspace");
+      const priority = one(a, "priority");
       const lane = await startLane(d, need(x, "lane key"), need(one(a, "brief"), "--brief"), {
         ...(cwd !== undefined ? { cwd } : {}),
         ...(workspace !== undefined ? { group: workspace } : {}),
+        ...(priority !== undefined ? { priority: Number(priority) } : {}),
       });
       console.log(`STARTED ${lane.key} pane=${refText(lane.sessionRef)} brief=${lane.brief}`);
       return 0;
@@ -143,6 +148,10 @@ export async function main(argv: readonly string[], d: Deps = defaultDeps()): Pr
       return 0;
     case "migrate":
       return runMigrate(d, a);
+    case "lock":
+      return runLock(d, a);
+    case "priority":
+      return runPriority(d, a);
     case "status":
       status(d);
       return 0;
@@ -158,14 +167,12 @@ if (import.meta.main) {
   try {
     code = await main(process.argv.slice(2), deps);
   } catch (e) {
-    if (
-      !(
-        e instanceof Refusal ||
-        e instanceof ConfigError ||
-        e instanceof RuntimeConfigError ||
-        e instanceof RuntimeChoiceError
-      )
-    )
+    if (!(
+      e instanceof Refusal ||
+      e instanceof ConfigError ||
+      e instanceof RuntimeConfigError ||
+      e instanceof RuntimeChoiceError
+    ))
       throw e;
     console.error(e.message);
     code = 2;

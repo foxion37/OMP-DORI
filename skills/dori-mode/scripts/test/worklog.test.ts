@@ -123,7 +123,10 @@ test("a hand-written worklog.md that appears between the ownership check and the
   }
 });
 
-test("concurrent CLI adds from separate processes lose no item, in the record or in worklog.md", async () => {
+// POSIX-only: replacing an open file atomically is a POSIX guarantee; Windows rename fails with EPERM.
+const posix = test.skipIf(process.platform === "win32");
+
+posix("concurrent CLI adds from separate processes lose no item, in the record or in worklog.md", async () => {
   // Given an empty state dir and 12 processes adding at once.
   const state = withState();
   try {

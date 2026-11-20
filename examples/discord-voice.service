@@ -1,0 +1,25 @@
+# Example only. Opt in by copying to ~/.config/systemd/user/ and enabling it yourself.
+# Voice is paid: a running service starts a billed session whenever the owner joins the channel.
+[Unit]
+Description=Dori Discord voice assistant (opt-in, paid)
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=%h/.dori/config.json
+ConditionPathExists=%h/.config/dori/voice.env
+
+[Service]
+Type=simple
+WorkingDirectory=%h
+# Adjust PATH so it finds bun and your `dori` command.
+Environment=PATH=%h/.dori/bin:%h/.bun/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+# Mode 0600: DORI_DISCORD_TOKEN, DORI_DISCORD_OWNER_ID and the key named by voice.apiKeyEnv.
+EnvironmentFile=%h/.config/dori/voice.env
+ExecStart=/usr/bin/env dori voice discord
+# No automatic restart: a failure holds voice instead of retrying paid calls.
+Restart=no
+# Allow the 15-second socket close and bounded 60-second summary request to finish.
+TimeoutStopSec=90
+KillMode=control-group
+
+[Install]
+WantedBy=default.target

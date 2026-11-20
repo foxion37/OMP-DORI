@@ -1,24 +1,25 @@
 /** dori send, presence, inbound, thread, react and transcribe: the messengers. */
 import { existsSync } from "node:fs";
 
-import { type Command, die, envSlackToken, every, slackAuth } from "./cli-context.ts";
-import { reactDiscord, sendDiscord, threadDiscord, withLocalAudio } from "./cli-discord-ops.ts";
+import { type Command, die, envSlackToken, every, messageText, slackAuth } from "./cli-context.ts";
+import { channelDiscord, reactDiscord, sendDiscord, threadDiscord } from "./cli-discord-ops.ts";
 import { discordClock, discordInboundCommand, openDiscordSocket, untilStopped } from "./cli-discord.ts";
+import { ChannelPurposeError } from "./messenger/discord-channels.ts";
 import { discordPresence } from "./messenger/discord-presence.ts";
-import { fetchHttp, MessengerError, UnsafeMessageError } from "./messenger/http.ts";
+import { fetchHttp, inboundPollRetryDelay, MessengerError, UnsafeMessageError } from "./messenger/http.ts";
 import { Slack } from "./messenger/slack.ts";
-import { pollSlackInbound } from "./messenger/slack-inbound.ts";
+import { formatSlackInbound, pollSlackInbound } from "./messenger/slack-inbound.ts";
 import { slackPresence } from "./messenger/slack-presence.ts";
 import { Telegram } from "./messenger/telegram.ts";
 import { envInt, fileTgInboundStore, telegramInboundLoop } from "./messenger/telegram-inbound.ts";
 import { formatTelegramInbound } from "./messenger/telegram-line.ts";
 import { inboundLagLog, lagOfLine, readLagTail, summarizeLag } from "./messenger/telegram-lag.ts";
-import { ThreadLedger } from "./messenger/thread-ledger.ts";
-import { transcribe, TranscriptionError } from "./messenger/voice.ts";
+import { slackScope, type SlackScope, ThreadLedger } from "./messenger/thread-ledger.ts";
+import { transcribe, TranscriptionError, withLocalAudio } from "./messenger/voice.ts";
 import { realClock, run } from "./run.ts";
 
 /** Messenger errors are one line, never a stack. */
-export const messengerErrors = [MessengerError, UnsafeMessageError, TranscriptionError] as const;
+export const messengerErrors = [MessengerError, UnsafeMessageError, TranscriptionError, ChannelPurposeError] as const;
 
 const NO_SLACK_TOKEN = "DORI_SLACK_TOKEN is not set (nor DORI_SLACK_TOKEN_FILE)";
 
@@ -26,12 +27,17 @@ const send: Command = async (cli) => {
   const { key, need, opt, values, config } = cli;
   const platform = key ?? die("send needs slack, telegram or discord");
   if (platform === "discord") return await sendDiscord(cli);
+  // A reply that silently became a plain post would land out of context.
+  if (values["reply"] !== undefined) die("--reply is supported for discord only");
   const to = need("to");
-  const text = need("text");
+  const text = await messageText(cli);
   const thread = opt("thread");
   const edit = opt("edit");
-  const token = (name: string) => process.env[name] ?? die(`${name} is not set`);
+  const token = (name: string) => process.env[name] || die(`${name} is not set`);
   if (platform === "slack") {
+    // An --edit given empty ("$UNSET") or not a message ts is refused before any request: it must never post anew.
+    if (values["edit"] !== undefined && !/^\d+\.\d+$/.test(edit ?? ""))
+      die("--edit must be a Slack message ts, such as 1700000000.000100");
     const slack = new Slack(
       fetchHttp,
       realClock,
@@ -81,7 +87,7 @@ const presence: Command = async ({ key }) => {
     console.log("PRESENCE_READY slack");
     await every(1, async () => console.log(`PRESENCE slack ${await p.hold()}`));
   } else if (key === "discord") {
-    const token = process.env["DORI_DISCORD_TOKEN"] ?? die("DORI_DISCORD_TOKEN is not set");
+    const token = process.env["DORI_DISCORD_TOKEN"] || die("DORI_DISCORD_TOKEN is not set");
     await untilStopped(discordPresence(openDiscordSocket, token, discordClock, (line) => console.log(line)));
   } else die("presence needs slack or discord");
 };
@@ -90,7 +96,7 @@ const telegramInbound = async (stateDir: string, minutes: number): Promise<void>
   const tg = new Telegram(
     fetchHttp,
     realClock,
-    process.env["DORI_TELEGRAM_TOKEN"] ?? die("DORI_TELEGRAM_TOKEN is not set"),
+    process.env["DORI_TELEGRAM_TOKEN"] || die("DORI_TELEGRAM_TOKEN is not set"),
   );
   const store = fileTgInboundStore(`${stateDir}/telegram-offset`);
   const num = (name: string): number => {
@@ -105,6 +111,25 @@ const telegramInbound = async (stateDir: string, minutes: number): Promise<void>
   let reactWarned = false;
   const groupChatId = process.env["DORI_TELEGRAM_GROUP_ID"] === undefined ? undefined : num("DORI_TELEGRAM_GROUP_ID");
   const topicId = process.env["DORI_TELEGRAM_TOPIC_ID"] === undefined ? undefined : num("DORI_TELEGRAM_TOPIC_ID");
+  // Authentication and transport readiness must finish before advertising or consuming inbound work.
+  const identity = await tg.call<{ id?: unknown; is_bot?: unknown }>("getMe", {}).catch(() => {
+    throw new MessengerError("Telegram inbound bot identity could not be verified; check token and API access", 0);
+  });
+  if (
+    !identity ||
+    identity.is_bot !== true ||
+    typeof identity.id !== "number" ||
+    !Number.isSafeInteger(identity.id) ||
+    identity.id <= 0
+  )
+    throw new MessengerError("Telegram getMe returned an invalid bot identity", 0);
+  const webhook = await tg.call<{ url?: unknown }>("getWebhookInfo", {}).catch(() => {
+    throw new MessengerError("Telegram inbound webhook status could not be verified; check API access", 0);
+  });
+  if (typeof webhook?.url !== "string")
+    throw new MessengerError("Telegram getWebhookInfo returned an invalid webhook status", 0);
+  if (webhook.url !== "")
+    throw new MessengerError("Telegram inbound refused an active webhook; use a polling bot (webhook unchanged)", 409);
   console.log(`INBOUND_READY telegram owner=${ownerId} group=${groupChatId ?? "-"} topic=${topicId ?? "-"}`);
   // The INBOUND line stays exactly as monitors parse it; receive lag goes to its own jsonl.
   const recordLag = inboundLagLog(`${stateDir}/telegram-lag.jsonl`, (m) => console.log(`WARN ${m}`.slice(0, 300)));
@@ -138,27 +163,47 @@ const telegramInbound = async (stateDir: string, minutes: number): Promise<void>
   );
 };
 
-const inbound: Command = async ({ key, loopMinutes, config, values }) => {
+const inbound: Command = async ({ key, loopMinutes, config, deps, values, strings }) => {
   const minutes = loopMinutes();
+  const context = values["context"] === true;
+  if (context && key !== "discord") die("--context is supported for discord only");
+  const wake = values["wake-lanes"] === true;
+  if (wake && key !== "discord") die("--wake-lanes is supported for discord only");
   if (key === "telegram") return await telegramInbound(config.stateDir, minutes);
   if (key === "discord")
-    return await discordInboundCommand(
-      config.stateDir,
-      values["gateway"] === true,
-      values["loop"] === undefined ? 3 / 60 : minutes,
-    );
+    return await discordInboundCommand(deps, {
+      gateway: values["gateway"] === true,
+      pollMinutes: values["loop"] === undefined ? 3 / 60 : minutes,
+      context,
+      wake,
+    });
   if (key !== "slack") die("inbound supports slack, telegram or discord");
+  let adoptScope: SlackScope | undefined;
+  if (values["adopt-legacy-threads"] !== undefined) {
+    const requested = strings("adopt-legacy-threads");
+    const parts = requested[0]?.split(":");
+    if (requested.length !== 1 || parts?.length !== 2)
+      return die("--adopt-legacy-threads needs exactly one WORKSPACE:ACCOUNT");
+    adoptScope = slackScope(parts[0], parts[1]);
+  }
   const auth = slackAuth(envSlackToken() ?? die(NO_SLACK_TOKEN));
   const ledger = new ThreadLedger(`${config.stateDir}/slack-threads.json`);
   const slack = new Slack(fetchHttp, realClock, auth, undefined, ledger);
-  const me = String((await slack.call("auth.test", {}))["user_id"] ?? die("auth.test returned no user_id"));
-  console.log("INBOUND_READY slack");
-  await every(minutes, async () => {
-    for (const i of await pollSlackInbound(slack, ledger, { selfUserId: me }))
-      console.log(
-        `INBOUND ${i.source} ${i.channel} ${i.threadTs ?? "-"} ${i.ts || "-"} ${i.user ?? "-"} ${JSON.stringify((i.text ?? "").slice(0, 200))}`,
-      );
-  });
+  const scope = await slack.identity();
+  if (adoptScope) {
+    if (adoptScope.teamId !== scope.teamId || adoptScope.userId !== scope.userId)
+      return die("legacy adoption does not match the authenticated Slack workspace/account");
+    console.log(`SLACK_THREADS_ADOPTED ${JSON.stringify(await ledger.adoptLegacy(scope))}`);
+    return;
+  }
+  ledger.assertScoped();
+  const qualifiedRoutes = values["qualified-routes"] === true;
+  console.log(`INBOUND_READY slack${qualifiedRoutes ? ` workspace=${scope.teamId} account=${scope.userId}` : ""}`);
+  await every(
+    minutes,
+    () => pollSlackInbound(slack, ledger, {}, (i) => console.log(formatSlackInbound(i, qualifiedRoutes))),
+    inboundPollRetryDelay,
+  );
 };
 
 export const messengerCommands: Readonly<Record<string, Command>> = {
@@ -167,6 +212,7 @@ export const messengerCommands: Readonly<Record<string, Command>> = {
   inbound,
   thread: async (cli) => (cli.key === "discord" ? await threadDiscord(cli) : die("thread supports discord")),
   react: async (cli) => (cli.key === "discord" ? await reactDiscord(cli) : die("react supports discord")),
+  channel: async (cli) => (cli.key === "discord" ? await channelDiscord(cli) : die("channel supports discord")),
   "inbound-lag": async ({ opt, config }) => {
     // Read back what the receiver recorded: without this the jsonl is a file nobody can query.
     const limitText = opt("limit");
@@ -197,6 +243,8 @@ export const messengerCommands: Readonly<Record<string, Command>> = {
   },
   transcribe: async ({ key, config }) => {
     const source = key ?? die("transcribe needs an audio file path");
-    console.log(await withLocalAudio(source, (file) => transcribe(run, config.hooks.transcribe, file)));
+    console.log(
+      await withLocalAudio(source, config.transcribeMaxBytes, (file) => transcribe(run, config.hooks.transcribe, file)),
+    );
   },
 };

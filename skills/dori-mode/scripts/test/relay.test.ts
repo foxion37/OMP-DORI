@@ -113,6 +113,10 @@ test("relay: handoff, successor split below the lane, registry updated, old sess
     "--env",
     `DORI_HOME=${home}/.dori`,
     "--env",
+    "DORI_DISCORD_TOKEN=",
+    "--env",
+    "DORI_TELEGRAM_TOKEN=",
+    "--env",
     "DORI_LANE_LABEL=rl",
   ]);
   const run = world.calls.find((c) => c[2] === "run");

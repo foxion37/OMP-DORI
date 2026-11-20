@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { deploymentConfig } from "./update-deploy-setup.ts";
 
-test("replacement children resolve private Bun and OMP before installed Dori while dropping ambient capabilities", async () => {
+// POSIX-only: the fixture links extensionless executables and shebang scripts onto PATH, which Windows cannot run.
+const it = test.skipIf(process.platform === "win32");
+
+it("replacement children resolve private Bun and OMP before installed Dori while dropping ambient capabilities", async () => {
   const root = mkdtempSync(join(tmpdir(), "dori-deploy-env-"));
   try {
     const config = deploymentConfig(root);

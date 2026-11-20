@@ -3,10 +3,11 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { shq } from "./delivery.ts";
 import { oneName } from "./fit.ts";
-import { agentCommand, harnessLaunchEnv, prompt, type Deps } from "./harness.ts";
+import { agentCommand, harnessLaneEnv, prompt, type Deps } from "./harness.ts";
 import { settled, tellLead, type SendResult } from "./inbox.ts";
 import { Refusal } from "./refusal.ts";
 import { runHook } from "./hooks.ts";
+import { checkPriority } from "./lock-queue.ts";
 import { applyEvidence, blockerOf, waitingSinceOf, waitingTarget } from "./progress.ts";
 import { refText } from "./refs.ts";
 import { groupId } from "./runtime/group.ts";
@@ -23,9 +24,10 @@ export async function startLane(
   d: Deps,
   key: string,
   briefFile: string,
-  opts: { cwd?: string; group?: string } = {},
+  opts: { cwd?: string; group?: string; priority?: number } = {},
 ): Promise<Lane> {
   if (!KEY_RE.test(key)) throw new Refusal(`lane key must match ${KEY_RE}`);
+  const priority = opts.priority === undefined ? undefined : checkPriority(opts.priority);
   const reserved = reservedKey(key);
   if (reserved) throw new Refusal(reserved);
   const existing = d.store.lane(key);
@@ -47,7 +49,7 @@ export async function startLane(
   const kickoff = `Read your brief at ${briefPath} and execute it. Your lane key is ${key}.`;
   const ref = await openSession(
     rt,
-    { name: key, role: "lane", container: "tab", cwd, env: { ...harnessLaunchEnv(d), DORI_LANE: key }, group },
+    { name: key, role: "lane", container: "tab", cwd, env: harnessLaneEnv(d, key), group },
     `${agentCommand(d, "lane")} ${shq(kickoff)}`,
   );
 
@@ -65,6 +67,7 @@ export async function startLane(
     progressAt: now,
     noticeId: randomUUID(),
     progressEpoch: 0,
+    ...(priority !== undefined ? { priority } : {}),
     nudges: 0,
     log: [{ at: now, kind: "start", text: briefFile }],
   };
@@ -79,6 +82,14 @@ function openLane(d: Deps, key: string): Lane {
   const lane = d.store.lane(key);
   if (!lane) throw new Refusal(`no lane ${key}`);
   if (lane.status === "done" || lane.status === "lost") throw new Refusal(`lane ${key} is ${lane.status}`);
+  return lane;
+}
+
+/** Sets an open lane's priority (1 first, 9 last); the next lock it waits for queues it by that. */
+export function setPriority(d: Deps, key: string, priority: number): Lane {
+  const lane = openLane(d, key);
+  lane.priority = checkPriority(priority);
+  d.store.saveLane(lane);
   return lane;
 }
 

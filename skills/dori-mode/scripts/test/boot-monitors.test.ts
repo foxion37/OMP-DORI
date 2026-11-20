@@ -228,3 +228,19 @@ test("malformed OMP desired metadata is reported without hiding valid specs or r
   expect(read.errors).toEqual([bad]);
   expect(monitorCleanup([lane("closed", "closed")], read.manifests).map((entry) => entry.monitorId)).toEqual(["good"]);
 });
+
+test("a closed lane named after a dori program, command or platform word does not claim a shared dori watch", () => {
+  const lanes = ["dori", "inbound", "slack", "freshness", "tail"].map((key) => lane(key, "closed"));
+  const result = monitorCleanup(lanes, [
+    manifest([
+      { argv: ["dori", "inbound", "slack", "--loop", "1"], monitorId: "mon_INBOUND" },
+      { argv: ["/home/user/.dori/bin/dori", "freshness", "--loop", "1"], monitorId: "mon_FRESHNESS" },
+      { command: "dori inbound slack --loop 1", monitorId: "mon_COMMAND" },
+      { command: 'bash -c "cd /srv && exec dori inbound slack --loop 1"', monitorId: "mon_WRAPPED" },
+      { argv: ["bun", "/opt/dori/skills/dori-mode/scripts/src/cli.ts", "freshness"], monitorId: "mon_SOURCE" },
+      { command: "tail -F /logs/out.log", monitorId: "mon_TAIL" },
+      { argv: ["dori", "report-watch", "slack"], monitorId: "mon_LANE" },
+    ]),
+  ]);
+  expect(result.map((m) => [m.monitorId, m.match])).toEqual([["mon_LANE", ["slack:argv:key"]]]);
+});

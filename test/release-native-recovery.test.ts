@@ -7,10 +7,13 @@ import { activateRelease, loadInstalled, recoverInstalled, releasePath } from ".
 import { processIdentity } from "../src/update/deployment-process.ts";
 import { activationFixture, blockStatePublication, interruptedActivation } from "./release-native-recovery-setup.ts";
 
+// POSIX-only: release installation refuses non-private directories by POSIX mode bits.
+const posix = test.skipIf(process.platform === "win32");
+
 for (const legacy of [false, true]) {
   const transition = legacy ? "bound-to-legacy" : "bound-to-bound";
 
-  test(`${transition} install and rollback select the matching owned native command and preserve config`, async () => {
+  posix(`${transition} install and rollback select the matching owned native command and preserve config`, async () => {
     const { f, before, after } = await activationFixture(legacy);
     const omp = join(f.paths.dori, "bin/omp");
     const currentNative = join(releasePath(f.paths, before.current), "scripts/consumer/omp");
@@ -27,7 +30,7 @@ for (const legacy of [false, true]) {
     expect(pointer(omp)).toBe(currentNative);
   });
 
-  test(`${transition} preparation failure before journaling preserves the active native command`, async () => {
+  posix(`${transition} preparation failure before journaling preserves the active native command`, async () => {
     const { f, before } = await activationFixture(legacy);
     const source = pointer(f.paths.live);
     const omp = join(f.paths.dori, "bin/omp");
@@ -51,7 +54,7 @@ for (const legacy of [false, true]) {
     expect(recoverInstalled(f.paths)).toEqual(before);
   });
 
-  test(`${transition} state publication failure rolls back both pointers before recovery`, async () => {
+  posix(`${transition} state publication failure rolls back both pointers before recovery`, async () => {
     const { f, before, after } = await activationFixture(legacy);
     const source = releasePath(f.paths, before.current);
     const target = releasePath(f.paths, after.current);
@@ -69,87 +72,96 @@ for (const legacy of [false, true]) {
     expect(existsSync(f.paths.journal)).toBe(false);
   });
 
-  test(`${transition} actual activation interruptions recover native, source and state at every publication boundary`, async () => {
-    const { f, before, after } = await activationFixture(legacy);
-    const omp = join(f.paths.dori, "bin/omp");
-    const source = releasePath(f.paths, before.current);
-    const target = releasePath(f.paths, after.current);
-    const nativeBefore = join(source, "scripts/consumer/omp");
-    const nativeAfter = legacy ? undefined : join(target, "scripts/consumer/omp");
-    for (const phase of ["journal", "native", "source", "state"]) {
-      if (pointer(f.paths.live) === target) activateRelease(f.paths, after, before);
-      const result = Bun.spawnSync(
-        [process.execPath, "-e", interruptedActivation, JSON.stringify({ home: f.paths.home, before, after, phase })],
-        { env: { HOME: f.paths.home, PATH: process.env["PATH"] }, timeout: 10_000 },
-      );
-      expect(result.exitCode).toBe(73);
-      const switched = phase === "source" || phase === "state";
-      const recovered = switched ? after : before;
-      expect(pointer(f.paths.live)).toBe(switched ? target : source);
-      expect(pointer(omp)).toBe(phase === "journal" ? nativeBefore : nativeAfter);
-      expect(loadInstalled(f.paths)).toEqual(phase === "state" ? after : before);
-      expect(JSON.parse(readFileSync(f.paths.journal, "utf8"))).toEqual({ version: 1, before, after });
-      expect(recoverInstalled(f.paths)).toEqual(recovered);
-      expect(pointer(omp)).toBe(switched ? nativeAfter : nativeBefore);
-      expect(loadInstalled(f.paths)).toEqual(recovered);
-      expect(existsSync(f.paths.journal)).toBe(false);
-    }
-  });
+  posix(
+    `${transition} actual activation interruptions recover native, source and state at every publication boundary`,
+    async () => {
+      const { f, before, after } = await activationFixture(legacy);
+      const omp = join(f.paths.dori, "bin/omp");
+      const source = releasePath(f.paths, before.current);
+      const target = releasePath(f.paths, after.current);
+      const nativeBefore = join(source, "scripts/consumer/omp");
+      const nativeAfter = legacy ? undefined : join(target, "scripts/consumer/omp");
+      for (const phase of ["journal", "native", "source", "state"]) {
+        if (pointer(f.paths.live) === target) activateRelease(f.paths, after, before);
+        const result = Bun.spawnSync(
+          [process.execPath, "-e", interruptedActivation, JSON.stringify({ home: f.paths.home, before, after, phase })],
+          { env: { HOME: f.paths.home, PATH: process.env["PATH"] }, timeout: 10_000 },
+        );
+        expect(result.exitCode).toBe(73);
+        const switched = phase === "source" || phase === "state";
+        const recovered = switched ? after : before;
+        expect(pointer(f.paths.live)).toBe(switched ? target : source);
+        expect(pointer(omp)).toBe(phase === "journal" ? nativeBefore : nativeAfter);
+        expect(loadInstalled(f.paths)).toEqual(phase === "state" ? after : before);
+        expect(JSON.parse(readFileSync(f.paths.journal, "utf8"))).toEqual({ version: 1, before, after });
+        expect(recoverInstalled(f.paths)).toEqual(recovered);
+        expect(pointer(omp)).toBe(switched ? nativeAfter : nativeBefore);
+        expect(loadInstalled(f.paths)).toEqual(recovered);
+        expect(existsSync(f.paths.journal)).toBe(false);
+      }
+    },
+  );
 }
 
-test("first activation publication failure restores the absence of both owned pointers and installed state", async () => {
-  const { f, before } = await activationFixture(false);
-  const source = releasePath(f.paths, before.current);
-  const omp = join(f.paths.dori, "bin/omp");
-  replacePointer(f.paths.live, source, undefined);
-  replacePointer(omp, join(source, "scripts/consumer/omp"), undefined);
-  unlinkSync(f.paths.state);
-  const fault = blockStatePublication(f.paths, f.root, source);
-  expect(() => activateRelease(fault.paths, undefined, before)).toThrow("Expected a real file");
-  expect(fault.observed).toEqual([join(source, "scripts/consumer/omp")]);
-  expect(pointer(f.paths.live)).toBeUndefined();
-  expect(pointer(omp)).toBeUndefined();
-  expect(existsSync(f.paths.state)).toBe(false);
-  expect(recoverInstalled(f.paths)).toBeUndefined();
-  expect(existsSync(f.paths.journal)).toBe(false);
-});
-
-test("status, reinstall and rollback hold missing or changed native pointers without replacing user edits", async () => {
-  const { f, before, after, bundle } = await activationFixture(false);
-  const omp = join(f.paths.dori, "bin/omp");
-  const native = pointer(omp);
-  const state = readFileSync(f.paths.state);
-  const source = pointer(f.paths.live);
-  const cli = resolve(import.meta.dir, "../skills/dori-mode/scripts/src/cli.ts");
-  for (const changed of [
-    undefined,
-    join(releasePath(f.paths, after.current), "scripts/consumer/omp"),
-    "/owner/custom-omp",
-  ]) {
-    replacePointer(omp, native, changed);
-    expect(() => recoverInstalled(f.paths)).toThrow("native OMP pointer");
-    await expect(installBundle(f.paths, bundle, before)).rejects.toThrow("native OMP");
-    await expect(rollbackRelease(f.paths, before)).rejects.toThrow("native OMP");
-    const result = Bun.spawnSync([process.execPath, cli, "update", "status"], {
-      env: { HOME: f.paths.home, PATH: process.env["PATH"], DORI_TELEMETRY: "0", DO_NOT_TRACK: "1" },
-      timeout: 10_000,
-    });
-    expect(result.exitCode).toBe(2);
-    expect(result.stderr.toString()).toContain("native OMP pointer");
-    expect(pointer(f.paths.live)).toBe(source);
-    expect(pointer(omp)).toBe(changed);
-    expect(readFileSync(f.paths.state)).toEqual(state);
+posix(
+  "first activation publication failure restores the absence of both owned pointers and installed state",
+  async () => {
+    const { f, before } = await activationFixture(false);
+    const source = releasePath(f.paths, before.current);
+    const omp = join(f.paths.dori, "bin/omp");
+    replacePointer(f.paths.live, source, undefined);
+    replacePointer(omp, join(source, "scripts/consumer/omp"), undefined);
+    unlinkSync(f.paths.state);
+    const fault = blockStatePublication(f.paths, f.root, source);
+    expect(() => activateRelease(fault.paths, undefined, before)).toThrow("Expected a real file");
+    expect(fault.observed).toEqual([join(source, "scripts/consumer/omp")]);
+    expect(pointer(f.paths.live)).toBeUndefined();
+    expect(pointer(omp)).toBeUndefined();
+    expect(existsSync(f.paths.state)).toBe(false);
+    expect(recoverInstalled(f.paths)).toBeUndefined();
     expect(existsSync(f.paths.journal)).toBe(false);
-    replacePointer(omp, changed, native);
-  }
-  replacePointer(omp, native, undefined);
-  writeFileSync(omp, "owner native command\n", { mode: 0o700 });
-  expect(() => recoverInstalled(f.paths)).toThrow("Unmanaged source/path");
-  expect(readFileSync(omp, "utf8")).toBe("owner native command\n");
-  expect(readFileSync(f.paths.state)).toEqual(state);
-});
+  },
+);
 
-test("journal recovery preserves conflicting native edits and unrelated installed records", async () => {
+posix(
+  "status, reinstall and rollback hold missing or changed native pointers without replacing user edits",
+  async () => {
+    const { f, before, after, bundle } = await activationFixture(false);
+    const omp = join(f.paths.dori, "bin/omp");
+    const native = pointer(omp);
+    const state = readFileSync(f.paths.state);
+    const source = pointer(f.paths.live);
+    const cli = resolve(import.meta.dir, "../skills/dori-mode/scripts/src/cli.ts");
+    for (const changed of [
+      undefined,
+      join(releasePath(f.paths, after.current), "scripts/consumer/omp"),
+      "/owner/custom-omp",
+    ]) {
+      replacePointer(omp, native, changed);
+      expect(() => recoverInstalled(f.paths)).toThrow("native OMP pointer");
+      await expect(installBundle(f.paths, bundle, before)).rejects.toThrow("native OMP");
+      await expect(rollbackRelease(f.paths, before)).rejects.toThrow("native OMP");
+      const result = Bun.spawnSync([process.execPath, cli, "update", "status"], {
+        env: { HOME: f.paths.home, PATH: process.env["PATH"], DORI_TELEMETRY: "0", DO_NOT_TRACK: "1" },
+        timeout: 10_000,
+      });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr.toString()).toContain("native OMP pointer");
+      expect(pointer(f.paths.live)).toBe(source);
+      expect(pointer(omp)).toBe(changed);
+      expect(readFileSync(f.paths.state)).toEqual(state);
+      expect(existsSync(f.paths.journal)).toBe(false);
+      replacePointer(omp, changed, native);
+    }
+    replacePointer(omp, native, undefined);
+    writeFileSync(omp, "owner native command\n", { mode: 0o700 });
+    expect(() => recoverInstalled(f.paths)).toThrow("Unmanaged source/path");
+    expect(readFileSync(omp, "utf8")).toBe("owner native command\n");
+    expect(readFileSync(f.paths.state)).toEqual(state);
+  },
+);
+
+posix("journal recovery preserves conflicting native edits and unrelated installed records", async () => {
   const { f, before, after } = await activationFixture(false);
   const omp = join(f.paths.dori, "bin/omp");
   const native = pointer(omp);

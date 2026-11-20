@@ -85,9 +85,21 @@ export async function start(cli: HerdrCli, paneId: string, command: string): Pro
 /** `pane list`, keeping only the panes of one workspace when a group is given. */
 export async function list(cli: HerdrCli, group: string | undefined): Promise<readonly SessionInfo[]> {
   const panes = (await cli.call(["pane", "list"]))["panes"];
-  if (!Array.isArray(panes)) return [];
+  if (
+    !Array.isArray(panes) ||
+    panes.some(
+      (p) =>
+        p === null ||
+        typeof p !== "object" ||
+        typeof p["pane_id"] !== "string" ||
+        p["pane_id"] === "" ||
+        // A tab need not belong to any workspace; the group filter excludes it below.
+        (p["workspace_id"] != null && typeof p["workspace_id"] !== "string"),
+    )
+  )
+    throw new Error("herdr did not return a valid pane list");
   return (panes as Record<string, unknown>[])
-    .filter((p) => str(p["pane_id"]) !== "" && (group === undefined || str(p["workspace_id"]) === group))
+    .filter((p) => group === undefined || str(p["workspace_id"]) === group)
     .map((p): SessionInfo => {
       const status = paneStatus(p);
       const [title, cwd] = [str(p["title"]), str(p["cwd"])];

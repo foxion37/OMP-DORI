@@ -123,6 +123,10 @@ test("an agent that has not reported is waited for until startupWaitSeconds; a l
     "STARTUP_ERROR fail-later w:p9: No API key",
   );
   expect(waits).toBe(2);
+  // A goal-marker opt-out shows no goal, so a working agent's first failure phrase still fails the start.
+  expect(await run(["working"], "No API key found\n❯ ", "optout-working", { goalMarker: "" })).toBe(
+    "STARTUP_ERROR optout-working w:p9: No API key",
+  );
 });
 
 test("on hc, a program that has not reported a status yet is waited for, and one that never does is unconfirmed", async () => {

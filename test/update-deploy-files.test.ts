@@ -9,6 +9,8 @@ import { fixture } from "./update-deploy-setup.ts";
 
 // The kernels whose process identity deployment can bind.
 const posix = test.skipIf(process.platform !== "linux" && process.platform !== "darwin");
+// POSIX-only: the switch preserves a symlink inode with link(2), which Windows cannot do.
+const it = test.skipIf(process.platform === "win32");
 
 test("legacy source survives its inode-preserving rename, stable switch and exact rollback", () => {
   const { root, config } = fixture();
@@ -109,7 +111,7 @@ posix("monitor cleanup never signals a reused PID receipt", async () => {
   }
 });
 
-test("stable source switches remain continuously readable to a concurrent consumer", async () => {
+it("stable source switches remain continuously readable to a concurrent consumer", async () => {
   const { root, config } = fixture();
   const first = join(root, "first");
   const second = join(root, "second");

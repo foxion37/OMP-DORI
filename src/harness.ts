@@ -2,13 +2,19 @@ import { accessSync, existsSync, readFileSync } from "node:fs";
 import { cpus, loadavg } from "node:os";
 import { join, resolve } from "node:path";
 import { shq } from "./delivery.ts";
-import { memFreePct } from "./host.ts";
-import { doriLaunchEnv, processOmpCommand, resolveConsumerOmpCommand } from "./release/runtime.ts";
+import { platform } from "./platform/index.ts";
+import {
+  doriLaunchEnv,
+  laneMessengerOverrides,
+  processOmpCommand,
+  resolveConsumerOmpCommand,
+} from "./release/runtime.ts";
 import { type Exec, spawnExec } from "./runtime/exec.ts";
 import { HcRuntime } from "./runtime/hc/index.ts";
 import { HerdrRuntime } from "./runtime/herdr/index.ts";
 import { Runtimes } from "./runtime/registry.ts";
 import { ompStateDir } from "./runtime/omp.ts";
+import { isOmpArgv } from "./runtime/omp-argv.ts";
 import { type RuntimeChoice, readRuntimeChoice } from "./runtime/select.ts";
 import { Store } from "./store.ts";
 import { type HostLoad, KEY_RE, type Role, reservedKey } from "./store-types.ts";
@@ -59,7 +65,11 @@ export const defaultDeps = (): Deps => {
     get agentCmd() {
       const selected = processOmpCommand();
       if (selected) return selected.map(shq).join(" ");
-      if (process.env["DORI_AGENT_CMD"] !== undefined) return process.env["DORI_AGENT_CMD"];
+      if (process.env["DORI_AGENT_CMD"] !== undefined) {
+        const legacy = [process.env["DORI_AGENT_CMD"]] as const;
+        const command = resolveConsumerOmpCommand(legacy);
+        return command === legacy ? legacy[0] : command.map(shq).join(" ");
+      }
       const command = resolveConsumerOmpCommand(["omp"]);
       return command[0] !== "omp"
         ? command.map(shq).join(" ")
@@ -68,27 +78,16 @@ export const defaultDeps = (): Deps => {
           : "omp";
     },
     doriCmd: process.env["DORI_CMD"] ?? `DORI_HOME=${shq(store.root)} bun ${shq(CLI)}`,
-    host: () => ({ load1: loadavg()[0] ?? 0, cores: cpus().length, memFreePct: memFreePct() }),
+    host: () => ({ load1: loadavg()[0] ?? 0, cores: cpus().length, memFreePct: platform.memFreePct() }),
     usage: new Telemetry(store.root),
   };
 };
 
 /** Recognize an OMP executable through quoted paths, environment assignments and the env utility. */
 export function isOmpAgentCommand(command: string): boolean {
-  const words = (command.match(/(?:[^\s"'\\]|\\.|"[^"]*"|'[^']*')+/g) ?? []).map((word) =>
-    word.replace(/^(['"])(.*)\1$/, "$2"),
+  return isOmpArgv(
+    (command.match(/(?:[^\s"'\\]|\\.|"[^"]*"|'[^']*')+/g) ?? []).map((word) => word.replace(/^(['"])(.*)\1$/, "$2")),
   );
-  let at = 0;
-  while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[at] ?? "")) at++;
-  if (words[at]?.split("/").at(-1) === "env") at++;
-  while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[at] ?? "")) at++;
-  const name = words[at]?.split("/").at(-1);
-  if (name === "omp") return true;
-  if (name !== "bun" && name !== "node") return false;
-  at++;
-  while (words[at]?.startsWith("-")) at++;
-  const script = words[at] ?? "";
-  return script.split("/").at(-1) === "omp" || /@oh-my-pi\/pi-coding-agent\/dist\/cli\.js$/.test(script);
 }
 
 /** Give OMP the extension role while preserving configured arguments and explicit role/command overrides. */
@@ -104,6 +103,10 @@ export function harnessLaunchEnv(d: Deps): Record<string, string> {
     doriHome: d.store.root,
     stateDir: ompStateDir({ ...process.env, DORI_CONFIG: configFile }),
   });
+}
+
+export function harnessLaneEnv(d: Deps, key: string): Record<string, string> {
+  return { ...harnessLaunchEnv(d), ...laneMessengerOverrides, DORI_LANE: key };
 }
 
 /** `DORI_PROMPTS_DIR` when set, else the repo's `prompts/`. */

@@ -126,8 +126,13 @@ describe("monitor tool", () => {
     await run(dori, { op: "start", name: "w", argv: ["sleep", "30"], filter: "." });
     const pid = Number(/pid (\d+)/.exec((await run(dori, { op: "list" }))?.content[0]?.text ?? "")?.[1]);
     dori.session = { id: "plain", entries: [] };
-    await dori.emit("session_switch", { type: "session_switch", reason: "new" });
+    await dori.emit("session_switch", { type: "session_switch", reason: "resume" });
     await until(() => !alive(pid));
+    expect(dori.session.entries).toEqual([]);
+    expect(dori.active).not.toContain("monitor");
+    await expect(run(dori, { op: "list" })).rejects.toThrow(
+      "monitor works only in the Dori session (omp --dori-role dori)",
+    );
   });
 
   test("monitors stop when /tree moves the Dori session to a point before its role was recorded", async () => {
@@ -137,6 +142,57 @@ describe("monitor tool", () => {
     await dori.emit("session_tree", { type: "session_tree", newLeafId: null });
     await until(() => !alive(pid));
     expect(dori.active).not.toContain("monitor");
+  });
+
+  test("hides explicitly selected monitor tools from native children on every session transition", async () => {
+    const ordinary = ["read", "edit", "bash"];
+    for (const [id, parentId] of [
+      ["DoriChild", "Main"],
+      ["DoriGrandchild", "DoriChild"],
+      ["UnboundChild", "UnknownMain"],
+    ] as const) {
+      const child = await load({
+        session: { id, entries: [] },
+        flags: { "dori-role": "dori" },
+        agent: { kind: "sub", id, parentId },
+        active: [...ordinary, "monitor"],
+      });
+      for (const event of ["session_start", "session_switch", "session_branch", "session_tree"]) {
+        // Native explicit toolNames bypasses defaultInactive before the extension receives this event.
+        await child.api.setActiveTools([...ordinary, "monitor"]);
+        await child.emit(event);
+        expect(child.active).toEqual(ordinary);
+        expect(child.session.entries).toEqual([]);
+      }
+    }
+    expect(dori.active).toEqual(["read", "bash", "monitor"]);
+  });
+
+  test("rejects direct monitor calls from a native child that inherited the Dori role", async () => {
+    const child = await load({
+      session: { id: "direct-child", entries: [] },
+      agent: { kind: "sub", id: "DirectChild", parentId: "Main" },
+    });
+    await child.emit("session_start");
+    for (const op of ["list", "start", "stop"]) {
+      const params = { op, name: "forbidden", argv: [process.execPath, "-e", ""], filter: ".*" };
+      // The Dori-owned definition has a live main session, so this also exercises the native kind guard itself.
+      for (const owner of [child, dori])
+        await expect(
+          owner.tools.get("monitor")?.execute("call", params, undefined, undefined, child.ctx()),
+        ).rejects.toThrow("monitor works only in the Dori session (omp --dori-role dori)");
+    }
+  });
+
+  test("preserves ordinary tools and monitor access in the Dori main agent", async () => {
+    const main = await load({
+      session: { id: "main-tools", entries: [] },
+      flags: { "dori-role": "dori" },
+      active: ["read", "edit", "bash"],
+    });
+    await main.emit("session_start");
+    expect(main.active).toEqual(["read", "edit", "bash", "monitor"]);
+    expect((await run(main, { op: "list" }))?.content[0]?.text).toBe("no monitors running");
   });
 
   test("refuses to run outside the Dori session", async () => {

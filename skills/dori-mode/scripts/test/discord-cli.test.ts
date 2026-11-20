@@ -34,6 +34,11 @@ test("Discord sends retain ID delivery and edit the selected thread, with option
         { content: "v2" },
       ]);
     }
+    // An edit flag given empty or not an id never becomes a new message.
+    for (const edit of [[""], [" "], [], ["last"]]) {
+      const r = await f.invoke([...thread, "--edit", ...edit]);
+      expect([r.code, r.out, r.err, r.keys]).toEqual([1, "", "--edit must be a positive decimal Discord ID", []]);
+    }
     const edited = await f.invoke(["send", "discord", "--to", ids.text, "--edit", ids.message, "--text", "old path"]);
     expect([edited.code, edited.out, edited.keys.at(-1)]).toEqual([
       0,

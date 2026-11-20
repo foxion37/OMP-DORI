@@ -1,6 +1,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { constants } from "node:os";
 import { Readable } from "node:stream";
+import { platform } from "../platform/index.ts";
 import { type OutputProcess, recordCommandOutput } from "./command-output.ts";
 import { UpdateDetectionUnavailable, UpdateInterrupted } from "./config.ts";
 import type { CommandReceipt } from "./types.ts";
@@ -55,7 +56,8 @@ export async function runDetectorProcess(
   signal?: AbortSignal,
 ): Promise<void> {
   if (signal?.aborted) throw new UpdateInterrupted("detector interrupted before launch");
-  if (process.platform !== "linux" && process.platform !== "darwin") {
+  // Only a host whose adapter reads real process facts can prove the detached group: linux and darwin today.
+  if (!platform.supportsProcessReaders) {
     throw new UpdateInterrupted("detector process-group proof requires Linux or macOS");
   }
   const child = spawn(argv[0]!, argv.slice(1), { cwd, env, detached: true, stdio: ["ignore", "pipe", "pipe"] });

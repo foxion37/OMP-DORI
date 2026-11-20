@@ -29,11 +29,27 @@ const sameAgent = (into: AgentIdentity, seen: Probe): boolean =>
   (into.pid === undefined || into.pid === seen.pid) &&
   (into.sessionId === undefined || into.sessionId === seen.sessionId);
 
+function deliveryHold(
+  seen: Probe,
+  expectedSessionId: string | undefined,
+  strictIdle: boolean,
+): DeliverOutcome | undefined {
+  if (seen.status === "gone" || seen.status === "shell" || seen.shellInFront) return NO_AGENT;
+  if (seen.approvalPending) return { kind: "not-ready", status: "blocked" };
+  if (
+    seen.status === "unknown" ||
+    (expectedSessionId !== undefined && (seen.pid === undefined || seen.sessionId !== expectedSessionId))
+  )
+    return { kind: "not-ready", status: "unknown" };
+  if (strictIdle && seen.status !== "idle") return { kind: "not-ready", status: seen.status };
+}
+
 /**
  * Delivers one message to the agent in a pane as a single argv element: nothing in it is ever expanded by a shell.
  * `no-agent`, having typed nothing: the pane has no running agent, and text typed into a bare shell runs as a command
  * (#66). `ambiguous`: the message may already be in the pane (#89) and must not be sent again as is. `typed`: the text
  * is in the agent's input and only the Enter that submits it is missing (#108 identity in `into`).
+ * Idle-only delivery checks each probe before writing to the pane; herdr does not compare the status atomically.
  */
 export async function deliver(
   cli: HerdrCli,
@@ -41,21 +57,21 @@ export async function deliver(
   text: string,
   sleep: Sleep,
   stateDir?: string,
+  expectedSessionId?: string,
+  strictIdle = false,
 ): Promise<DeliverOutcome> {
-  // Probe first (#66): a gone pane or a shell in front gets nothing, whatever herdr's status word says. herdr types
-  // whatever the status is (the caller decided), so the #62 screen read is skipped here.
+  // Probe first (#66): a gone pane or a shell in front gets nothing. Only idle-only delivery needs the #62 screen read.
   // A pane get that fails for any reason but not-found (a server that is down, a timeout) types nothing: the status is
   // unknown, so the caller keeps the message queued instead of seeing herdr's raw error.
   let first: Awaited<ReturnType<typeof probe>>;
   try {
-    first = await probe(cli, paneId, false, HOLDING, stateDir);
+    first = await probe(cli, paneId, strictIdle, HOLDING, stateDir);
   } catch (e) {
     process.stderr.write(`dori: herdr pane get failed for ${paneId} (${reasonOf(e)}); ${HOLDING}\n`);
     return { kind: "not-ready", status: "unknown" };
   }
-  if (first.status === "gone" || first.status === "shell" || first.shellInFront) return NO_AGENT;
-  if (first.status === "unknown" || first.approvalPending)
-    return { kind: "not-ready", status: first.approvalPending ? "blocked" : "unknown" };
+  const promptHold = deliveryHold(first, expectedSessionId, strictIdle);
+  if (promptHold) return promptHold;
   try {
     await cli.call(["agent", "prompt", paneId, text]);
     return { kind: "delivered" };
@@ -68,10 +84,9 @@ export async function deliver(
       return ambiguous("agent prompt", e);
     // agent_not_ready also covers an agent that exited and left a shell in front: typing would run the text there.
     // Re-read right before typing (#66): only a pane that still has an agent gets keystrokes.
-    const ready = await probe(cli, paneId, false, HOLDING, stateDir);
-    if (ready.status === "shell" || ready.status === "gone" || ready.shellInFront) return NO_AGENT;
-    if (ready.status === "unknown" || ready.approvalPending)
-      return { kind: "not-ready", status: ready.approvalPending ? "blocked" : "unknown" };
+    const ready = await probe(cli, paneId, strictIdle, HOLDING, stateDir);
+    const pasteHold = deliveryHold(ready, expectedSessionId, strictIdle);
+    if (pasteHold) return pasteHold;
     // A multi-line paste swallows the Enter that follows it, so type the message as one line.
     // A failed send-text may still have typed some or all of it: ambiguous as well.
     try {
@@ -81,7 +96,7 @@ export async function deliver(
     }
     await sleep(PASTE_SETTLE_MS);
     const into = identity(ready);
-    const missed = await pressEnter(cli, paneId, into, stateDir);
+    const missed = await pressEnter(cli, paneId, into, stateDir, strictIdle);
     return missed ? { kind: "typed", into, failure: missed.failure } : { kind: "delivered" };
   }
 }
@@ -116,21 +131,19 @@ async function pressEnter(
   paneId: string,
   into: AgentIdentity,
   stateDir?: string,
+  strictIdle = false,
 ): Promise<{ readonly failure: unknown } | undefined> {
   for (let attempt = 1; ; attempt++) {
     try {
-      if (into.pid !== undefined || into.sessionId !== undefined) {
-        const seen = await probe(cli, paneId, false, HOLDING, stateDir);
-        if (
-          seen.shellInFront ||
-          seen.status === "gone" ||
-          seen.status === "shell" ||
-          seen.status === "unknown" ||
-          seen.approvalPending ||
-          !sameAgent(into, seen)
-        ) {
+      if (strictIdle || into.pid !== undefined || into.sessionId !== undefined) {
+        const seen = await probe(cli, paneId, strictIdle, HOLDING, stateDir);
+        if (deliveryHold(seen, undefined, strictIdle) || !sameAgent(into, seen)) {
           return {
-            failure: new Error("OMP input changed or is awaiting approval; typed text kept for reconciliation"),
+            failure: new Error(
+              strictIdle
+                ? "Agent input changed or is no longer idle; typed text kept for reconciliation"
+                : "OMP input changed or is awaiting approval; typed text kept for reconciliation",
+            ),
           };
         }
       }

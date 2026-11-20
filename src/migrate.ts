@@ -1,7 +1,15 @@
 import { readFileSync } from "node:fs";
 import { need, one, USAGE, type Args } from "./cli-args.ts";
 import { shq } from "./delivery.ts";
-import { agentCommand, harnessLaunchEnv, isOmpAgentCommand, prompt, promptFile, type Deps } from "./harness.ts";
+import {
+  agentCommand,
+  harnessLaneEnv,
+  harnessLaunchEnv,
+  isOmpAgentCommand,
+  prompt,
+  promptFile,
+  type Deps,
+} from "./harness.ts";
 import { Refusal } from "./refusal.ts";
 import { askCheckpoint, capture, type MigrateOpts, type Subject } from "./migrate-capture.ts";
 import { swapAgent, swapLoop } from "./migrate-swap.ts";
@@ -42,7 +50,7 @@ function laneSubject(d: Deps, key: string): Subject {
       role: "lane",
       container: "tab",
       cwd: lane.cwd,
-      env: { ...harnessLaunchEnv(d), DORI_LANE: key },
+      env: harnessLaneEnv(d, key),
       ...(group === undefined ? {} : { group }),
     }),
     command: (brief) => `${agentCommand(d, "lane")} ${shq(kickoff(brief))}`,

@@ -14,6 +14,9 @@ export type PaneState = {
   readonly role: DoriRole;
   readonly sessionId: string;
   readonly sessionFile?: string;
+  readonly discordLaneKey?: string;
+  readonly discordLaneInbox?: true;
+  readonly discordLaneReceiver?: { readonly channel: string; readonly stateDir: string };
   readonly cwd: string;
   readonly pid: number;
   readonly startedAt: string;

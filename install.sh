@@ -1,26 +1,27 @@
 #!/usr/bin/env bash
-# Release bootstrap. Requires git, Bun 1.4.4+, and herdr on Linux x64; provisions the release-bound OMP source.
+# Release bootstrap. Requires git, Bun 1.4.4+, and the selected runtime; provisions release-bound OMP source.
 set -euo pipefail
 command -v bun >/dev/null || { echo "Bun 1.4.4+ is required; install it before OMP-Dori" >&2; exit 1; }
 bun run - "$@" <<'BUN'
 import { createHash } from "node:crypto";
-import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { parseArgs } from "node:util";
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const object = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 const fail = (message) => { throw new Error(message); };
-const api = "https://api.github.com/repos/vntrevx/omp-dori";
-const downloads = "https://github.com/vntrevx/omp-dori/releases/download";
+const api = "https://api.github.com/repos/vntrevx/Cataly";
+const downloads = "https://github.com/vntrevx/Cataly/releases/download";
 const max = 128 * 1024 * 1024;
 let temporary;
 try {
   const args = parseArgs({ args: process.argv.slice(2), strict: true,
-    options: { version: { type: "string" }, from: { type: "string" }, help: { type: "boolean", short: "h" } } });
+    options: { version: { type: "string" }, from: { type: "string" }, home: { type: "string" },
+      runtime: { type: "string" }, help: { type: "boolean", short: "h" } } });
   if (args.values.help) {
-    console.log("install.sh [--version vX.Y.Z] [--from DIST]\nDORI_RELEASE selects an explicit tag. Default: latest stable release. No services are started.");
+    console.log("install.sh [--version vX.Y.Z] [--from DIST] [--home PATH] [--runtime hc|herdr]\nDORI_RELEASE selects an explicit tag. Default: latest stable release. No services are started.");
     process.exit(0);
   }
   const version = args.values.version ?? process.env.DORI_RELEASE;
@@ -32,9 +33,61 @@ try {
     for (let i = 0; i < wanted.length; i++) if (numbers[i] !== wanted[i]) return numbers[i] > wanted[i];
     return true;
   };
-  if (process.platform !== "linux" || process.arch !== "x64") fail("This release supports Linux x64 with herdr and Discord");
+  const linux = process.platform === "linux" && process.arch === "x64";
+  const darwin = process.platform === "darwin" && process.arch === "arm64";
+  const runtime = args.values.runtime ?? process.env.DORI_RUNTIME ?? (darwin ? "hc" : "herdr");
+  if (!(linux && runtime === "herdr") && !(darwin && runtime === "hc"))
+    fail(`Unsupported host/runtime: ${process.platform}/${process.arch}/${runtime}`);
+  const mode = process.env.DORI_INSTALL_MODE ?? (darwin ? "side" : "primary");
+  if (mode !== "primary" && mode !== "side") fail("DORI_INSTALL_MODE must be primary or side");
+  if (args.values.home !== undefined && !args.values.home.trim()) fail("--home requires a directory");
+  const primary = resolve(homedir(), ".dori");
+  const selectedHome = args.values.home ?? (mode === "side" ? (process.env.OMP_DORI_HOME || join(homedir(), ".omp-dori")) : primary);
+  if (!isAbsolute(selectedHome)) fail("--home / OMP_DORI_HOME must be an absolute installation home");
+  const home = resolve(selectedHome);
+  // Resolve existing ancestors, including symlinks, without creating the target.
+  const physical = (path) => {
+    const suffix = [];
+    let ancestor = path;
+    while (!lstatSync(ancestor, { throwIfNoEntry: false })) { suffix.unshift(basename(ancestor)); ancestor = dirname(ancestor); }
+    return resolve(realpathSync(ancestor), ...suffix);
+  };
+  const actualHome = physical(home), actualPrimary = physical(primary);
+  const withinPrimary = relative(actualPrimary, actualHome);
+  const containsPrimary = relative(actualHome, actualPrimary);
+  if ((process.env.DORI_INSTALL_MODE === "side" || actualHome !== actualPrimary) &&
+    (withinPrimary === "" || (!withinPrimary.startsWith("../") && withinPrimary !== "..") ||
+      containsPrimary === "" || (!containsPrimary.startsWith("../") && containsPrimary !== "..")))
+    fail("Side installation home must be outside ~/.dori and must not contain it");
+  const stat = (path) => lstatSync(path, { throwIfNoEntry: false });
+  const source = join(home, "src");
+  const sourceStat = stat(source);
+  if (stat(join(home, ".omp-dori")) || stat(join(home, ".git")) ||
+    (sourceStat && (!sourceStat.isSymbolicLink() ||
+      dirname(resolve(home, readlinkSync(source))) !== join(home, "releases/releases"))))
+    fail(`Source-owned installation at ${home}; choose another home`);
+  for (const [name, target] of [["dori", "skills/dori-mode/scripts/src/cli.ts"], ["dori-harness", "src/cli.ts"], ["omp", null], ["omp-dori", null]]) {
+    const path = join(home, "bin", name), entry = stat(path);
+    const consumerOwner = stat(join(home, "releases/consumer-owner.json"));
+    const managedSide = home !== primary && consumerOwner && (stat(join(home, "releases/consumer-references.json")) ||
+      stat(join(home, "releases/consumer-references-pending.json")));
+    const managedNative = name === "omp" && home === primary && consumerOwner && entry?.isSymbolicLink() &&
+      /^[a-f0-9]{40}-[a-f0-9]{16}\/scripts\/consumer\/omp$/.test(relative(join(home, "releases/releases"), resolve(dirname(path), readlinkSync(path))));
+    if (entry && !managedSide && !managedNative && (!target || !entry.isSymbolicLink() || resolve(dirname(path), readlinkSync(path)) !== join(source, target)))
+      fail(`Unmanaged wrapper at ${path}; choose another home`);
+  }
+  const configPath = join(home, "config.json"), configEntry = stat(configPath);
+  if (configEntry) {
+    if (!configEntry.isFile() || configEntry.isSymbolicLink() || configEntry.uid !== process.getuid() || (configEntry.mode & 0o022))
+      fail("Unsafe preserved config: expected an owned regular file without group/world write permission");
+    const config = JSON.parse(readFileSync(configPath, "utf8"));
+    if (!object(config)) fail("Preserved config must be an object");
+    if (!("runtime" in config)) fail('Preserved config must explicitly select runtime: set "runtime" to "herdr" or "hc" before retrying');
+    if (typeof config.runtime !== "string") fail("Preserved config runtime must be a string");
+    if (config.runtime !== runtime) fail(`Selected runtime ${runtime} conflicts with preserved config runtime ${config.runtime}`);
+  }
   if (!atLeast(Bun.version, [1, 4, 4])) fail("Bun 1.4.4+ is required");
-  for (const name of ["git", "herdr"]) if (!Bun.which(name)) fail(`${name} is required; install it before OMP-Dori`);
+  for (const name of ["git", runtime]) if (!Bun.which(name)) fail(`${name} is required; install it before OMP-Dori`);
   const fetchBytes = async (url, limit) => {
     const response = await fetch(url, { headers: { Accept: url.startsWith(api) ? "application/vnd.github+json" : "application/octet-stream" },
       signal: AbortSignal.timeout(120000) });
@@ -147,18 +200,41 @@ try {
     offset += Math.ceil(size / 512) * 512;
   }
   if (!ended || files.length !== expected.size) fail("Release archive omits manifest source");
-  temporary = mkdtempSync(join(tmpdir(), "omp-dori-bootstrap-"));
-  const source = join(temporary, "source"), dist = join(temporary, "dist");
-  mkdirSync(source, { mode: 0o700 }); mkdirSync(dist, { mode: 0o700 });
+  const capabilityFile = files.find((file) => file.path === "release-capabilities.json");
+  const profiles = new Set();
+  if (capabilityFile) {
+    const capabilities = JSON.parse(decoder.decode(capabilityFile.bytes));
+    if (!object(capabilities) || Object.keys(capabilities).sort().join() !== "profiles,version" ||
+      capabilities.version !== 1 || !Array.isArray(capabilities.profiles) || !capabilities.profiles.length)
+      fail("Invalid release capabilities");
+    for (const entry of capabilities.profiles) {
+      if (!object(entry) || Object.keys(entry).sort().join() !== "arch,platform,runtime" ||
+        typeof entry.platform !== "string" || typeof entry.arch !== "string" || typeof entry.runtime !== "string")
+        fail("Invalid release capability");
+      const profile = `${entry.platform}/${entry.arch}/${entry.runtime}`;
+      if (!["linux/x64/herdr", "darwin/arm64/hc"].includes(profile) || profiles.has(profile))
+        fail("Invalid or duplicate release capability");
+      profiles.add(profile);
+    }
+  } else profiles.add("linux/x64/herdr");
+  if (!profiles.has(`${process.platform}/${process.arch}/${runtime}`)) fail("Release does not support selected host/runtime");
+  if (!capabilityFile && home !== primary) fail("Legacy release requires the primary ~/.dori home");
+  temporary = mkdtempSync(join(realpathSync(tmpdir()), "omp-dori-bootstrap-"));
+  const extracted = join(temporary, "source"), dist = join(temporary, "dist");
+  mkdirSync(extracted, { mode: 0o700 }); mkdirSync(dist, { mode: 0o700 });
   for (const file of files) {
-    const path = join(source, file.path); mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+    const path = join(extracted, file.path); mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     writeFileSync(path, file.bytes, { flag: "wx", mode: 0o600 }); chmodSync(path, file.executable ? 0o755 : 0o644);
   }
   writeFileSync(join(dist, "release-manifest.json"), metadata, { flag: "wx", mode: 0o600 });
   writeFileSync(join(dist, "SHA256SUMS"), sumsBytes, { flag: "wx", mode: 0o600 });
   writeFileSync(join(dist, manifest.archive.name), archive, { flag: "wx", mode: 0o600 });
-  const child = Bun.spawn([process.execPath, join(source, "src/release/cli.ts"), "install", "--from", dist, "--version", manifest.tag],
-    { stdin: "inherit", stdout: "inherit", stderr: "inherit" });
+  const env = { ...process.env, DORI_HOME: home, DORI_CONFIG: join(home, "config.json") };
+  for (const name of ["DORI_STATE_DIR", "DORI_RUNTIME", "DORI_CMD", "DORI_AGENT_CMD", "DORI_AGENT_ARGV", "DORI_OMP_ULW_PATH", "DORI_MANAGED_STARTUP"]) delete env[name];
+  const childArgs = [process.execPath, join(extracted, "src/release/cli.ts"), "install", "--from", dist, "--version", manifest.tag];
+  if (capabilityFile) childArgs.push("--home", home, "--runtime", runtime);
+  const child = Bun.spawn(childArgs,
+    { stdin: "inherit", stdout: "inherit", stderr: "inherit", env });
   process.exitCode = await child.exited;
 } catch (error) {
   console.error(`OMP-Dori bootstrap held: ${error instanceof Error ? error.message : String(error)}`);

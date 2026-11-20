@@ -12,74 +12,80 @@ import { sourceManifest } from "../src/update/source.ts";
 import { archive, fixture, withArchive } from "./release-consumer-setup.ts";
 import { git } from "./update-setup.ts";
 
-test("managed dependency resolution follows each loaded release across update and rollback without config writes", async () => {
-  const f = fixture();
-  const one = await installBundle(f.paths, f.release("first\n").bundle, undefined);
-  const sourceOne = releasePath(f.paths, one.current);
-  const config = readFileSync(f.paths.config);
-  const configured = (await loadConfig(f.paths.config, f.paths.home)).ompUlwPath;
-  const effective = (sourceRoot: string, path = configured) =>
-    resolveConsumerOmpUlwPath(path, { home: f.paths.home, sourceRoot });
-  expect(configured).toBe(join(f.ownedDependency, "index.ts"));
-  expect(git(dirname(effective(sourceOne)), "rev-parse", "HEAD")).toBe(f.pin);
+// POSIX-only: release installation refuses non-private directories by POSIX mode bits.
+const posix = test.skipIf(process.platform === "win32");
 
-  const checkout = join(f.root, "next-dependency");
-  mkdirSync(checkout, { mode: 0o700 });
-  git(f.root, "clone", "--quiet", "--no-hardlinks", f.ownedDependency, checkout);
-  chmodSync(join(checkout, "index.ts"), 0o600);
-  git(
-    checkout,
-    "-c",
-    "user.name=Consumer fixture",
-    "-c",
-    "user.email=fixture@example.test",
-    "commit",
-    "--quiet",
-    "--allow-empty",
-    "-m",
-    "Second isolated public dependency pin",
-  );
-  const nextPin = git(checkout, "rev-parse", "HEAD");
-  expect(nextPin).not.toBe(f.pin);
-  const nextDependency = join(f.paths.dependencies, `omp-ulw-${nextPin}`);
-  renameSync(checkout, nextDependency);
-  saveJson(`${nextDependency}.json`, { version: 1, repository: one.current.ompUlw.repository, commit: nextPin });
+posix.each([false, true])(
+  "managed dependency resolution follows release update and rollback (side=%s)",
+  async (side) => {
+    const f = fixture(side);
+    const one = await installBundle(f.paths, f.release("first\n").bundle, undefined);
+    const sourceOne = releasePath(f.paths, one.current);
+    const config = readFileSync(f.paths.config);
+    const configured = (await loadConfig(f.paths.config, f.paths.home)).ompUlwPath;
+    const effective = (sourceRoot: string, path = configured) =>
+      resolveConsumerOmpUlwPath(path, { home: f.paths.home, sourceRoot });
+    expect(configured).toBe(join(f.ownedDependency, "index.ts"));
+    expect(git(dirname(effective(sourceOne)), "rev-parse", "HEAD")).toBe(f.pin);
 
-  const next = f.release("second\n");
-  const source = join(f.root, "next-source");
-  extractArchive(next.bundle.files, next.bundle.manifest, source);
-  writeFileSync(join(source, "omp-ulw.lock"), `${nextPin}\n`);
-  const manifestSource = sourceManifest(source);
-  const bytes = archive(
-    manifestSource.files.map((file) => ({
-      name: `${next.bundle.manifest.archive.root}/${file.path}`,
-      bytes: readFileSync(join(source, file.path)),
-      mode: file.executable ? 0o755 : 0o644,
-    })),
-  );
-  const manifest = withArchive(
-    validateReleaseManifest({
-      ...next.bundle.manifest,
-      source: manifestSource,
-      ompUlw: { ...next.bundle.manifest.ompUlw, commit: nextPin },
-    }),
-    bytes,
-  );
-  const two = await installBundle(f.paths, { manifest, files: readArchive(bytes, manifest) }, one);
-  const sourceTwo = releasePath(f.paths, two.current);
-  expect(git(dirname(effective(sourceTwo)), "rev-parse", "HEAD")).toBe(nextPin);
-  expect(effective(sourceTwo, dirname(configured))).toBe(nextDependency);
-  expect(effective(sourceOne)).toBe(configured);
-  expect(readFileSync(f.paths.config)).toEqual(config);
+    const checkout = join(f.root, "next-dependency");
+    mkdirSync(checkout, { mode: 0o700 });
+    git(f.root, "clone", "--quiet", "--no-hardlinks", f.ownedDependency, checkout);
+    chmodSync(join(checkout, "index.ts"), 0o600);
+    git(
+      checkout,
+      "-c",
+      "user.name=Consumer fixture",
+      "-c",
+      "user.email=fixture@example.test",
+      "commit",
+      "--quiet",
+      "--allow-empty",
+      "-m",
+      "Second isolated public dependency pin",
+    );
+    const nextPin = git(checkout, "rev-parse", "HEAD");
+    expect(nextPin).not.toBe(f.pin);
+    const nextDependency = join(f.paths.dependencies, `omp-ulw-${nextPin}`);
+    renameSync(checkout, nextDependency);
+    saveJson(`${nextDependency}.json`, { version: 1, repository: one.current.ompUlw.repository, commit: nextPin });
 
-  const rolled = await rollbackRelease(f.paths, two);
-  expect(effective(releasePath(f.paths, rolled.current))).toBe(configured);
-  expect(effective(sourceOne, dirname(configured))).toBe(f.ownedDependency);
-  expect(effective(sourceTwo)).toBe(join(nextDependency, "index.ts"));
-  expect(readFileSync(f.paths.config)).toEqual(config);
-});
+    const next = f.release("second\n");
+    const source = join(f.root, "next-source");
+    extractArchive(next.bundle.files, next.bundle.manifest, source);
+    writeFileSync(join(source, "omp-ulw.lock"), `${nextPin}\n`);
+    const manifestSource = sourceManifest(source);
+    const bytes = archive(
+      manifestSource.files.map((file) => ({
+        name: `${next.bundle.manifest.archive.root}/${file.path}`,
+        bytes: readFileSync(join(source, file.path)),
+        mode: file.executable ? 0o755 : 0o644,
+      })),
+    );
+    const manifest = withArchive(
+      validateReleaseManifest({
+        ...next.bundle.manifest,
+        source: manifestSource,
+        ompUlw: { ...next.bundle.manifest.ompUlw, commit: nextPin },
+      }),
+      bytes,
+    );
+    const two = await installBundle(f.paths, { manifest, files: readArchive(bytes, manifest) }, one);
+    const sourceTwo = releasePath(f.paths, two.current);
+    expect(git(dirname(effective(sourceTwo)), "rev-parse", "HEAD")).toBe(nextPin);
+    expect(effective(sourceTwo, dirname(configured))).toBe(nextDependency);
+    expect(effective(sourceOne)).toBe(configured);
+    expect(readFileSync(f.paths.config)).toEqual(config);
 
-test("explicit dependency paths and ordinary source checkouts remain user choices", async () => {
+    const rolled = await rollbackRelease(f.paths, two);
+    expect(effective(releasePath(f.paths, rolled.current))).toBe(configured);
+    expect(effective(sourceOne, dirname(configured))).toBe(f.ownedDependency);
+    expect(effective(sourceTwo)).toBe(join(nextDependency, "index.ts"));
+    expect(readFileSync(f.paths.config)).toEqual(config);
+  },
+);
+
+posix("explicit dependency paths and ordinary source checkouts remain user choices", async () => {
   const f = fixture();
   const one = await installBundle(f.paths, f.release("first\n").bundle, undefined);
   const sourceRoot = releasePath(f.paths, one.current);
@@ -115,7 +121,7 @@ test("explicit dependency paths and ordinary source checkouts remain user choice
   expect(readFileSync(f.paths.config, "utf8")).toBe(customConfig);
 });
 
-test("managed dependency resolution holds on invalid or linked lock metadata and an absent pinned cache", () => {
+posix("managed dependency resolution holds on invalid or linked lock metadata and an absent pinned cache", () => {
   const f = fixture();
   const sourceRoot = join(f.paths.releases, `${"a".repeat(40)}-${"b".repeat(16)}`);
   mkdirSync(sourceRoot, { mode: 0o700 });

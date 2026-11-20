@@ -1,7 +1,7 @@
 /** Stand-in for omp-ulw's `ompUlw(pi)`: one of each runtime entry point, recording what actually ran. */
 import type { DoriApi, DoriContext } from "../index";
 
-type UlwApi = DoriApi & { sendUserMessage(text: string): void; recordTestCall(event: string): void };
+type UlwApi = DoriApi & { recordTestCall(event: string): void };
 
 export default function fakeUlw(pi: UlwApi): void {
   pi.registerFlag("fake-ulw-disabled", { type: "boolean", default: false });
@@ -9,7 +9,7 @@ export default function fakeUlw(pi: UlwApi): void {
     description: "fake ulw",
     handler: async (args) => {
       pi.recordTestCall("command");
-      pi.sendUserMessage(`ulw ${args}`);
+      await pi.sendUserMessage(`ulw ${args}`);
     },
   });
   pi.registerTool({

@@ -1,7 +1,11 @@
 import { expect, test } from "bun:test";
+import { dirname, join, resolve } from "node:path";
 import { hcDeploymentCli } from "../src/update/deployment-cli.ts";
 import { parseDeploymentConfig } from "../src/update/deployment.ts";
 import { actorEnv } from "../src/update/deployment-process.ts";
+
+// Resolve the deployment root for this platform instead of assuming the POSIX "/r".
+const root = resolve("/r");
 
 const base = {
   releaseRoot: "managed",
@@ -22,24 +26,29 @@ const hcConfig = { ...base, runtime: "hc", hc: "home/private-cli/hc", hcSession:
 
 test("an hc deployment names its binary, session and terminal, and its actor runs as that terminal", () => {
   // Given an hc deployment config.
-  const config = parseDeploymentConfig(hcConfig, "/r");
+  const config = parseDeploymentConfig(hcConfig, root);
   // Then it keeps the hc binary and session, and a resumed actor inherits the hc terminal identity, not a herdr pane.
-  expect(config).toMatchObject({ runtime: "hc", hc: "/r/home/private-cli/hc", hcSession: "default", pane: "t13j" });
+  expect(config).toMatchObject({
+    runtime: "hc",
+    hc: join(root, "home/private-cli/hc"),
+    hcSession: "default",
+    pane: "t13j",
+  });
   expect(config.herdr).toBeUndefined();
   const env = actorEnv(config);
   expect(env).toMatchObject({ HC_TERMINAL_ID: "t13j", HC_SESSION: "default" });
   expect(env["HERDR_PANE_ID"]).toBeUndefined();
-  expect(env["PATH"]?.split(":")).toContain("/r/home/private-cli");
+  expect(env["PATH"]).toContain(dirname(join(root, "home/private-cli/hc")));
   // And it reads back unchanged.
-  expect(parseDeploymentConfig(config, "/r")).toEqual(config);
+  expect(parseDeploymentConfig(config, root)).toEqual(config);
 });
 
 test("a deployment without a runtime is the herdr deployment it always was", () => {
   // Given a config written before runtimes existed.
-  const config = parseDeploymentConfig({ ...base, herdr: "home/private-cli/herdr", pane: "w1:p1" }, "/r");
+  const config = parseDeploymentConfig({ ...base, herdr: "home/private-cli/herdr", pane: "w1:p1" }, root);
   // Then it is herdr, with the herdr pane identity.
   expect(Object.hasOwn(config, "runtime")).toBe(false);
-  expect(parseDeploymentConfig({ ...config, runtime: "herdr" }, "/r")).toEqual(config);
+  expect(parseDeploymentConfig({ ...config, runtime: "herdr" }, root)).toEqual(config);
   expect(actorEnv(config)).toMatchObject({ HERDR_PANE_ID: "w1:p1", HERDR_WORKSPACE_ID: "w1" });
 });
 
@@ -50,7 +59,7 @@ test.each([
   ["no hc binary", { hc: undefined }, "hc"],
   ["an unknown runtime", { runtime: "tmux" }, "runtime"],
 ])("an hc deployment with %s is refused", (_name, change, field) => {
-  expect(() => parseDeploymentConfig({ ...hcConfig, ...change }, "/r")).toThrow(
+  expect(() => parseDeploymentConfig({ ...hcConfig, ...change }, root)).toThrow(
     `invalid promotion.deployment.${field}`,
   );
 });

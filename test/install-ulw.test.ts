@@ -3,7 +3,10 @@ import { existsSync, mkdirSync, readFileSync, readlinkSync, symlinkSync, writeFi
 import { join } from "node:path";
 import { git, withUlwRemote } from "./install-setup.ts";
 
-test("the default source dependency uses the bound upstream and applies its reviewed overlay", () => {
+// POSIX-only: the fixture runs scripts/install-source.sh and links checkouts with POSIX symlinks.
+const posix = test.skipIf(process.platform === "win32");
+
+posix("the default source dependency uses the bound upstream and applies its reviewed overlay", () => {
   const { home, first, commit, config, ulwHead, install } = withUlwRemote();
   commit("u2");
   expect(install().code).toBe(0);
@@ -14,7 +17,7 @@ test("the default source dependency uses the bound upstream and applies its revi
   expect(config().ompUlwPath).toBe("");
 });
 
-test("reinstall preserves the bound overlay instead of following a newer unreviewed main", () => {
+posix("reinstall preserves the bound overlay instead of following a newer unreviewed main", () => {
   const { home, first, commit, ulwHead, install } = withUlwRemote();
   expect(install().code).toBe(0);
   commit("u2");
@@ -23,7 +26,7 @@ test("reinstall preserves the bound overlay instead of following a newer unrevie
   expect(readFileSync(join(home, ".dori/omp-ulw/index.ts"), "utf8")).toContain("reviewedOverlay");
 });
 
-test("OMP_ULW_REF=lock keeps the revision in omp-ulw.lock", () => {
+posix("OMP_ULW_REF=lock keeps the revision in omp-ulw.lock", () => {
   // Given an omp-ulw remote whose main is past the lock.
   const { first, commit, ulwHead, install } = withUlwRemote();
   commit("u2");
@@ -32,7 +35,7 @@ test("OMP_ULW_REF=lock keeps the revision in omp-ulw.lock", () => {
   expect(ulwHead()).toBe(first);
 });
 
-test("an external native override does not silently switch the locked default to main", () => {
+posix("an external native override does not silently switch the locked default to main", () => {
   const { first, commit, ulwHead, install } = withUlwRemote();
   const latest = commit("u2");
   expect(install({ INSTALL_TEST_OMP_VERSION: "18.18.9" }).code).toBe(0);
@@ -47,7 +50,7 @@ const ulwCheckout = (dir: string) => {
   writeFileSync(join(dir, "presets.ts"), "export {};\n");
 };
 
-test("a standalone omp-ulw extension is reused: no second checkout and no second import", () => {
+posix("a standalone omp-ulw extension is reused: no second checkout and no second import", () => {
   // Given omp-ulw installed as an OMP extension by hand, at a revision from before it had a package.json.
   const { home, config, install } = withUlwRemote();
   const standalone = join(home, "extensions/omp-ulw");
@@ -60,7 +63,7 @@ test("a standalone omp-ulw extension is reused: no second checkout and no second
   expect(config().ompUlwPath).toBe("");
 });
 
-test("a config that points ompUlwPath at its own checkout keeps that checkout, now as the extension", () => {
+posix("a config that points ompUlwPath at its own checkout keeps that checkout, now as the extension", () => {
   // Given a config whose ompUlwPath is a checkout of the owner's own.
   const { home, config, install } = withUlwRemote();
   const own = join(home, "my-ulw");
@@ -79,7 +82,7 @@ test("a config that points ompUlwPath at its own checkout keeps that checkout, n
   expect(existsSync(join(home, ".dori/omp-ulw"))).toBe(false);
 });
 
-test.each(["lock", "main"])("a standalone extension replaces only the installer's owned %s link", (ref) => {
+posix.each(["lock", "main"])("a standalone extension replaces only the installer's owned %s link", (ref) => {
   // Given an install that linked its omp-ulw checkout, and a standalone omp-ulw added later.
   const { home, install } = withUlwRemote();
   expect(install({ OMP_ULW_REF: ref }).code).toBe(0);
@@ -93,7 +96,7 @@ test.each(["lock", "main"])("a standalone extension replaces only the installer'
   expect(existsSync(join(home, "extensions/omp-ulw"))).toBe(false);
 });
 
-test.each(["branch", "tag", "commit"])("OMP_ULW_REF selects a custom %s from OMP_ULW_REPO", (kind) => {
+posix.each(["branch", "tag", "commit"])("OMP_ULW_REF selects a custom %s from OMP_ULW_REPO", (kind) => {
   const { remote, first, commit, ulwHead, install } = withUlwRemote();
   git(remote, "branch", "selected-branch", first);
   git(remote, "tag", "selected-tag", first);
@@ -103,7 +106,7 @@ test.each(["branch", "tag", "commit"])("OMP_ULW_REF selects a custom %s from OMP
   expect(ulwHead()).toBe(first);
 });
 
-test("an explicit main profile can select a new fork for its separate custom checkout", () => {
+posix("an explicit main profile can select a new fork for its separate custom checkout", () => {
   const { root, remote, ulwHead, install } = withUlwRemote();
   expect(install({ OMP_ULW_REF: "main" }).code).toBe(0);
   const fork = join(root, "ulw-fork");
@@ -116,7 +119,7 @@ test("an explicit main profile can select a new fork for its separate custom che
   expect(ulwHead()).toBe(selected);
 });
 
-test("an explicit checkout already registered as a standalone extension gets no second link", () => {
+posix("an explicit checkout already registered as a standalone extension gets no second link", () => {
   const { home, config, install } = withUlwRemote();
   const standalone = join(home, "extensions/owner-ulw");
   ulwCheckout(standalone);
@@ -126,7 +129,7 @@ test("an explicit checkout already registered as a standalone extension gets no 
   expect(config().ompUlwPath).toBe("");
 });
 
-test("an unmarked default-looking ULW link is retained when another standalone extension exists", () => {
+posix("an unmarked default-looking ULW link is retained when another standalone extension exists", () => {
   const { root, home, src, upstreamCommit, install } = withUlwRemote();
   const dependency = join(home, ".dori/omp-ulw");
   ulwCheckout(dependency);
@@ -141,7 +144,7 @@ test("an unmarked default-looking ULW link is retained when another standalone e
   expect(existsSync(join(root, "bun.log"))).toBe(false);
 });
 
-test("a different owner standalone holds an explicit primary checkout before source or config changes", () => {
+posix("a different owner standalone holds an explicit primary checkout before source or config changes", () => {
   const { root, home, src, ulw, upstreamCommit, install } = withUlwRemote();
   const standalone = join(home, "extensions/omp-ulw");
   ulwCheckout(standalone);
@@ -154,7 +157,7 @@ test("a different owner standalone holds an explicit primary checkout before sou
   expect(existsSync(join(root, "bun.log"))).toBe(false);
 });
 
-test("a side custom checkout survives clearing the import path and later reinstalls", () => {
+posix("a side custom checkout survives clearing the import path and later reinstalls", () => {
   const { home, install } = withUlwRemote();
   const side = join(home, ".omp-dori");
   const own = join(home, "my-ulw");
@@ -175,7 +178,7 @@ test("a side custom checkout survives clearing the import path and later reinsta
   expect(existsSync(join(home, "extensions"))).toBe(false);
 });
 
-test("a modified bound source dependency holds reinstall and retains the owner's edit", () => {
+posix("a modified bound source dependency holds reinstall and retains the owner's edit", () => {
   const { home, env, install } = withUlwRemote();
   expect(install().code).toBe(0);
   const entry = join(home, ".dori/omp-ulw/index.ts");

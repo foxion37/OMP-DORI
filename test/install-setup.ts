@@ -1,4 +1,4 @@
-import { afterEach } from "bun:test";
+import { afterEach, test } from "bun:test";
 import {
   chmodSync,
   mkdirSync,
@@ -12,6 +12,12 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { digest } from "../src/update/source.ts";
+
+// The miniature checkout exposes the real reader without copying the full application into every fixture.
+const fixtureReader = resolve(import.meta.dir, "../skills/dori-mode/scripts/src/config.ts");
+
+// POSIX-only: this installer fixture runs shell scripts, links and mode checks the Windows host cannot exercise.
+export const posix = test.skipIf(process.platform === "win32");
 
 // The real source installer over a local upstream; package installs and toolchain probes stay isolated.
 export const script = resolve(import.meta.dir, "../scripts/install-source.sh");
@@ -59,6 +65,10 @@ export function setup() {
   writeFileSync(join(ulw, "index.ts"), "export default () => {};\n");
   writeFileSync(join(ulw, "presets.ts"), "export {};\n");
   writeFileSync(join(upstream, cli), "v1\n");
+  writeFileSync(
+    join(upstream, "skills/dori-mode/scripts/src/config.ts"),
+    `export * from ${JSON.stringify(fixtureReader)};\n`,
+  );
   writeFileSync(join(upstream, "omp-ulw.lock"), "0000000000000000000000000000000000000000\n");
   writeFileSync(join(upstream, "skills/dori-mode/SKILL.md"), skillFixture);
   writeFileSync(join(upstream, "skills/dori-mode/references/config.example.json"), "{}\n");
@@ -71,7 +81,7 @@ export function setup() {
   // Record package-manager mutations without installing or linking anything on the host.
   writeFileSync(
     join(bin, "bun"),
-    `#!/bin/sh\ncase "$1" in\n--version) echo "\${INSTALL_TEST_BUN_VERSION:-1.4.4}" ;;\n-e|*/source-dependencies.ts) exec ${JSON.stringify(process.execPath)} "$@" ;;\n*) echo "$*" >> ${JSON.stringify(join(root, "bun.log"))} ;;\nesac\n`,
+    `#!/bin/sh\ncase "$1" in\n--version) echo "\${INSTALL_TEST_BUN_VERSION:-1.4.4}" ;;\n-e|*/source-dependencies.ts|*/source-configuration.ts) exec ${JSON.stringify(process.execPath)} "$@" ;;\n*) echo "$*" >> ${JSON.stringify(join(root, "bun.log"))} ;;\nesac\n`,
   );
   chmodSync(join(bin, "bun"), 0o755);
   writeFileSync(
@@ -87,6 +97,14 @@ export function setup() {
     ...gitEnv,
     HOME: home,
     BUN_INSTALL: join(home, ".bun"),
+    DORI_HOME: join(home, ".dori"),
+    DORI_CONFIG: join(home, ".dori/config.json"),
+    DORI_STATE_DIR: undefined,
+    DORI_LEAD_PANE: undefined,
+    DORI_AGENT_ARGV: undefined,
+    DORI_AGENT_CMD: undefined,
+    DORI_AGENT_EXECUTABLE: undefined,
+    DORI_OMP_ULW_PATH: undefined,
     DORI_INSTALL_MODE: "",
     DORI_NO_PULL: "",
     DORI_SRC: src,
@@ -104,8 +122,8 @@ export function setup() {
     PATH: `${bin}:${process.env["PATH"]}`,
     ...extra,
   });
-  const install = (extra: Record<string, string> = {}) => {
-    const r = Bun.spawnSync([script], { env: env(extra), stdin: "ignore" });
+  const install = (extra: Record<string, string> = {}, argv: readonly string[] = []) => {
+    const r = Bun.spawnSync([script, ...argv], { env: env(extra), stdin: "ignore" });
     return { code: r.exitCode, out: r.stdout.toString(), err: r.stderr.toString() };
   };
   return { root, upstream, src, home, ulw, cli, upstreamCommit, env, install };

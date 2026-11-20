@@ -5,6 +5,8 @@ export const USAGE = `dori harness - a proactive multi-session harness on herdr 
   dori harness up [--cwd DIR]                         open lead, duty, duty loop and hourly loop sessions
   dori harness role <lead|duty> [REF]                 register a session (w1:p3, herdr:w1:p3, hc:t7) as lead or duty (default: this one)
   dori harness start <key> --brief FILE [--cwd DIR]   open a lane: new tab, OMP session, brief + lane rules
+                          [--priority 1-9]            its turn for a lock (1 first, 9 last; default 5)
+  dori harness priority <key> <1-9>                   set an open lane's priority
   dori harness report <key> --text T [--status working|waiting [--for TARGET]] [--evidence FILE|LINK ...]
                                                       only new evidence (a file changed since the last progress, a link
                                                       not reported before) resets the nudge and escalation clock; a
@@ -26,6 +28,10 @@ export const USAGE = `dori harness - a proactive multi-session harness on herdr 
   dori harness review <owner/repo#N> [--model M]      fresh OMP reviewer at the exact head -> receipt
   dori harness merge <owner/repo#N> [--dry-run]       CLEAR receipt at head + green checks -> squash merge
   dori harness done <key>                             lead closes a READY lane
+  dori harness lock <name> --lane K [--priority 1-9] -- CMD [ARG ...]
+                                                      wait in line for lock <name> (lowest priority number first, then
+                                                      first come), run CMD holding it, exit with CMD's code
+  dori harness lock <name> --list                     the lock's holder and its queue, one line
   dori harness migrate [--to hc|herdr] (--lane K | --role lead|duty|duty-loop|hourly-loop | --all) [--dry-run]
                        [--wait-minutes N] [--resume]  hand sessions over to another runtime; MIGRATED, SKIP, DEFERRED,
                                                       or MIGRATE_ROLLBACK (exit 3) per session
@@ -36,17 +42,28 @@ send, report and ready exit 3 and print HELD <target> when the delivery may or m
 it is held and never resent, so do not send it again: check the pane, then dori harness inbox ack or dori harness inbox resend it.
 QUEUED (exit 0) means it waits in the pane's inbox.`;
 
-export type Args = { pos: string[]; flags: Map<string, string[]> };
+/** `rest`: every argument after a bare `--` in flag position, verbatim (the command `lock` runs). */
+export type Args = { pos: string[]; flags: Map<string, string[]>; rest: string[] };
 
 // Flags that never take a value. Every other flag takes the next argument verbatim, even one starting with "--", so a
 // relayed value such as `--from "$SENDER"` or `--text "$MSG"` can never turn into a flag like --to-shell (#66).
-const BOOLEAN_FLAGS: ReadonlySet<string> = new Set(["once", "force", "dry-run", "to-shell", "all", "resume", "help"]);
+const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
+  "once",
+  "force",
+  "dry-run",
+  "to-shell",
+  "all",
+  "resume",
+  "help",
+  "list",
+]);
 
 export function parse(argv: readonly string[]): Args {
   const pos: string[] = [];
   const flags = new Map<string, string[]>();
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
+    if (a === "--") return { pos, flags, rest: argv.slice(i + 1) };
     if (!a.startsWith("--")) {
       pos.push(a);
       continue;
@@ -57,7 +74,7 @@ export function parse(argv: readonly string[]): Args {
     if (value === undefined) throw new Refusal(`--${name} needs a value`);
     flags.set(name, [...(flags.get(name) ?? []), value]);
   }
-  return { pos, flags };
+  return { pos, flags, rest: [] };
 }
 
 export const one = (a: Args, f: string): string | undefined => a.flags.get(f)?.at(-1);

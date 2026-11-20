@@ -2,6 +2,8 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { shq } from "./delivery.ts";
 import { agentCommand, harnessLaunchEnv, promptFile, type Deps } from "./harness.ts";
+import { lockEnv } from "./lock.ts";
+import { lockLines } from "./lock-list.ts";
 import { refText } from "./refs.ts";
 import { groupId } from "./runtime/group.ts";
 import { openSession, type SessionRef } from "./runtime/types.ts";
@@ -73,7 +75,8 @@ function runtimeLine(d: Deps): string {
 /**
  * The runtime line, the roles and the home path, each on a line of its own and never wrapped: the runtime line can name
  * the config file and the home is a path, either of which may hold spaces, and a path broken at one names no file.
- * Wider than a line, the terminal folds them. The lane board below keeps within WIDTH.
+ * Wider than a line, the terminal folds them. The lane board below keeps within WIDTH, and so does the line per lock
+ * held or waited for (lock-list.ts) at the end.
  */
 export function status(d: Deps): void {
   const roles = d.store.roles();
@@ -81,4 +84,5 @@ export function status(d: Deps): void {
   for (const line of [runtimeLine(d), `lead=${show(roles.lead)} duty=${show(roles.duty)}`, `home=${d.store.root}`])
     console.log(line);
   for (const line of laneBoard(d.store.lanes(), d.now())) console.log(line);
+  for (const line of lockLines({ ...lockEnv(d.store.root), now: d.now })) console.log(line);
 }

@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 406" width="1000" height="406" role="img" aria-labelledby="title desc" font-family="-apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans KR', 'Noto Sans CJK KR', 'Segoe UI', sans-serif">
+  <title id="title">Cataly 작동 방식</title>
+  <desc id="desc">요청을 받고, 리드가 작업을 맡기고, 레인이 작업하고 보고하며, 완료를 검증한 뒤 확인할 수 있는 결과와 근거를 돌려줍니다.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8b9099"/></marker>
+    <marker id="arrow-accent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#c8102e"/></marker>
+  </defs>
+  <rect x="17" y="12" width="120" height="36" rx="18" fill="#1f2328"/>
+  <text x="77.0" y="36" text-anchor="middle" font-size="16" font-weight="600" fill="#ffffff">사용자</text>
+  <path d="M128.0 48 V80" stroke="#8b9099" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+  <path d="M872.0 84 V40.0 Q872.0 30.0 862.0 30.0 H143" stroke="#c8102e" stroke-width="2" fill="none" marker-end="url(#arrow-accent)"/>
+  <text x="504.5" y="21.0" text-anchor="middle" font-size="15" fill="#c8102e" font-weight="600">직접 확인할 수 있는 결과와 근거</text>
+  <g id="step-1">
+    <rect x="17" y="84" width="222" height="244" rx="14" fill="#ffffff" stroke="#c9ced6" stroke-width="1.5"/>
+    <circle cx="49" cy="118" r="15" fill="#c8102e"/>
+    <text x="49" y="124" text-anchor="middle" font-size="16" font-weight="700" fill="#ffffff">1</text>
+    <text x="73" y="124" font-size="18" font-weight="700" fill="#1f2328">요청을 받습니다</text>
+    <text x="35" y="166" font-size="15" fill="#59636e">Discord 수신을 켜면</text>
+    <text x="35" y="188" font-size="15" fill="#59636e">지정한 사용자의 메시지와</text>
+    <text x="35" y="210" font-size="15" fill="#59636e">답장 맥락, 첨부 파일</text>
+    <text x="35" y="232" font-size="15" fill="#59636e">메타데이터를 전달합니다.</text>
+    <rect x="35" y="278" width="186" height="32" rx="8" fill="#f2f3f5"/>
+    <text x="128.0" y="299" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace" font-size="14" fill="#3d434b">Discord 수신</text>
+  </g>
+  <path d="M242 206.0 H262" stroke="#8b9099" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+  <g id="step-2">
+    <rect x="265" y="84" width="222" height="244" rx="14" fill="#ffffff" stroke="#c9ced6" stroke-width="1.5"/>
+    <circle cx="297" cy="118" r="15" fill="#c8102e"/>
+    <text x="297" y="124" text-anchor="middle" font-size="16" font-weight="700" fill="#ffffff">2</text>
+    <text x="321" y="124" font-size="18" font-weight="700" fill="#1f2328">리드가 맡깁니다</text>
+    <text x="283" y="166" font-size="15" fill="#59636e">간단한 요청은 직접 처리.</text>
+    <text x="283" y="188" font-size="15" fill="#59636e">긴 작업은 브리프와</text>
+    <text x="283" y="210" font-size="15" fill="#59636e">Done 조건을 붙여</text>
+    <text x="283" y="232" font-size="15" fill="#59636e">레인을 엽니다.</text>
+    <rect x="283" y="278" width="186" height="32" rx="8" fill="#f2f3f5"/>
+    <text x="376.0" y="299" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace" font-size="14" fill="#3d434b">브리프 + Done</text>
+  </g>
+  <path d="M490 206.0 H510" stroke="#8b9099" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+  <g id="step-3">
+    <rect x="513" y="84" width="222" height="244" rx="14" fill="#ffffff" stroke="#c9ced6" stroke-width="1.5"/>
+    <circle cx="545" cy="118" r="15" fill="#c8102e"/>
+    <text x="545" y="124" text-anchor="middle" font-size="16" font-weight="700" fill="#ffffff">3</text>
+    <text x="569" y="124" font-size="18" font-weight="700" fill="#1f2328">레인이 보고합니다</text>
+    <text x="531" y="166" font-size="15" fill="#59636e">herdr 또는 hc의 전용</text>
+    <text x="531" y="188" font-size="15" fill="#59636e">OMP 세션입니다. 작업 로그,</text>
+    <text x="531" y="210" font-size="15" fill="#59636e">보고, 체크포인트로 재시작</text>
+    <text x="531" y="232" font-size="15" fill="#59636e">후에도 진행을 확인합니다.</text>
+    <rect x="531" y="278" width="186" height="32" rx="8" fill="#f2f3f5"/>
+    <text x="624.0" y="299" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace" font-size="14" fill="#3d434b">OMP 레인</text>
+  </g>
+  <path d="M738 206.0 H758" stroke="#8b9099" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+  <g id="step-4">
+    <rect x="761" y="84" width="222" height="244" rx="14" fill="#fbeaec" stroke="#c8102e" stroke-width="2"/>
+    <circle cx="793" cy="118" r="15" fill="#c8102e"/>
+    <text x="793" y="124" text-anchor="middle" font-size="16" font-weight="700" fill="#ffffff">4</text>
+    <text x="817" y="124" font-size="18" font-weight="700" fill="#1f2328">완료를 검증합니다</text>
+    <text x="779" y="166" font-size="15" fill="#59636e">완료 보고 자체는 증거가</text>
+    <text x="779" y="188" font-size="15" fill="#59636e">아닙니다. Done 절차는 명령</text>
+    <text x="779" y="210" font-size="15" fill="#59636e">결과, 파일 상태, PR 병합,</text>
+    <text x="779" y="232" font-size="15" fill="#59636e">패키지 버전 게시 등을</text>
+    <text x="779" y="254" font-size="15" fill="#59636e">확인할 수 있습니다.</text>
+    <rect x="779" y="278" width="186" height="32" rx="8" fill="#f2f3f5"/>
+    <text x="872.0" y="299" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace" font-size="14" fill="#3d434b">검증 신호</text>
+  </g>
+  <path d="M265 340 V346 H735 V340" stroke="#8b9099" stroke-width="1.5" fill="none"/>
+  <text x="500.0" y="376" text-anchor="middle" font-size="15" fill="#59636e">레지스트리는 작업을 세션과 메신저 스레드에 연결합니다</text>
+</svg>

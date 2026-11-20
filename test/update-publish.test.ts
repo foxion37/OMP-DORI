@@ -8,10 +8,11 @@ import { publicSource } from "../src/update/publish-export.ts";
 import { candidateReport } from "../src/update/report.ts";
 import { gitIdentity } from "../src/update/source.ts";
 import { readState, saveJson } from "../src/update/state.ts";
-import { fixture, git, publicationFixture } from "./update-setup.ts";
+import { detectionReceipt } from "./update-detection-setup.ts";
+import { fixture, git, it, publicationFixture } from "./update-setup.ts";
 
 // Real Git setup and multiple publication passes include fixture subprocesses with 10-second deadlines.
-test("public export uses only the checked manifest, preserves modes and independent owner history", async () => {
+it("public export uses only the checked manifest, preserves modes and independent owner history", async () => {
   const f = await publicationFixture();
   const before = gitIdentity(f.job.candidate);
   const history = structuredClone(f.job.history);
@@ -64,14 +65,32 @@ test("public export uses only the checked manifest, preserves modes and independ
     deployed: false,
     activationRequiresNewOwnerApproval: false,
   });
-  expect((await new DoriUpdater(f.config, () => {}).once()).outcome).toBe("duplicate");
+  try {
+    expect((await new DoriUpdater(f.config, () => {}).once()).outcome).toBe("duplicate");
+  } catch (error) {
+    try {
+      const receipt = detectionReceipt(f.config.root);
+      // This fixture uses only local Git data; retain its failed detector output before afterEach removes it.
+      console.error(
+        "PUBLICATION_REPEAT_CHECK_FAILURE",
+        JSON.stringify({
+          receipt,
+          stdout: readFileSync(receipt.stdout, "utf8"),
+          stderr: readFileSync(receipt.stderr, "utf8"),
+        }),
+      );
+    } catch (diagnosticError) {
+      console.error("PUBLICATION_REPEAT_CHECK_DIAGNOSTIC_FAILED", String(diagnosticError));
+    }
+    throw error;
+  }
   expect(git(f.target, "rev-list", "--count", "main")).toBe("3");
   const config = join(f.directory, "updater.json");
   saveJson(config, f.config);
   expect(await runUpdate(["check", "--config", config])).toBe(0);
 }, 30_000);
 
-test("the next detected candidate uses the persisted successful baseline while configured base remains unchanged", async () => {
+it("the next detected candidate uses the persisted successful baseline while configured base remains unchanged", async () => {
   const f = await publicationFixture();
   expect((await f.updater.once()).outcome).toBe("promoted");
   const published = git(f.target, "rev-parse", "main");
@@ -90,7 +109,7 @@ test("the next detected candidate uses the persisted successful baseline while c
   expect(git(f.target, "rev-parse", "main")).toBe(published);
 });
 
-test.each(["bytes", "mode"] as const)(
+it.each(["bytes", "mode"] as const)(
   "changed checked %s hold promotion without rewriting ready or its baseline",
   async (kind) => {
     const f = await publicationFixture();
@@ -133,7 +152,7 @@ test("promotion is optional and lexical source identity survives a legitimate re
   expect(loadUpdateConfig(file).localSource).toBe(alias);
 });
 
-test("a forged ported manifest cannot export candidate Git metadata while the checked source stays unchanged", async () => {
+it("a forged ported manifest cannot export candidate Git metadata while the checked source stays unchanged", async () => {
   const f = await publicationFixture();
   const path = join(f.job.directory, "ported-source.json");
   const manifest = JSON.parse(readFileSync(path, "utf8"));

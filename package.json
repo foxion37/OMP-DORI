@@ -9,8 +9,12 @@
     "dori-harness": "src/cli.ts"
   },
   "scripts": {
-    "check": "biome check .",
-    "fmt": "biome format --write .",
+    "check": "bun run lint && bun run format:check",
+    "check:fixtures": "bun scripts/check-test-fixtures.ts",
+    "lint": "oxlint --deny-warnings",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "prepare": "husky",
     "typecheck": "bun scripts/typecheck.ts",
     "lint:loc": "bun scripts/check-loc.ts",
     "knip": "knip",
@@ -18,12 +22,14 @@
     "test:ci": "bun test --parallel=2 --timings=.bun-test-timings.json ./test/",
     "test:skill": "cd skills/dori-mode/scripts && bun test",
     "test:extension": "cd extension && bun test",
-    "ci": "bun run check && bun run typecheck && bun run knip && bun run lint:loc && bun run test:ci && bun run test:skill && bun run test:extension"
+    "ci": "bun run check:fixtures && bun run check && bun run typecheck && bun run knip && bun run lint:loc && bun run test:ci && bun run test:skill && bun run test:extension"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.6.6",
     "@types/bun": "^1.4.4",
+    "husky": "^9.1.7",
     "knip": "^6.44.2",
+    "oxlint": "1.94.0",
+    "prettier": "^3.10.1",
     "typescript": "^5.9"
   },
   "engines": {

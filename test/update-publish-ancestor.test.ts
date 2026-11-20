@@ -1,10 +1,10 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { publishRelease } from "../src/update/publish.ts";
 import type { PublicationRecord } from "../src/update/publish-types.ts";
 import { readState } from "../src/update/state.ts";
-import { git, publicationFixture } from "./update-setup.ts";
+import { git, it, publicationFixture } from "./update-setup.ts";
 
-test.each(["published", "main-pushing"] as const)(
+it.each(["published", "main-pushing"] as const)(
   "a %s receipt resumes as published when owner main advances beyond its commit",
   async (status) => {
     const f = await publicationFixture();

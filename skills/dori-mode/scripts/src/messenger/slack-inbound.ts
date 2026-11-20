@@ -1,13 +1,23 @@
 import type { Slack } from "./slack.ts";
-import { type ThreadLedger, tsAfter } from "./thread-ledger.ts";
+import { MessengerError } from "./http.ts";
+import { type SlackScope, type ThreadLedger, tsAfter } from "./thread-ledger.ts";
 
 export type Inbound = {
+  readonly scope: SlackScope;
   readonly source: "threads-view" | "own-thread" | "unread";
   readonly channel: string;
   readonly ts: string;
   readonly threadTs?: string | undefined;
+  readonly inferredThreadTs?: string;
   readonly user?: string | undefined;
   readonly text?: string | undefined;
+};
+
+/** Full text is JSON-escaped on the one line consumed by the monitor. */
+export const formatSlackInbound = (i: Inbound, qualifiedRoutes = false): string => {
+  const channel = qualifiedRoutes ? `slack:${i.scope.teamId}:${i.scope.userId}:${i.channel}` : i.channel;
+  const thread = i.threadTs ?? (qualifiedRoutes ? i.inferredThreadTs : undefined);
+  return `INBOUND ${i.source} ${channel} ${thread ?? "-"} ${i.ts || "-"} ${i.user ?? "-"} ${JSON.stringify(i.text ?? "")}`;
 };
 
 type Msg = {
@@ -21,22 +31,48 @@ type Msg = {
 type ThreadView = { readonly root_msg?: Msg & { readonly channel?: string }; readonly unread_replies?: readonly Msg[] };
 type Counted = { readonly id: string; readonly has_unreads?: boolean; readonly mention_count?: number };
 
-export type InboundOptions = { readonly selfUserId: string; readonly threadsViewLimit?: number };
+export type InboundOptions = { readonly threadsViewLimit?: number };
 
+const checkParent = (message: Msg, channel: string, rootTs: string): void => {
+  if (message.ts !== undefined && typeof message.ts !== "string")
+    throw new MessengerError("Slack message has an invalid timestamp identity", 0);
+  if (
+    (message.channel !== undefined && message.channel !== channel) ||
+    (message.thread_ts !== undefined && message.thread_ts !== rootTs)
+  )
+    throw new MessengerError("Slack reply does not match its channel and thread parent", 0);
+};
+
+/**
+ * One poll. Every message goes to `emit` only after all three sources were read, and the own-thread positions are saved
+ * only after every message was emitted: a failed read or emit moves no cursor, so the next poll returns them again.
+ */
 export const pollSlackInbound = async (
   slack: Slack,
   ledger: ThreadLedger,
   opts: InboundOptions,
-): Promise<Inbound[]> => {
+  emit: (message: Inbound) => void | Promise<void>,
+): Promise<void> => {
+  const scope = await slack.identity();
+  ledger.assertScoped();
   const out: Inbound[] = [];
-  const seen = new Set<string>();
-  const add = (i: Inbound) => {
+  const seenUpTo: { channel: string; rootTs: string; ts: string }[] = [];
+  const seen = new Map<string, Inbound>();
+  const add = (i: Omit<Inbound, "scope">) => {
+    if (!/^[CGD][A-Za-z0-9_-]+$/.test(i.channel))
+      throw new MessengerError("Slack inbound has an invalid channel identity", 0);
     const k = `${i.channel}:${i.ts}`;
-    if (seen.has(k)) return;
-    seen.add(k);
-    out.push(i);
+    const previous = seen.get(k);
+    if (previous) {
+      if ((previous.threadTs ?? previous.inferredThreadTs) !== (i.threadTs ?? i.inferredThreadTs))
+        throw new MessengerError("Slack duplicate reply does not match its thread parent", 0);
+      return;
+    }
+    const scoped = { ...i, scope };
+    seen.set(k, scoped);
+    out.push(scoped);
   };
-  const fromOthers = (m: Msg) => m.user !== undefined && m.user !== opts.selfUserId && !m.bot_id;
+  const fromOthers = (m: Msg) => m.user !== undefined && m.user !== scope.userId && !m.bot_id;
 
   const view = (await slack.call("subscriptions.thread.getView", { limit: opts.threadsViewLimit ?? 20 })) as {
     threads?: readonly ThreadView[];
@@ -44,14 +80,25 @@ export const pollSlackInbound = async (
   for (const t of view.threads ?? []) {
     const channel = t.root_msg?.channel;
     if (!channel) continue;
+    const rootTs = t.root_msg?.ts;
+    if (typeof rootTs !== "string" || !rootTs) throw new MessengerError("Slack thread view has no root timestamp", 0);
     for (const m of t.unread_replies ?? []) {
+      checkParent(m, channel, rootTs);
       if (!m.ts || !fromOthers(m)) continue;
-      add({ source: "threads-view", channel, ts: m.ts, threadTs: m.thread_ts, user: m.user, text: m.text });
-      if (m.thread_ts) await ledger.markSeen(channel, m.thread_ts, m.ts);
+      // No position is taken from this partial view: an own thread's older unseen replies are read below.
+      add({
+        source: "threads-view",
+        channel,
+        ts: m.ts,
+        threadTs: m.thread_ts,
+        ...(m.thread_ts === undefined ? { inferredThreadTs: rootTs } : {}),
+        user: m.user,
+        text: m.text,
+      });
     }
   }
 
-  for (const t of await ledger.list()) {
+  for (const t of await ledger.list(scope)) {
     const r = (await slack.call("conversations.replies", {
       channel: t.channel,
       ts: t.rootTs,
@@ -61,12 +108,13 @@ export const pollSlackInbound = async (
     })) as { messages?: readonly Msg[] };
     let newest = t.seenTs;
     for (const m of r.messages ?? []) {
+      checkParent(m, t.channel, t.rootTs);
       if (!m.ts || !tsAfter(m.ts, t.seenTs)) continue;
       if (tsAfter(m.ts, newest)) newest = m.ts;
       if (fromOthers(m))
         add({ source: "own-thread", channel: t.channel, ts: m.ts, threadTs: t.rootTs, user: m.user, text: m.text });
     }
-    if (newest !== t.seenTs) await ledger.markSeen(t.channel, t.rootTs, newest);
+    if (newest !== t.seenTs) seenUpTo.push({ channel: t.channel, rootTs: t.rootTs, ts: newest });
   }
 
   const counts = (await slack.call("client.counts", {})) as {
@@ -82,5 +130,6 @@ export const pollSlackInbound = async (
     if (c.has_unreads || (c.mention_count ?? 0) > 0)
       add({ source: "unread", channel: c.id, ts: "", text: `${c.mention_count ?? 0} mention(s), unread` });
   }
-  return out;
+  for (const message of out) await emit(message);
+  await ledger.markSeen(scope, seenUpTo);
 };

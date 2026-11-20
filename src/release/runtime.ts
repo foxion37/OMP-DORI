@@ -1,9 +1,20 @@
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { consumerPaths, owned, realDirectory, regularFile } from "./files.ts";
 import { assertNativeSource } from "./native.ts";
 import { assertSourceBundle, readSourceBundle, SourceBundleError } from "./source-bundle.ts";
+
+/** A loaded physical release binds its home independently of the caller's inherited Dori environment. */
+export function consumerReleaseHome(source: string): string | undefined {
+  if (
+    !/^[a-f0-9]{40}-[a-f0-9]{16}$/.test(basename(source)) ||
+    basename(dirname(source)) !== "releases" ||
+    basename(dirname(dirname(source))) !== "releases"
+  )
+    return undefined;
+  return dirname(dirname(dirname(source)));
+}
 
 /** Managed cache paths follow this loaded release's lock without changing the user's config. */
 export function resolveConsumerOmpUlwPath(
@@ -18,7 +29,11 @@ export function resolveConsumerOmpUlwPath(
     readonly useDefault?: boolean;
   } = {},
 ): string {
-  const paths = consumerPaths(home);
+  // The physical release, not inherited DORI_HOME, owns its dependency namespace.
+  const source = realpathSync(sourceRoot);
+  const doriHome = consumerReleaseHome(source);
+  if (!doriHome) return configuredPath;
+  const paths = consumerPaths(home, doriHome);
   const entry = relative(paths.dependencies, configuredPath);
   if (
     !useDefault &&
@@ -27,10 +42,6 @@ export function resolveConsumerOmpUlwPath(
   )
     return configuredPath;
 
-  // Resolve the helper's physical location at call time, never the mutable ~/.dori/src pointer.
-  const source = realpathSync(sourceRoot);
-  if (dirname(source) !== paths.releases || !/^[a-f0-9]{40}-[a-f0-9]{16}$/.test(basename(source)))
-    return configuredPath;
   try {
     owned(source);
     const lock = join(source, "omp-ulw.lock");
@@ -47,9 +58,29 @@ export function resolveConsumerOmpUlwPath(
     owned(dependency);
     if (!regularFile(join(dependency, "index.ts"))) throw new Error(`Missing consumer dependency entry: ${dependency}`);
     if (bundle) assertSourceBundle(dependency, bundle, home);
-    return entry.endsWith("/index.ts") ? join(dependency, "index.ts") : dependency;
+    return useDefault || entry.endsWith("/index.ts") ? join(dependency, "index.ts") : dependency;
   } catch (error) {
     throw new SourceBundleError(error instanceof Error ? error.message : String(error));
+  }
+}
+
+function managedWindowsAlias(command: string, dori: string, releases: string): boolean {
+  // The same Windows release root can arrive via its short, long or case-variant path.
+  // Identify only the fixed launcher layout; the executable may not exist yet.
+  if (process.platform !== "win32") return false;
+  const path = command.replaceAll("\\", "/");
+  const shim = /^(.+\/)bin\/omp$/.exec(path);
+  const launcher = /^(.+\/)[a-f0-9]{40}-[a-f0-9]{16}\/scripts\/consumer\/omp$/.exec(path);
+  const alias = shim?.[1] ?? launcher?.[1];
+  if (!alias) return false;
+  const root = shim ? dori : releases;
+  try {
+    if (realpathSync(alias) === root) return true;
+    const actual = statSync(alias, { bigint: true });
+    const expected = statSync(root, { bigint: true });
+    return actual.isDirectory() && actual.ino !== 0n && actual.ino === expected.ino && actual.dev === expected.dev;
+  } catch {
+    return false;
   }
 }
 
@@ -62,28 +93,43 @@ export function resolveConsumerOmpCommand(
   }: { readonly home?: string; readonly sourceRoot?: string } = {},
 ): readonly string[] {
   const source = realpathSync(sourceRoot);
-  const paths = consumerPaths(home);
-  if (dirname(source) !== paths.releases || !/^[a-f0-9]{40}-[a-f0-9]{16}$/.test(basename(source))) return configured;
-  const manifest = JSON.parse(readFileSync(join(paths.manifests, `${basename(source)}.json`), "utf8"));
-  if (manifest.requirements.omp !== "18.20.0") return configured;
+  const doriHome = consumerReleaseHome(source);
+  if (!doriHome) return configured;
+  const paths = consumerPaths(home, doriHome);
   const first = configured[0] ?? "omp";
   const managed =
-    first === join(paths.dori, "bin/omp") ||
-    /^[a-f0-9]{40}-[a-f0-9]{16}\/scripts\/consumer\/omp$/.test(relative(paths.releases, first));
+    isAbsolute(first) &&
+    (first.split("/").join(sep) === join(paths.dori, "bin", "omp") ||
+      /^[a-f0-9]{40}-[a-f0-9]{16}\/scripts\/consumer\/omp$/.test(
+        relative(paths.releases, first).split(sep).join("/"),
+      ) ||
+      managedWindowsAlias(first, paths.dori, paths.releases));
   if (first !== "omp" && !managed) return configured;
+  const manifest = JSON.parse(readFileSync(join(paths.manifests, `${basename(source)}.json`), "utf8"));
+  if (manifest.requirements.omp !== "18.20.0") return configured;
   assertNativeSource(source, home);
   return [
     join(source, "scripts/consumer/omp"),
     "--no-extensions",
     "-e",
     join(source, "extension"),
+    ...(paths.dori === join(paths.home, ".dori")
+      ? []
+      : [
+          "--config",
+          join(paths.dori, "omp.yml"),
+          "--config",
+          join(paths.root, "consumer-discovery", basename(source), "omp.yml"),
+        ]),
     ...configured.slice(1),
   ];
 }
 
 /** Selected process argv is one command, never shell syntax or a partial executable override. */
-export function processOmpCommand(): readonly string[] | undefined {
-  const raw = process.env["DORI_AGENT_ARGV"];
+export function processOmpCommand(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): readonly string[] | undefined {
+  const raw = env["DORI_AGENT_ARGV"];
   if (raw === undefined) return undefined;
   const selected: unknown = JSON.parse(raw);
   if (
@@ -97,21 +143,29 @@ export function processOmpCommand(): readonly string[] | undefined {
 }
 
 /** Selected argv replaces only literal OMP and the marked installation's lexical/canonical defaults. */
-export function resolveProcessOmpCommand(configured: readonly string[], configFile: string): readonly string[] {
-  const selected = processOmpCommand();
+export function resolveProcessOmpCommand(
+  configured: readonly string[],
+  configFile: string,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): readonly string[] {
+  const selected = processOmpCommand(env);
   const installation = resolve(dirname(configFile));
   const installed =
     selected !== undefined &&
     (existsSync(join(installation, ".omp-dori")) || existsSync(join(installation, "releases/consumer-owner.json"))) &&
     (configured[0] === join(installation, "bin/omp") || configured[0] === join(realpathSync(installation), "bin/omp"));
   if (selected && (configured[0] === "omp" || installed)) return [...selected, ...configured.slice(1)];
-  const legacy = configured[0] === "omp" ? process.env["DORI_AGENT_CMD"] : undefined;
+  const legacy = configured[0] === "omp" ? env["DORI_AGENT_CMD"] : undefined;
   return legacy ? [legacy, ...configured.slice(1)] : configured;
 }
 
 /** A managed process selects its prepared default, while an explicit external dependency remains a user choice. */
-export function resolveProcessOmpUlwPath(configured: string, home: string): string {
-  const selected = process.env["DORI_OMP_ULW_PATH"];
+export function resolveProcessOmpUlwPath(
+  configured: string,
+  home: string,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): string {
+  const selected = env["DORI_OMP_ULW_PATH"];
   if (!selected) return configured;
   const managed = /^omp-ulw-[a-f0-9]{40}(?:-[a-f0-9]{64})?(?:\/index\.ts)?$/.test(
     relative(consumerPaths(home).dependencies, configured),
@@ -126,6 +180,9 @@ export function resolveProcessOmpUlwPath(configured: string, home: string): stri
   }
   return selected;
 }
+
+/** Empty assignments override tokens retained by the terminal server; lanes do not host messenger bots. */
+export const laneMessengerOverrides = { DORI_DISCORD_TOKEN: "", DORI_TELEGRAM_TOKEN: "" } as const;
 
 /** Only launch context crosses a terminal server boundary; paths retain the caller's OS resolution. */
 export function doriLaunchEnv(

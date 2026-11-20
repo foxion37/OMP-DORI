@@ -94,7 +94,9 @@ export type Delivery = "delivered" | "unconfirmed" | "failed";
  * Delivers the text once through the session's runtime. Delivery is confirmed only by a state change: the agent's
  * status moving to "working" from something else. A session that was already working cannot show that change, so its
  * send comes back "unconfirmed" and the caller decides. `when` defaults to the status read before the send, so a
- * runtime that compares and sends atomically refuses if the agent changed in between. Nothing is ever sent twice.
+ * runtime can hold on a status change. If supplied, `expectedSessionId` must also match the live runtime probe before
+ * delivery; the runtime command itself does not compare session IDs. `strictIdle` additionally requires idle at the
+ * runtime's delivery boundary. Nothing is ever sent twice.
  */
 export const sendVerified = async (
   rts: Runtimes,
@@ -102,25 +104,49 @@ export const sendVerified = async (
   ref: SessionRef,
   text: string,
   when?: DeliverWhen,
+  expectedSessionId?: string,
+  strictIdle?: boolean,
 ): Promise<Delivery> => {
   if (/`|\$\(/.test(text)) throw new UnsafeTextError("refusing to send text containing a backtick or $(");
   const before = await statusLookup(rts, ref);
   if (before.error) console.error(`sendVerified ${ref.id}: status lookup failed before send: ${before.error}`);
   // No running agent means a bare shell, where typed text runs as a command (#66). A failed lookup is doubt: refuse.
   if (before.status === undefined || !ALIVE_STATUSES.has(before.status)) return "failed";
-  const outcome = await rts
-    .for(ref)
-    .deliver(ref, text, { when: when ?? (before.status === "working" ? "working" : "idle") });
+  const outcome = await rts.for(ref).deliver(ref, text, {
+    when: when ?? (before.status === "working" ? "working" : "idle"),
+    ...(expectedSessionId === undefined ? {} : { expectedSessionId }),
+    ...(strictIdle ? { strictIdle } : {}),
+  });
   if (outcome.kind === "no-agent" || outcome.kind === "not-ready") return "failed";
   if (outcome.kind === "ambiguous") {
     // The text may already be there: report it and let the caller decide, never send it again.
     console.error(`sendVerified ${ref.id}: delivery ambiguous: ${outcome.detail}`);
     return "unconfirmed";
   }
-  if (outcome.kind === "typed") console.error(`sendVerified ${ref.id}: text typed but Enter failed`);
+  if (outcome.kind === "typed") {
+    console.error(`sendVerified ${ref.id}: text typed but Enter failed`);
+    return "unconfirmed";
+  }
   if (before.status === "working") return "unconfirmed";
   for (let attempt = 0; attempt < 6; attempt++) {
     await clock.sleep(700);
+    if (expectedSessionId !== undefined) {
+      const observed = await rts
+        .for(ref)
+        .probe(ref, { foregroundOnly: true })
+        .catch(() => undefined);
+      if (observed?.status === "gone" || (observed?.sessionId && observed.sessionId !== expectedSessionId))
+        return "unconfirmed";
+      if (
+        observed?.sessionId === expectedSessionId &&
+        observed.pid !== undefined &&
+        observed.status === "working" &&
+        !observed.shellInFront &&
+        observed.approvalPending === false
+      )
+        return "delivered";
+      continue;
+    }
     const after = await statusLookup(rts, ref);
     if (after.error) console.error(`sendVerified ${ref.id}: status lookup failed: ${after.error}`);
     if (after.status === "working") return "delivered";

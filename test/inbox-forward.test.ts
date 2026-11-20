@@ -27,7 +27,7 @@ function setup(state: "idle" | "working" = "idle") {
 describe("a forwarded inbox (.forward marker)", () => {
   test("new messages for the old ref go to the new inbox; old-path entries are merged by the next flush, once", async () => {
     const { w, d, old, oldWriter } = setup();
-    d.store.enqueue(OLD, m("via new binary", 2));
+    await d.store.enqueue(OLD, m("via new binary", 2), false);
     expect(d.store.queued(NEW).map((x) => x.text)).toEqual(["via new binary"]);
     oldWriter(m("via old binary", 1));
     expect(await flushInbox(d, NEW)).toBe("delivered");

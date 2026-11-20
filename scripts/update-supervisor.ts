@@ -1,7 +1,8 @@
 #!/usr/bin/env bun
 import type { Subprocess } from "bun";
-import { readFileSync, realpathSync } from "node:fs";
+import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
+import { loadUpdateConfig } from "../src/update/load.ts";
 
 const options = new Map<string, string>();
 for (let i = 2; i < process.argv.length; i += 2) {
@@ -23,12 +24,8 @@ const executable = resolve(bun);
 let intervalSeconds: number;
 let originalController: string;
 try {
-  const data: unknown = JSON.parse(readFileSync(configPath, "utf8"));
-  if (typeof data !== "object" || data === null || !("intervalSeconds" in data)) throw new Error();
-  const interval = data.intervalSeconds;
-  if (typeof interval !== "number" || !Number.isInteger(interval) || interval < 1 || interval > 86400)
-    throw new Error();
-  intervalSeconds = interval;
+  // The same loader as `upstream check`, so its default and accepted range cannot drift from the controller's.
+  intervalSeconds = loadUpdateConfig(configPath).intervalSeconds;
   originalController = realpathSync(controllerPath);
 } catch {
   console.error("DORI_SUPERVISOR_CONFIG_ERROR");
@@ -80,7 +77,8 @@ while (!stopped) {
     child = undefined;
     if (stopped || code === 130) break;
     if (code === 4) console.error("DORI_SUPERVISOR_RETRY detector=unavailable");
-    if (code !== 0 && code !== 3 && code !== 4) {
+    if (code === 5) console.error("DORI_SUPERVISOR_RETRY lock=live-controller");
+    if (code !== 0 && code !== 3 && code !== 4 && code !== 5) {
       console.error(`DORI_SUPERVISOR_HELD exit=${code}`);
       process.exit(2);
     }

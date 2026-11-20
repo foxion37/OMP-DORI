@@ -147,6 +147,8 @@ export async function prepareRelease(
         "--frozen-lockfile",
         "--ignore-scripts",
         "--silent",
+        // Keep the extension's full host install; root and skill need only runtime dependencies.
+        ...(relative === "extension" ? [] : ["--production"]),
       ],
       join(record.releasePath, relative),
       env,

@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
@@ -6,9 +6,9 @@ import { DoriUpdater } from "../src/update/controller.ts";
 import { publishRelease } from "../src/update/publish.ts";
 import type { PublicationRecord } from "../src/update/publish-types.ts";
 import { persistJob, persistState, readJob, readState, saveJson } from "../src/update/state.ts";
-import { git, publicationFixture } from "./update-setup.ts";
+import { git, it, publicationFixture } from "./update-setup.ts";
 
-test("main movement after durable publication preparation holds without rebasing or overwriting owner history", async () => {
+it("main movement after durable publication preparation holds without rebasing or overwriting owner history", async () => {
   const f = await publicationFixture();
   const commands = structuredClone(f.job.commands);
   const interrupted = new Error("fixture interruption after durable local preparation");
@@ -40,7 +40,7 @@ test("main movement after durable publication preparation holds without rebasing
   expect(git(f.target, "rev-parse", "main")).toBe(owner);
 });
 
-test("lost acknowledgement after actual main push resumes from intent and real refs before upstream dedup or paid work", async () => {
+it("lost acknowledgement after actual main push resumes from intent and real refs before upstream dedup or paid work", async () => {
   const f = await publicationFixture();
   const commands = structuredClone(f.job.commands);
   const review = structuredClone(f.job.review);
@@ -94,7 +94,7 @@ test("lost acknowledgement after actual main push resumes from intent and real r
   });
 });
 
-test("an actually moved owned candidate branch is held even when its main still matches", async () => {
+it("an actually moved owned candidate branch is held even when its main still matches", async () => {
   const f = await publicationFixture();
   const interrupted = new Error("fixture interruption after confirmed candidate push");
   await expect(
@@ -114,7 +114,7 @@ test("an actually moved owned candidate branch is held even when its main still 
   expect(readState(f.updater.context).baseline).toBeUndefined();
 });
 
-test("two real controllers recovering one dead ready owner preserve a single public history", async () => {
+it("two real controllers recovering one dead ready owner preserve a single public history", async () => {
   const f = await publicationFixture();
   const commands = structuredClone(f.job.commands);
   const state = readState(f.updater.context);
@@ -143,7 +143,8 @@ process.exit(await runUpdate(["check", "--config", ${JSON.stringify(config)}]));
   );
   const codes = await Promise.all(children.map((child) => child.exited));
   expect(codes).toContain(0);
-  expect(codes.every((code) => code === 0 || code === 2)).toBe(true);
+  // The other controller either holds (2) or finds the winner's live lock and leaves it for a retry (5).
+  expect(codes.every((code) => code === 0 || code === 2 || code === 5)).toBe(true);
   expect(git(f.target, "rev-list", "--count", "main")).toBe("3");
   expect(readJob(f.config.root, f.job.id).commands).toEqual(commands);
   expect(readState(f.updater.context).baseline).toBe(f.job.upstream);

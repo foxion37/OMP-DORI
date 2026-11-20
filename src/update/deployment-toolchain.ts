@@ -1,6 +1,6 @@
 import { lstatSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
-import { assertNativeSource, provisionNativeSource, type NativeReceipt } from "../release/native.ts";
+import { assertNativeSource, leaseNativePath, provisionNativeSource, type NativeReceipt } from "../release/native.ts";
 import { assertSourceBundle, readSourceBundle } from "../release/source-bundle.ts";
 import { provisionSourceOverlay } from "../release/source-checkout.ts";
 import { saveDeploymentJson } from "./deployment-files.ts";
@@ -9,6 +9,8 @@ import type { DeploymentConfig, DeploymentRecord, ToolchainReceipt } from "./dep
 import { digest } from "./source.ts";
 
 export function assertRuntimeToolchain(config: DeploymentConfig, receipt: ToolchainReceipt): void {
+  // Leased before anything is read, so a native cache prune keeps it or has finished.
+  leaseNativePath(config.home, receipt.omp);
   if (
     receipt.nativeConfig !== join(config.releaseRoot, "native-config.json") ||
     receipt.ompEntry !== realpathSync(receipt.omp) ||
@@ -44,6 +46,8 @@ export async function inspectRuntimeToolchain(
   legacy = false,
   nativeSource?: NativeReceipt,
 ): Promise<ToolchainReceipt> {
+  // Direct prior-image inspection also verifies and records an explicit executable inside the cache.
+  leaseNativePath(config.home, omp);
   const nativeConfig = join(config.releaseRoot, "native-config.json");
   const existing = lstatSync(nativeConfig, { throwIfNoEntry: false });
   if (existing) {

@@ -26,6 +26,7 @@ const itemBlock = (item: WorklogItem): string =>
   [
     `### ${item.id} ${item.title}`,
     `- Source: ${item.source}`,
+    ...(item.thread === undefined ? [] : [`- Thread: ${item.thread}`]),
     `- Opened: ${item.openedAt}`,
     `- Next: ${item.next ?? "(none yet)"}`,
     ...(item.notes.length ? ["- Notes:", ...item.notes.map((note) => `  - ${note.at} ${note.text}`)] : []),
@@ -46,7 +47,7 @@ export const worklogLines = (items: readonly WorklogItem[]): string[] => {
     `WORKLOG open=${open.length}`,
     ...open.map(
       (item) =>
-        `OPEN ${item.id} ${JSON.stringify(item.title)} source=${JSON.stringify(item.source)} next=${JSON.stringify(item.next ?? "")}`,
+        `OPEN ${item.id} ${JSON.stringify(item.title)} source=${JSON.stringify(item.source)}${item.thread === undefined ? "" : ` thread=${JSON.stringify(item.thread)}`} next=${JSON.stringify(item.next ?? "")}`,
     ),
   ];
 };

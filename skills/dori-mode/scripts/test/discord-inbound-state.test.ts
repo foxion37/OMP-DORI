@@ -21,7 +21,10 @@ test("Discord IDs remain lossless decimal strings and malformed environment valu
   }
 });
 
-test("per-channel cursors persist atomically in owned private files without temporary remnants", () => {
+// POSIX-only: these assert the cursor's 0700/0600 modes, its owner uid, and symlink/hardlink handling.
+const posix = test.skipIf(process.platform === "win32");
+
+posix("per-channel cursors persist atomically in owned private files without temporary remnants", () => {
   const state = withState();
   try {
     const store = fileDiscordInboundStore(state.dir, "20");
@@ -56,7 +59,7 @@ test("per-channel cursors persist atomically in owned private files without temp
   }
 });
 
-test("a corrupt or mismatched cursor stops intake instead of resetting and replaying history", () => {
+posix("a corrupt or mismatched cursor stops intake instead of resetting and replaying history", () => {
   const state = withState();
   try {
     const store = fileDiscordInboundStore(state.dir, "20");
@@ -76,7 +79,7 @@ test("a corrupt or mismatched cursor stops intake instead of resetting and repla
   }
 });
 
-test("publicly accessible cursor directories and files are rejected without changing their contents or modes", () => {
+posix("publicly accessible cursor directories and files are rejected without changing their contents or modes", () => {
   const state = withState();
   try {
     const root = join(state.dir, "discord-inbound");
@@ -98,7 +101,7 @@ test("publicly accessible cursor directories and files are rejected without chan
   }
 });
 
-test("cursor symlinks and hardlinks neither read nor replace an unrelated file", () => {
+posix("cursor symlinks and hardlinks neither read nor replace an unrelated file", () => {
   for (const hardlink of [false, true]) {
     const state = withState();
     try {
@@ -118,23 +121,26 @@ test("cursor symlinks and hardlinks neither read nor replace an unrelated file",
   }
 });
 
-test("a symlink cursor directory is rejected and an interrupted private temporary file never becomes the cursor", () => {
-  const state = withState();
-  try {
-    const target = join(state.dir, "other");
-    mkdirSync(target, { mode: 0o700 });
-    const linkedState = join(state.dir, "linked-state");
-    mkdirSync(linkedState, { mode: 0o700 });
-    symlinkSync(target, join(linkedState, "discord-inbound"));
-    expect(() => fileDiscordInboundStore(linkedState, "20")).toThrow("directory must be private");
-    expect(readdirSync(target)).toEqual([]);
-    const store = fileDiscordInboundStore(state.dir, "20");
-    store.save("100");
-    writeFileSync(join(state.dir, "discord-inbound", ".20.interrupted.tmp"), '{"cursor":"999"}', { mode: 0o600 });
-    expect(fileDiscordInboundStore(state.dir, "20").load()).toBe("100");
-    store.save("101");
-    expect(fileDiscordInboundStore(state.dir, "20").load()).toBe("101");
-  } finally {
-    state.done();
-  }
-});
+posix(
+  "a symlink cursor directory is rejected and an interrupted private temporary file never becomes the cursor",
+  () => {
+    const state = withState();
+    try {
+      const target = join(state.dir, "other");
+      mkdirSync(target, { mode: 0o700 });
+      const linkedState = join(state.dir, "linked-state");
+      mkdirSync(linkedState, { mode: 0o700 });
+      symlinkSync(target, join(linkedState, "discord-inbound"));
+      expect(() => fileDiscordInboundStore(linkedState, "20")).toThrow("directory must be private");
+      expect(readdirSync(target)).toEqual([]);
+      const store = fileDiscordInboundStore(state.dir, "20");
+      store.save("100");
+      writeFileSync(join(state.dir, "discord-inbound", ".20.interrupted.tmp"), '{"cursor":"999"}', { mode: 0o600 });
+      expect(fileDiscordInboundStore(state.dir, "20").load()).toBe("100");
+      store.save("101");
+      expect(fileDiscordInboundStore(state.dir, "20").load()).toBe("101");
+    } finally {
+      state.done();
+    }
+  },
+);

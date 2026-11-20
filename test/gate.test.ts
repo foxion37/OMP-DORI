@@ -6,6 +6,8 @@ import type { World } from "./fake.ts";
 import { setup } from "./harness-setup.ts";
 
 describe("review + merge gate", () => {
+  // POSIX-only: the diagnostic file's private mode (0o600) has no Windows equivalent.
+  const posix = test.skipIf(process.platform === "win32");
   const head = "a".repeat(40);
   function gh(w: World, checks: unknown[]) {
     w.gh = (argv) => {
@@ -46,7 +48,7 @@ describe("review + merge gate", () => {
     expect(w.usage.filter((e) => e.name === "dori.review_completed")).toHaveLength(2);
   });
 
-  test("exit 0 without a VERDICT line: bounded stdout tail kept privately, no receipt", async () => {
+  posix("exit 0 without a VERDICT line: bounded stdout tail kept privately, no receipt", async () => {
     const { w, d } = setup();
     gh(w, []);
     const lines = Array.from({ length: 205 }, (_, i) => `line-${i + 1}`);
@@ -69,7 +71,7 @@ describe("review + merge gate", () => {
     expect(d.store.receipt("o/r#8", head)).toBeUndefined();
   });
 
-  test("nonzero exit without a VERDICT line: stdout tail kept too, exit code in the error, no receipt", async () => {
+  posix("nonzero exit without a VERDICT line: stdout tail kept too, exit code in the error, no receipt", async () => {
     const { w, d } = setup();
     gh(w, []);
     w.reviewer = () => ({ code: 9, stdout: "partial reviewer output" });

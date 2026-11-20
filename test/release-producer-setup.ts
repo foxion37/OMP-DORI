@@ -43,7 +43,7 @@ export function releaseFixture(
   };
 }
 
-export function githubFixture() {
+export function githubFixture(jobNames: readonly string[] = ["check", "e2e-herdr", "e2e-hc"]) {
   const manifest = releaseFixture();
   const prefix = `repos/${RELEASE_REPOSITORY}`;
   const run: Record<string, unknown> = {
@@ -59,7 +59,7 @@ export function githubFixture() {
     status: "completed",
     conclusion: "success",
   };
-  const jobs: Record<string, unknown>[] = ["check", "test-macos", "e2e-herdr", "e2e-hc"].map((name, i) => ({
+  const jobs: Record<string, unknown>[] = jobNames.map((name, i) => ({
     name,
     head_sha: manifest.commit,
     run_id: 70,

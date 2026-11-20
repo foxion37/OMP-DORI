@@ -1,0 +1,47 @@
+{
+  // oxlint runs the correctness categories plus the codebase's own rules; Prettier owns layout.
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "unicorn", "oxc", "import"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "warn",
+    "perf": "warn"
+  },
+  "env": {
+    "es2024": true
+  },
+  "rules": {
+    // Project rules kept from the previous linter configuration.
+    "typescript/no-explicit-any": "error",
+    "typescript/consistent-type-imports": ["error", { "disallowTypeAnnotations": false }],
+    "eqeqeq": ["error", "always", { "null": "ignore" }],
+    "no-unused-vars": ["error", { "argsIgnorePattern": "^_", "varsIgnorePattern": "^_", "ignoreRestSiblings": true }],
+    "no-unused-expressions": ["error", { "allowTernary": true }],
+    // Defaults match the deleted module-graph test: any cycle length, `import type` erased as it is at run time.
+    "import/no-cycle": "error",
+    "import/no-duplicates": "error",
+
+    // Deliberately off: tsc noFallthroughCasesInSwitch covers fallthrough with type knowledge (process.exit returns never).
+    "no-fallthrough": "off",
+    // Deliberately off: `!` follows noUncheckedIndexedAccess guards that the code has already checked.
+    "typescript/no-non-null-assertion": "off",
+    // Deliberately off: the code base uses forEach for side-effect loops in a few places; for-of rewrites add churn and no safety.
+    "unicorn/no-array-for-each": "off",
+
+    // The previous configuration never enforced these either (no sign was set), so keeping them on would add only churn.
+    "no-await-in-loop": "off",
+    "no-shadow": "off",
+    "no-unmodified-loop-condition": "off",
+    "preserve-caught-error": "off",
+    "no-new": "off",
+    "no-underscore-dangle": "off",
+    "unicorn/no-array-sort": "off",
+    "unicorn/no-array-reverse": "off",
+    "unicorn/consistent-function-scoping": "off",
+    "unicorn/prefer-set-has": "off",
+    "unicorn/no-useless-spread": "off",
+    "oxc/no-map-spread": "off"
+  },
+  // Fixtures, the read-only reference checkout and local harness state are not product code.
+  "ignorePatterns": ["**/fixtures", "ref/**", ".hyper/**"]
+}

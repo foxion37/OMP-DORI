@@ -13,7 +13,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { validateReleaseManifest } from "../src/release/manifest.ts";
+import { supportsReleaseProfile, validateReleaseManifest } from "../src/release/manifest.ts";
 import type { ReleaseManifest } from "../src/release/types.ts";
 import { isReleaseVersion, releaseVersion } from "../src/release/version.ts";
 import { readSourceBundle } from "../src/release/source-bundle.ts";
@@ -35,7 +35,11 @@ function readAsset(directory: string, name: string): Buffer {
 }
 
 /** Only committed blobs selected by the public SourceManifest policy ever enter the archive. */
-export async function buildRelease(root: string, output: string, prerelease: boolean): Promise<ReleaseManifest> {
+export function buildRelease(root: string, output: string, prerelease: boolean): Promise<ReleaseManifest> {
+  return buildReleaseAssets(root, output, prerelease);
+}
+
+async function buildReleaseAssets(root: string, output: string, prerelease: boolean): Promise<ReleaseManifest> {
   if (!isReleaseVersion(releaseVersion)) throw new Error("Canonical package version is not a release version");
   const commit = (await git(root, ["rev-parse", "--verify", "HEAD^{commit}"])).toString().trim();
   const tree = (await git(root, ["rev-parse", "--verify", `${commit}^{tree}`])).toString().trim();
@@ -102,7 +106,7 @@ export async function buildRelease(root: string, output: string, prerelease: boo
         "-",
       ],
       temporary,
-      [...paths].sort().join("\0") + "\0",
+      `${[...paths].sort().join("\0")}\0`,
     );
     const archive = await command(["gzip", "-n", "-9", "-c"], temporary, tar);
     if (!sameManifest(observed, sourceManifest(source))) throw new Error("Source changed during release packaging");
@@ -131,6 +135,10 @@ export async function buildRelease(root: string, output: string, prerelease: boo
       },
       ompUlw: { repository: "https://github.com/dbc-hbin/omp-ulw.git", commit: pin },
     });
+    const capabilityFile = observed.files.find((file) => file.path === "release-capabilities.json");
+    if (capabilityFile) {
+      supportsReleaseProfile(manifest, manifest.requirements, readFileSync(join(source, capabilityFile.path)));
+    }
     const assets: Record<string, Buffer> = {
       [manifest.archive.name]: archive,
       "install.sh": readFileSync(join(source, "install.sh")),
@@ -158,7 +166,7 @@ export async function verifyDistribution(root: string, directory: string): Promi
   const assets = Object.fromEntries(names.map((name) => [name, readAsset(directory, name)]));
   const temporary = mkdtempSync(join(tmpdir(), "omp-dori-dist-check-"));
   try {
-    const expected = await buildRelease(root, join(temporary, "dist"), manifest.prerelease);
+    const expected = await buildReleaseAssets(root, join(temporary, "dist"), manifest.prerelease);
     if (!sameManifest(manifest.source, expected.source))
       throw new Error("Distribution source is not actual committed HEAD");
     for (const name of names) {

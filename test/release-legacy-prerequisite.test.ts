@@ -12,6 +12,9 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
+// POSIX-only: the fixture links shebang git/herdr stubs and executes shell wrappers through PATH.
+const posix = test.skipIf(process.platform === "win32");
+
 const roots: string[] = [];
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
@@ -42,16 +45,18 @@ function fixture(version = "18.20.0") {
   const run = (directories: readonly string[], command?: string, platform = "linux", arch = "x64") => {
     if (command)
       writeFileSync(join(home, ".dori/config.json"), JSON.stringify({ agentCommand: [command] }), { mode: 0o600 });
+    // The host adapter is chosen when provision.ts loads, so the child loads it after claiming its platform: a static
+    // import would bind the real host before the override below runs.
     return Bun.spawnSync(
       [
         process.execPath,
         "--eval",
-        `import { prerequisites } from ${JSON.stringify(resolve(import.meta.dir, "../src/release/provision.ts"))};
-Object.defineProperties(process, {
+        `Object.defineProperties(process, {
   platform: { value: ${JSON.stringify(platform)} },
   arch: { value: ${JSON.stringify(arch)} },
 });
-prerequisites(true);`,
+const { prerequisites } = await import(${JSON.stringify(resolve(import.meta.dir, "../src/release/provision.ts"))});
+prerequisites("herdr", true, true);`,
       ],
       { env: { HOME: home, PATH: [...directories, tools].join(":") }, stdout: "pipe", stderr: "pipe" },
     );
@@ -60,7 +65,7 @@ prerequisites(true);`,
 }
 
 for (const scenario of ["managed-only", "alias", "independent-behind", "configured-managed", "configured-alias"])
-  test(`legacy activation holds before executing a disappearing command: ${scenario}`, () => {
+  posix(`legacy activation holds before executing a disappearing command: ${scenario}`, () => {
     const f = fixture();
     const directories =
       scenario === "alias"
@@ -79,7 +84,7 @@ for (const scenario of ["managed-only", "alias", "independent-behind", "configur
     expect(existsSync(join(f.home, "executed"))).toBe(false);
   });
 
-test("legacy activation accepts a surviving independent command without rewriting configured arguments", () => {
+posix("legacy activation accepts a surviving independent command without rewriting configured arguments", () => {
   const f = fixture();
   const command = join(f.independent, "omp");
   const result = f.run([f.independent, f.managed], command);
@@ -88,14 +93,14 @@ test("legacy activation accepts a surviving independent command without rewritin
   expect(JSON.parse(readFileSync(join(f.home, ".dori/config.json"), "utf8"))).toEqual({ agentCommand: [command] });
 });
 
-test("legacy activation still enforces the independent native version minimum", () => {
+posix("legacy activation still enforces the independent native version minimum", () => {
   const f = fixture("18.18.7");
   const result = f.run([f.independent]);
   expect(result.exitCode).not.toBe(0);
   expect(result.stderr.toString()).toContain("OMP 18.18.8+");
 });
 
-test("legacy activation holds when no native command is available", () => {
+posix("legacy activation holds when no native command is available", () => {
   const f = fixture();
   const result = f.run([]);
   expect(result.exitCode).not.toBe(0);
@@ -111,6 +116,6 @@ for (const [platform, arch] of [
     const f = fixture();
     const result = f.run([f.independent], undefined, platform, arch);
     expect(result.exitCode).not.toBe(0);
-    expect(result.stderr.toString()).toContain("This release supports Linux x64");
+    expect(result.stderr.toString()).toContain(`Unsupported release host/runtime: ${platform}/${arch}/herdr`);
     expect(existsSync(join(f.home, "executed"))).toBe(false);
   });

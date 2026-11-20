@@ -3,7 +3,10 @@ import { existsSync, mkdirSync, readFileSync, readlinkSync, writeFileSync } from
 import { join } from "node:path";
 import { git, setup } from "./install-setup.ts";
 
-test("a second install over a clean checkout pulls upstream", () => {
+// POSIX-only: the fixture runs scripts/install-source.sh and shebang stubs through a ':' PATH.
+const posix = test.skipIf(process.platform === "win32");
+
+posix("a second install over a clean checkout pulls upstream", () => {
   // Given an installed checkout and a newer upstream commit.
   const { upstream, src, upstreamCommit, install } = setup();
   upstreamCommit("v2\n");
@@ -12,7 +15,7 @@ test("a second install over a clean checkout pulls upstream", () => {
   expect(git(src, "rev-parse", "HEAD")).toBe(git(upstream, "rev-parse", "HEAD"));
 });
 
-test("a local change in the way of the pull stops the install, names the file and says how to go on", () => {
+posix("a local change in the way of the pull stops the install, names the file and says how to go on", () => {
   // Given a checkout with a local edit to a file upstream has since changed.
   const { src, cli, upstreamCommit, install } = setup();
   upstreamCommit("v2\n");
@@ -26,7 +29,7 @@ test("a local change in the way of the pull stops the install, names the file an
   expect(readFileSync(join(src, cli), "utf8")).toBe("patched\n");
 });
 
-test("DORI_NO_PULL=1 installs a changed checkout as it is, without pulling", () => {
+posix("DORI_NO_PULL=1 installs a changed checkout as it is, without pulling", () => {
   // Given a checkout with a local edit and a newer upstream commit.
   const { src, home, cli, upstreamCommit, install } = setup();
   const before = git(src, "rev-parse", "HEAD");
@@ -41,7 +44,7 @@ test("DORI_NO_PULL=1 installs a changed checkout as it is, without pulling", () 
   expect(existsSync(join(home, ".dori/config.json"))).toBe(true);
 });
 
-test("a pull blocked by a local commit lists that commit and how to go on", () => {
+posix("a pull blocked by a local commit lists that commit and how to go on", () => {
   // Given a checkout with its own commit on a file upstream has since changed.
   const { src, cli, upstreamCommit, install } = setup();
   upstreamCommit("v2\n");
@@ -55,7 +58,7 @@ test("a pull blocked by a local commit lists that commit and how to go on", () =
   expect(r.err).toContain("DORI_NO_PULL=1");
 });
 
-test("DORI_NO_PULL=true and DORI_NO_PULL=yes skip the pull like DORI_NO_PULL=1; DORI_NO_PULL=0 still pulls", () => {
+posix("DORI_NO_PULL=true and DORI_NO_PULL=yes skip the pull like DORI_NO_PULL=1; DORI_NO_PULL=0 still pulls", () => {
   // Given an installed checkout and a newer upstream commit.
   const { upstream, src, upstreamCommit, install } = setup();
   const before = git(src, "rev-parse", "HEAD");
@@ -70,7 +73,7 @@ test("DORI_NO_PULL=true and DORI_NO_PULL=yes skip the pull like DORI_NO_PULL=1; 
   expect(git(src, "rev-parse", "HEAD")).toBe(git(upstream, "rev-parse", "HEAD"));
 });
 
-test("a branch with no upstream is not taken for local work: git's reason, no reset suggested", () => {
+posix("a branch with no upstream is not taken for local work: git's reason, no reset suggested", () => {
   // Given a checkout with a local edit whose branch tracks nothing.
   const { src, cli, install } = setup();
   writeFileSync(join(src, cli), "patched\n");
@@ -82,7 +85,7 @@ test("a branch with no upstream is not taken for local work: git's reason, no re
   expect(readFileSync(join(src, cli), "utf8")).toBe("patched\n");
 });
 
-test("a failed fetch is not taken for local work: no reset is suggested", () => {
+posix("a failed fetch is not taken for local work: no reset is suggested", () => {
   // Given a checkout with a local edit whose upstream cannot be reached.
   const { root, src, cli, install } = setup();
   writeFileSync(join(src, cli), "patched\n");
@@ -94,7 +97,7 @@ test("a failed fetch is not taken for local work: no reset is suggested", () => 
   expect(r.err).toContain("missing.git");
 });
 
-test("the OMP extension and explicit ULW path install without replacing existing owner configuration", () => {
+posix("the OMP extension and explicit ULW path install without replacing existing owner configuration", () => {
   const { home, src, ulw, install } = setup();
   mkdirSync(join(home, ".dori"));
   writeFileSync(join(home, ".dori/.omp-dori"), "primary\n");
@@ -119,7 +122,7 @@ test("the OMP extension and explicit ULW path install without replacing existing
   });
 });
 
-test("an existing non-link extension directory is preserved and stops installation", () => {
+posix("an existing non-link extension directory is preserved and stops installation", () => {
   const { home, install } = setup();
   const extension = join(home, "extensions/omp-dori");
   mkdirSync(extension, { recursive: true });
@@ -128,7 +131,7 @@ test("an existing non-link extension directory is preserved and stops installati
   expect(readFileSync(join(extension, "owner.txt"), "utf8")).toBe("keep\n");
 });
 
-test("the full upstream harness Bun requirement is checked before changing the checkout", () => {
+posix("the full upstream harness Bun requirement is checked before changing the checkout", () => {
   const { upstreamCommit, src, install } = setup();
   const before = git(src, "rev-parse", "HEAD");
   upstreamCommit("v2\n");

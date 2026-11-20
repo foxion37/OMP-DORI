@@ -5,12 +5,7 @@ import { sourceManifest } from "../src/update/source.ts";
 import { git, publicationFixture } from "./update-setup.ts";
 
 type Binding =
-  | "exact"
-  | "source-mismatch"
-  | "main-mismatch"
-  | "export-mismatch"
-  | "base-mismatch"
-  | "upstream-mismatch";
+  "exact" | "source-mismatch" | "main-mismatch" | "export-mismatch" | "base-mismatch" | "upstream-mismatch";
 
 export async function bootstrapFixture(binding: Binding = "exact", reporter = false, referenceExportHash?: string) {
   const exportHash = referenceExportHash ?? publicSource((await publicationFixture()).job).hash;

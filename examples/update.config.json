@@ -23,23 +23,27 @@
     "timeoutMs": 3600000
   },
   "provision": [
-    { "name": "install-root", "argv": ["bun", "install", "--frozen-lockfile"], "timeoutMs": 300000 },
+    {
+      "name": "install-root",
+      "argv": ["bun", "install", "--frozen-lockfile", "--ignore-scripts"],
+      "timeoutMs": 300000
+    },
     {
       "name": "install-skill",
-      "argv": ["bun", "install", "--frozen-lockfile"],
+      "argv": ["bun", "install", "--frozen-lockfile", "--ignore-scripts"],
       "cwd": "skills/dori-mode/scripts",
       "timeoutMs": 300000
     },
     {
       "name": "install-extension",
-      "argv": ["bun", "install", "--frozen-lockfile"],
+      "argv": ["bun", "install", "--frozen-lockfile", "--ignore-scripts"],
       "cwd": "extension",
       "timeoutMs": 300000
     },
-    { "name": "normalize-source", "argv": ["bun", "run", "fmt"], "timeoutMs": 300000 }
+    { "name": "normalize-source", "argv": ["bun", "run", "format"], "timeoutMs": 300000 }
   ],
   "checks": [
-    { "name": "biome", "argv": ["bun", "run", "check"], "timeoutMs": 300000 },
+    { "name": "lint", "argv": ["bun", "run", "check"], "timeoutMs": 300000 },
     { "name": "types", "argv": ["bun", "run", "typecheck"], "timeoutMs": 300000 },
     { "name": "unused", "argv": ["bun", "run", "knip"], "timeoutMs": 300000 },
     { "name": "source-size", "argv": ["bun", "run", "lint:loc"], "timeoutMs": 300000 },

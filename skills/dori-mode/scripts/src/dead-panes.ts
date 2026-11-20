@@ -28,9 +28,14 @@ export const deadPaneTick = async (
   const skip = new Set([config.leadPane, ...config.ignorePanes].filter(Boolean));
   const marked = (tail: string) => config.deadPanePatterns.some((p) => tail.includes(p.toLowerCase()));
   const lanes = await new Registry(config.stateDir).open();
-  for (const session of await listWatched(rts, config.workspaces, lanes)) {
+  // Do not prune on a partial or failed listing: every watched group/runtime must succeed first.
+  const sessions = (await listWatched(rts, config.workspaces, lanes)).filter((session) => !skip.has(session.ref.id));
+  const live = new Set(sessions.map((session) => session.ref.id));
+  for (const map of [state.unknown, state.lastTail]) for (const id of map.keys()) if (!live.has(id)) map.delete(id);
+  const currentMarks = new Set(sessions.map((session) => `${session.ref.id} ${hourKey}`));
+  for (const mark of seen) if (!currentMarks.has(mark)) seen.delete(mark);
+  for (const session of sessions) {
     const id = session.ref.id;
-    if (skip.has(id)) continue;
     if (session.status && ALIVE_STATUSES.has(session.status)) {
       state.unknown.delete(id);
       state.lastTail.delete(id);

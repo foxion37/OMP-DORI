@@ -12,6 +12,9 @@ import { captureIo } from "./inbox-setup.ts";
 import { setup } from "./install-setup.ts";
 import { argvOutput, environment, executable, managedCommand, shell } from "./managed-command-setup.ts";
 
+// POSIX-only: the fixture spawns /bin/sh wrappers and shebang executables through PATH.
+const posix = test.skipIf(process.platform === "win32");
+
 const model = "fixture/model";
 const prompt = "literal prompt ; $(touch prompt-ran)";
 
@@ -25,7 +28,7 @@ const runConfig = async (path: string, home: string, root: string, env: Record<s
   return config.agentCommand;
 };
 
-test("managed argv overrides literal omp atomically before the legacy command", async () => {
+posix("managed argv overrides literal omp atomically before the legacy command", async () => {
   const f = managedCommand();
   environment({ DORI_AGENT_CMD: "false; touch override-ran" });
   const argv = await runConfig(f.config.doriConfig, f.config.home, f.root, f.env);
@@ -34,7 +37,7 @@ test("managed argv overrides literal omp atomically before the legacy command", 
   expect(f.env["DORI_AGENT_CMD"]).toBeUndefined();
 });
 
-test.each(["primary", "side"])("%s source defaults follow the complete managed command", async (mode) => {
+posix.each(["primary", "side"])("%s source defaults follow the complete managed command", async (mode) => {
   const s = setup();
   const side = join(s.home, "side install ; literal");
   const installed = s.install({ DORI_INSTALL_MODE: mode, DORI_NO_PULL: "1", OMP_DORI_HOME: side });
@@ -64,7 +67,7 @@ test.each(["primary", "side"])("%s source defaults follow the complete managed c
   }
 });
 
-test("a consumer-owned default outside consumer release directories follows the selected executable", async () => {
+posix("a consumer-owned default outside consumer release directories follows the selected executable", async () => {
   const f = managedCommand();
   const paths = consumerPaths(f.config.home);
   initialize(paths);
@@ -75,7 +78,7 @@ test("a consumer-owned default outside consumer release directories follows the 
   expect(await runConfig(paths.config, paths.home, f.root, f.env)).toEqual([...f.argv, "{prompt}"]);
 });
 
-test("independent external omp commands and unmarked wrapper paths retain their actual argv", async () => {
+posix("independent external omp commands and unmarked wrapper paths retain their actual argv", async () => {
   const f = managedCommand();
   const external = join(f.root, "owner tools/bin/omp");
   const unmarked = join(f.config.doriHome, "bin/omp");
@@ -90,7 +93,7 @@ test("independent external omp commands and unmarked wrapper paths retain their 
   expect(await runConfig(f.config.doriConfig, f.config.home, f.root, f.env)).toEqual([external, "{prompt}"]);
 });
 
-test("harness lead, duty and lane consumers execute the complete managed argv with literal arguments", async () => {
+posix("harness lead, duty and lane consumers execute the complete managed argv with literal arguments", async () => {
   const f = managedCommand();
   environment({ DORI_AGENT_CMD: "false; touch override-ran" });
   const world = new World();
@@ -131,7 +134,7 @@ test("harness lead, duty and lane consumers execute the complete managed argv wi
     expect(existsSync(join(f.root, name))).toBe(false);
 });
 
-test.each([false, true])("a selected pathname present=%s never executes shell suffixes", (blocked) => {
+posix.each([false, true])("a selected pathname present=%s never executes shell suffixes", (blocked) => {
   const f = managedCommand();
   const selected = join(f.root, "missing space ; touch missing-suffix; #", "omp");
   if (blocked) {
@@ -151,7 +154,7 @@ test.each([false, true])("a selected pathname present=%s never executes shell su
   expect(existsSync(join(f.root, "fallback-ran"))).toBe(false);
 });
 
-test("legacy shell fragments and literal-default argv overrides retain their distinct contracts", async () => {
+posix("legacy shell fragments and literal-default argv overrides retain their distinct contracts", async () => {
   const f = managedCommand();
   environment({ DORI_AGENT_ARGV: undefined, DORI_AGENT_CMD: f.omp });
   expect((await runConfig(f.config.doriConfig, f.config.home, f.root, f.env))[0]).toBe(f.omp);

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
-import { join, relative, sep } from "node:path";
+import { chmodSync, existsSync, mkdirSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, join, relative, sep } from "node:path";
 
 import { launchLane } from "../src/launch.ts";
 import { depsFor, fakeClock, newWorld, withState, type World } from "./fakes.ts";
@@ -32,6 +32,15 @@ const tokenFile = (dir: string, text: string, mode: number): string => {
   return file;
 };
 
+// The token file a config path puts the lane in: the directory of the file the OS opens, resolved as this platform
+// resolves it (a POSIX shell follows the link before '..', a Windows path is normalized before the link is followed).
+const osTokenFile = (config: string): string => {
+  const opened = existsSync(config)
+    ? realpathSync.native(config)
+    : join(realpathSync.native(dirname(config)), "config.json");
+  return realpathSync.native(join(dirname(opened), "slack-token"));
+};
+
 const launchArgv = async (home: string, key: string, config = join(home, "config.json")): Promise<string[][]> => {
   const brief = join(state.dir, "brief.md");
   writeFileSync(brief, "# brief\n");
@@ -53,13 +62,14 @@ test("with a real link, 'link/../config.json' opens far's config, and far is the
   const far = join(state.dir, "far");
   mkdirSync(join(far, "a"), { recursive: true });
   writeFileSync(join(far, "config.json"), "{}");
-  const farToken = tokenFile(far, "xoxb-far\n", 0o600);
+  tokenFile(far, "xoxb-far\n", 0o600);
   tokenFile(near, "xoxb-near\n", 0o600);
   symlinkSync(join(far, "a"), join(near, "link"));
   const raw = `${relative(process.cwd(), near)}${sep}link${sep}..${sep}config.json`;
   const create = (await launchArgv(near, "link-lane", raw)).find((c) => c[0] === "hc" && c.includes("--bg")) ?? [];
-  expect(create).toContain(`DORI_SLACK_TOKEN_FILE=${realpathSync(farToken)}`);
-  expect(create).toContain(`DORI_CONFIG=${process.cwd()}${sep}${raw}`);
+  // The OS resolves the temp directory too: on Windows the short RUNNER~1 name becomes the long one.
+  expect(create).toContain(`DORI_SLACK_TOKEN_FILE=${osTokenFile(raw)}`);
+  expect(create).toContain(`DORI_CONFIG=${isAbsolute(raw) ? raw : `${process.cwd()}${sep}${raw}`}`);
 });
 
 test("a config file that does not exist yet still gets its home where the OS would create it, through the link", async () => {
@@ -68,10 +78,10 @@ test("a config file that does not exist yet still gets its home where the OS wou
   const near = join(state.dir, "near2");
   const far = join(state.dir, "far2");
   mkdirSync(join(far, "a"), { recursive: true });
-  const farToken = tokenFile(far, "xoxb-far2\n", 0o600);
+  tokenFile(far, "xoxb-far2\n", 0o600);
   tokenFile(near, "xoxb-near2\n", 0o600);
   symlinkSync(join(far, "a"), join(near, "link"));
   const raw = `${relative(process.cwd(), near)}${sep}link${sep}..${sep}config.json`;
   const create = (await launchArgv(near, "nolink-lane", raw)).find((c) => c[0] === "hc" && c.includes("--bg")) ?? [];
-  expect(create).toContain(`DORI_SLACK_TOKEN_FILE=${realpathSync(farToken)}`);
+  expect(create).toContain(`DORI_SLACK_TOKEN_FILE=${osTokenFile(raw)}`);
 });

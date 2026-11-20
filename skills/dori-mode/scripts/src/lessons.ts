@@ -37,7 +37,7 @@ export const isLessonOutcome = (value: unknown): value is LessonOutcome =>
   value === "pending" || value === "helped" || value === "no-effect" || value === "harmful" || value === "encoded";
 
 const singleLine = (value: unknown, max: number): value is string =>
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: the pattern deliberately matches control characters to reject or strip them
+  // oxlint-disable-next-line no-control-regex -- the pattern deliberately matches control characters to reject or strip them
   typeof value === "string" && value.trim().length > 0 && value.length <= max && !/[\x00-\x1f\x7f]/.test(value);
 
 export const REPO_LESSON_CAP = 8;

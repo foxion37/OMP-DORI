@@ -66,6 +66,14 @@ describe("deliver: idle read off the screen while hc still says working", () => 
     expect(sends(fake.calls)).toEqual([["send", "t1", "--if", "working", "--", "[READY] lane"]]);
   });
 
+  test("idle-only never substitutes a working gate for screen-confirmed idle", async () => {
+    const { fake, rt } = rig({ t1: omoWorking("omo-idle-live-monitors") });
+    expect((await rt.probe(T1)).status).toBe("idle");
+    expect((await rt.deliver(T1, "nudge", { strictIdle: true })).kind).toBe("not-ready");
+    expect(sends(fake.calls)).toEqual([["send", "t1", "--if", "idle", "--", "nudge"]]);
+    expect(fake.sent).toEqual([]);
+  });
+
   test("hc refusing the send (omo moved between probe and send) stays not-ready and types nothing", async () => {
     const { fake, rt } = rig({ t1: omoWorking("omo-idle-live-monitors") });
     fake.knobs.sendError = "status_mismatch";

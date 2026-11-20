@@ -79,6 +79,7 @@ export type MonitorSpec = {
   readonly argv: readonly string[];
   readonly filter: string;
   readonly cwd: string;
+  readonly restart?: "on-failure";
 };
 export type MonitorProcessIdentity = ProcessIdentity & { readonly name: string; readonly argv: readonly string[] };
 export type IntakeSpec = { readonly path: string; readonly monitor: string; readonly maxAgeMs: number };
@@ -107,14 +108,7 @@ export type PointerRecord = {
   };
 };
 export type DeploymentStatus =
-  | "prepared"
-  | "stopping"
-  | "switching"
-  | "starting"
-  | "healthy"
-  | "rolled-back"
-  | "held"
-  | "failed";
+  "prepared" | "stopping" | "switching" | "starting" | "healthy" | "rolled-back" | "held" | "failed";
 export type DeploymentRecord = {
   readonly version: 1;
   readonly id: string;

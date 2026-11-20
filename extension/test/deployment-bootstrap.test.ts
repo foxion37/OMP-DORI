@@ -2,6 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { lstatSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { readPaneState } from "../../skills/dori-mode/scripts/src/lane-state.ts";
 import { processIdentity } from "../../src/update/deployment-process.ts";
 import type { RuntimeHealth } from "../../src/update/deployment-types.ts";
 import { type FakePi, load, until, useConfig } from "./fake-pi.ts";
@@ -93,7 +94,8 @@ posix(
   },
 );
 
-test("ordinary bootstrap replaces legacy monitors and restores real children without the bootstrap file", async () => {
+// POSIX-only: the bootstrap file's 0o600 mode and owner uid are verified, and the monitor runs `sleep`.
+posix("ordinary bootstrap replaces legacy monitors and restores real children without the bootstrap file", async () => {
   const f = fixture();
   const session = {
     id: "legacy-session",
@@ -134,7 +136,8 @@ test("ordinary bootstrap replaces legacy monitors and restores real children wit
   expect(session.entries.filter((entry) => entry.customType === "omp-dori:monitor-bootstrap")).toHaveLength(1);
 });
 
-test("a consumed bootstrap never resurrects an explicitly stopped monitor", async () => {
+// POSIX-only: the product only accepts monitor metadata that is not group/world writable and is owned by the uid.
+posix("a consumed bootstrap never resurrects an explicitly stopped monitor", async () => {
   const f = fixture();
   const session = { id: "legacy-session", entries: [] };
   const dori = await load({ session, flags: { "dori-role": "dori", "dori-monitor-bootstrap": f.bootstrap } });
@@ -146,7 +149,8 @@ test("a consumed bootstrap never resurrects an explicitly stopped monitor", asyn
   expect(JSON.parse(readFileSync(join(f.stateDir, "monitors", "legacy-session.json"), "utf8")).monitors).toEqual([]);
 });
 
-test("a bootstrap bound to another native session launches nothing", async () => {
+// POSIX-only: the rejected bootstrap is read through the product's mode and owner-uid check.
+posix("a bootstrap bound to another native session launches nothing", async () => {
   const f = fixture("different-session");
   const dori = await load({
     session: { id: "legacy-session", entries: [] },
@@ -160,19 +164,65 @@ test("a bootstrap bound to another native session launches nothing", async () =>
   expect(lstatSync(f.healthPath, { throwIfNoEntry: false })).toBeUndefined();
 });
 
+// POSIX-only: the rejected bootstrap is read through the product's mode and owner-uid check.
+posix("a rejected bootstrap leaves no half-initialized role session publishing pane state", async () => {
+  const f = fixture("different-session");
+  const dori = await load({
+    session: { id: "legacy-session", entries: [] },
+    flags: { "dori-role": "dori", "dori-monitor-bootstrap": f.bootstrap },
+  });
+  sessions.push(dori);
+  await expect(dori.emit("session_start")).rejects.toThrow("session or version");
+  await dori.emit("agent_start");
+  await dori.emit("tool_approval_requested", { type: "tool_approval_requested", toolCallId: "pending" });
+  await dori.emit("goal_updated", { goal: { objective: "work", status: "active" } });
+  expect(readPaneState(f.stateDir, "w1:p7")).toBeNull();
+  // A tree or branch move in the rejected session finds no recorded role to restore.
+  await dori.emit("session_tree");
+  await dori.emit("session_branch");
+  await dori.emit("agent_start");
+  expect(readPaneState(f.stateDir, "w1:p7")).toBeNull();
+  expect(dori.session.entries.filter((e) => e.type === "custom" && e.customType === "omp-dori:role")).toEqual([]);
+  expect(dori.handlers.get("session_shutdown")?.length ?? 0).toBeGreaterThan(0);
+  await dori.emit("session_shutdown");
+  expect(readPaneState(f.stateDir, "w1:p7")).toBeNull();
+  expect(lstatSync(f.healthPath, { throwIfNoEntry: false })).toBeUndefined();
+});
+
+// POSIX-only: the rejected bootstrap is read through the product's mode and owner-uid check.
+posix(
+  "a resumed Dori session whose bootstrap is rejected does not get its recorded role back on a tree move",
+  async () => {
+    const f = fixture("different-session");
+    const dori = await load({
+      session: { id: "legacy-session", entries: [{ type: "custom", customType: "omp-dori:role", data: "dori" }] },
+      flags: { "dori-monitor-bootstrap": f.bootstrap },
+    });
+    sessions.push(dori);
+    await expect(dori.emit("session_start")).rejects.toThrow("session or version");
+    await dori.emit("session_tree");
+    await dori.emit("session_branch");
+    await dori.emit("agent_start");
+    await dori.emit("tool_approval_requested", { type: "tool_approval_requested", toolCallId: "pending" });
+    expect(readPaneState(f.stateDir, "w1:p7")).toBeNull();
+  },
+);
+
 test("branch movement replaces a changed specification under the same monitor name", async () => {
   const f = fixture();
   const dori = await load({ session: { id: "legacy-session", entries: [] }, flags: { "dori-role": "dori" } });
   sessions.push(dori);
   await dori.emit("session_start");
-  await run(dori, { op: "start", name: "inbound", argv: ["sleep", "60"], filter: "." });
+  const sleeping = (milliseconds: number) => [process.execPath, "-e", `await Bun.sleep(${milliseconds})`];
+  const replacement = sleeping(61_000);
+  await run(dori, { op: "start", name: "inbound", argv: sleeping(60_000), filter: "." });
   const before = (await run(dori, { op: "list" })).content[0]?.text ?? "";
   const oldPid = Number(/pid (\d+)/.exec(before)?.[1]);
   expect(alive(oldPid)).toBe(true);
   dori.api.appendEntry("omp-dori:monitor", {
     op: "start",
     name: "inbound",
-    argv: ["sleep", "61"],
+    argv: replacement,
     filter: "^changed",
     cwd: tmpdir(),
   });
@@ -182,12 +232,12 @@ test("branch movement replaces a changed specification under the same monitor na
   const newPid = Number(/pid (\d+)/.exec(after)?.[1]);
   expect(alive(newPid)).toBe(true);
   expect(newPid).not.toBe(oldPid);
-  expect(after).toContain("sleep 61");
+  expect(after).toContain("Bun.sleep(61000)");
   expect(after).toContain("^changed");
   expect(JSON.parse(readFileSync(join(f.stateDir, "monitors", "legacy-session.json"), "utf8"))).toMatchObject({
-    monitors: [{ name: "inbound", argv: ["sleep", "61"], filter: "^changed", cwd: tmpdir() }],
+    monitors: [{ name: "inbound", argv: replacement, filter: "^changed", cwd: tmpdir() }],
   });
-});
+}, 20_000);
 
 test("a managed initial restore reports failure without starting model work, then ordinary restore keeps its repair behavior", async () => {
   const f = fixture();

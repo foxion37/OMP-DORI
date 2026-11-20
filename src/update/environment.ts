@@ -1,5 +1,6 @@
 import { lstatSync, mkdirSync, readFileSync, readlinkSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { platform } from "../platform/index.ts";
 import { UpdateError } from "./config.ts";
 import { digest } from "./source.ts";
 import { saveJson } from "./state.ts";
@@ -12,7 +13,7 @@ const uid = process.getuid?.() ?? null;
 function privateDirectory(path: string): void {
   mkdirSync(path, { recursive: true, mode: 0o700 });
   const stat = lstatSync(path);
-  if (!stat.isDirectory() || (uid !== null && stat.uid !== uid) || (stat.mode & 0o077) !== 0) {
+  if (!stat.isDirectory() || (platform.posixOwnership && stat.uid !== uid) || (stat.mode & 0o077) !== 0) {
     throw new UpdateError("automated runtime directory is not a private owned directory");
   }
 }
@@ -20,7 +21,7 @@ function privateDirectory(path: string): void {
 function ownedLink(path: string, target: string): void {
   const stat = lstatSync(path, { throwIfNoEntry: false });
   if (stat === undefined) symlinkSync(target, path, "dir");
-  else if (!stat.isSymbolicLink() || (uid !== null && stat.uid !== uid) || readlinkSync(path) !== target) {
+  else if (!stat.isSymbolicLink() || (platform.posixOwnership && stat.uid !== uid) || readlinkSync(path) !== target) {
     throw new UpdateError("automated runtime alias collision; retained paths require operator inspection");
   }
 }
@@ -40,7 +41,7 @@ function runtimeAlias(ctx: UpdateContext, target: string, cache: string): string
     writeFileSync(receipt, `${JSON.stringify(ownership, null, 2)}\n`, { mode: 0o600, flag: "wx" });
   } else if (
     !recorded.isFile() ||
-    (uid !== null && recorded.uid !== uid) ||
+    (platform.posixOwnership && recorded.uid !== uid) ||
     (recorded.mode & 0o077) !== 0 ||
     JSON.stringify(JSON.parse(readFileSync(receipt, "utf8"))) !== JSON.stringify(ownership)
   ) {

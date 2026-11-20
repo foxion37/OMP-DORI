@@ -2,7 +2,10 @@ import { expect, test } from "bun:test";
 import { chmodSync, cpSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
-test.each(["nudge.md", "nudge-waiting.md"])(
+// POSIX-only: an unprivileged uid and mode bits make the directory unreadable.
+const posix = test.skipIf(process.platform === "win32");
+
+posix.each(["nudge.md", "nudge-waiting.md"])(
   "an inaccessible %s override fails before consuming a nudge; a missing file still uses the built-in",
   async (name) => {
     // /tmp stays traversable when a root runner drops privileges in the isolated child.

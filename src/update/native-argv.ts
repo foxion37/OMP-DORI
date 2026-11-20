@@ -1,7 +1,7 @@
 import { UpdateError } from "./config.ts";
 
 const RESUME_FLAG = /^(?:--resume|--continue|--session|--restore|--fork|--from-claude|--from-codex|-r|-c)(?:=|$)/;
-const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*\/[^\s/{}*?\[\],][^\s{}*?\[\],]*$/;
+const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*\/[^\s/{}*?[\],][^\s{}*?[\],]*$/;
 const OWNED_FLAG =
   /^(?:--system-prompt|--append-system-prompt|--system-prompt-template|--profile|--alias|-e|--extensions?|--trusted-extension|--hook|--dori-role)(?:=|$)/;
 

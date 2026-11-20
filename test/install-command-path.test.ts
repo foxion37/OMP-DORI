@@ -3,9 +3,12 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { script, setup } from "./install-setup.ts";
 
+// POSIX-only: the fixture runs scripts/install-source.sh and shebang stubs linked through a ':' PATH.
+const posix = test.skipIf(process.platform === "win32");
+
 // Version/argv stubs only; setup records package installs without installing dependencies.
 for (const mode of ["primary", "side"]) {
-  test.each(["absolute", "./tools/omp", "omp", "./tools/custom native 'quote'; literal"])(
+  posix.each(["absolute", "./tools/omp", "omp", "./tools/custom native 'quote'; literal"])(
     `${mode} resolves override %s before an independent-cwd launch`,
     (command) => {
       const s = setup();
@@ -51,7 +54,7 @@ for (const mode of ["primary", "side"]) {
   );
 }
 
-test("a missing explicit override stops before installation instead of selecting PATH omp", () => {
+posix("a missing explicit override stops before installation instead of selecting PATH omp", () => {
   const s = setup();
   const installed = Bun.spawnSync([script], {
     cwd: s.root,

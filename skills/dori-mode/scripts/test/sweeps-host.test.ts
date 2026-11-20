@@ -3,7 +3,6 @@ import { mkdirSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { acquireSlot, releaseSlot } from "../src/heavy-slot.ts";
 import { guardTick, sampleHost } from "../src/host-guard.ts";
-import type { Runner } from "../src/run.ts";
 import { fakeClock, withState } from "./fakes.ts";
 
 const T0 = Date.parse("2026-01-01T12:00:00.000Z");
@@ -16,21 +15,27 @@ beforeEach(() => {
 
 afterEach(() => state.done());
 
-const linuxHost =
-  (meminfo: string | null): Runner =>
-  async (argv) => {
-    const [cmd] = argv;
-    if (cmd === "cat" && argv[1] === "/proc/meminfo")
-      return meminfo === null ? { code: 1, out: "", err: "no such file" } : { code: 0, out: meminfo, err: "" };
-    if (cmd === "cat") return { code: 0, out: "0.50 0.40 0.30 1/200 999", err: "" };
-    if (cmd === "df")
-      return {
-        code: 0,
-        out: "Filesystem 1K-blocks Used Available Use% Mounted\n/dev/x 1000 500 524288 50% /",
-        err: "",
-      };
-    return { code: 127, out: "", err: "not found" };
-  };
+const linuxHost = (meminfo: string | null) =>
+  sampleHost(
+    async (argv) =>
+      argv[0] === "df"
+        ? {
+            code: 0,
+            out: "Filesystem 1K-blocks Used Available Use% Mounted\n/dev/x 1000 500 524288 50% /",
+            err: "",
+          }
+        : { code: 127, out: "", err: "not found" },
+    "/",
+    undefined,
+    {
+      platform: "linux",
+      readFile: (path) => {
+        if (path === "/proc/loadavg") return "0.50 0.40 0.30 1/200 999";
+        if (path === "/proc/meminfo" && meminfo !== null) return meminfo;
+        throw new Error("no such file");
+      },
+    },
+  );
 
 test("the host guard alerts on low disk, clears when it recovers, and flips compute readiness on load", () => {
   const t = { loadAlert: 150, loadOk: 80, memFreeMinPct: 20, diskFreeMinGb: 50, panesMax: 20 };
@@ -45,24 +50,20 @@ test("the host guard alerts on low disk, clears when it recovers, and flips comp
 });
 
 test("on Linux the host guard reports 0% free when MemAvailable is 0", async () => {
-  const s = await sampleHost(
-    linuxHost("MemTotal:       16000000 kB\nMemFree:               0 kB\nMemAvailable:          0 kB\n"),
-  );
+  const s = await linuxHost("MemTotal:       16000000 kB\nMemFree:               0 kB\nMemAvailable:          0 kB\n");
   expect(s.memFreePct).toBe(0);
 });
 
-test("on Linux the host guard reads load and available memory when macOS probes are missing", async () => {
-  const s = await sampleHost(
-    linuxHost("MemTotal:       16000000 kB\nMemFree:          200000 kB\nMemAvailable:    4000000 kB\n"),
-  );
+test("on Linux the host guard reads load and available memory directly", async () => {
+  const s = await linuxHost("MemTotal:       16000000 kB\nMemFree:          200000 kB\nMemAvailable:    4000000 kB\n");
   expect(s.memFreePct).toBe(25);
   expect(s.load1).toBe(0.5);
   expect(s.diskFreeGb).toBe(0.5);
 });
 
 test("the host guard keeps memory at 100% when neither memory_pressure nor /proc/meminfo works", async () => {
-  expect((await sampleHost(linuxHost(null))).memFreePct).toBe(100);
-  expect((await sampleHost(linuxHost("MemTotal:       16000000 kB\n"))).memFreePct).toBe(100);
+  expect((await linuxHost(null)).memFreePct).toBe(100);
+  expect((await linuxHost("MemTotal:       16000000 kB\n")).memFreePct).toBe(100);
 });
 
 test("a heavy slot waits for load to drop, and a slot held by a dead process is taken over", async () => {

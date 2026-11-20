@@ -1,6 +1,8 @@
 import { chmodSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { nativeDirectory, nativeLauncher, type NativeReceipt } from "../src/release/native.ts";
+import { type ProcessCwds, processCwds } from "../src/release/process-cwd.ts";
+import { type ProcessFiles, processFiles } from "../src/release/process-files.ts";
 import { readSourceBundle, type SourceBundle } from "../src/release/source-bundle.ts";
 import { digest } from "../src/update/source.ts";
 
@@ -8,13 +10,18 @@ import { digest } from "../src/update/source.ts";
 const NATIVE_VIEWER_FIXTURE = "isolated viewer admission bytes, not an application viewer\n";
 
 export function fixtureGit(cwd: string, ...argv: string[]): string {
+  const windows = process.platform === "win32";
+  const devNull = windows ? "NUL" : "/dev/null";
+  // No automatic gc or maintenance: a detached one would outlive the call with its working directory in the fixture.
+  const git = ["git", "-c", `core.hooksPath=${devNull}`, "-c", "gc.auto=0", "-c", "maintenance.auto=false", ...argv];
   const result = Bun.spawnSync(
-    ["/bin/sh", "-c", 'umask 077; exec "$@"', "dori-source-fixture", "git", "-c", "core.hooksPath=/dev/null", ...argv],
+    // umask keeps the fixture private on POSIX; the Windows shell has neither command.
+    windows ? git : ["/bin/sh", "-c", 'umask 077; exec "$@"', "dori-source-fixture", ...git],
     {
       cwd,
       env: {
         PATH: process.env["PATH"],
-        GIT_CONFIG_GLOBAL: "/dev/null",
+        GIT_CONFIG_GLOBAL: devNull,
         GIT_CONFIG_NOSYSTEM: "1",
         GIT_AUTHOR_NAME: "Source bundle fixture",
         GIT_AUTHOR_EMAIL: "fixture@example.test",
@@ -126,3 +133,25 @@ export function nativeCacheFixture(source: string, home: string, upstream: strin
   writeFileSync(join(directory, "receipt.json"), JSON.stringify(receipt), { mode: 0o600 });
   return receipt;
 }
+
+/**
+ * The host's process working directories without the host's own unreadable processes (a session manager or agent that
+ * is not dumpable), which no fixture controls; a fixture's own unreadable process is tested against the real reader.
+ */
+export const ownProcessCwds = (pids: readonly string[]): ProcessCwds | null => {
+  const read = processCwds(pids);
+  return read && { cwds: read.cwds, unreadable: [] };
+};
+
+/**
+ * The host's process files without its unreadable processes, which no fixture controls (see `ownProcessCwds`). Off
+ * Linux it reads nothing: the tests that hold files run on Linux only, and each read there is a full lsof run that
+ * slows every other test on the runner; `processFiles("darwin")` is tested on its own.
+ * An explicit list opts into the same Linux reader for only those fixture-controlled PIDs. Include this worker and
+ * every locally spawned live holder; leave it unset for discovery tests.
+ */
+export const ownProcessFiles = (pids?: readonly string[]): ProcessFiles | null => {
+  if (process.platform !== "linux") return { files: new Map(), unread: [] };
+  const read = processFiles("linux", pids);
+  return read && { files: read.files, unread: [] };
+};

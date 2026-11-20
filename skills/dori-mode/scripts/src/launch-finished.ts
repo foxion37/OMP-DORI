@@ -27,7 +27,9 @@ const missingSession = (ref: SessionRef, error: unknown): boolean =>
 
 export const launchFinished = async (deps: FlowDeps, key: string): Promise<boolean> => {
   const lane = await deps.registry.read(key);
-  return lane !== null && finished({ ...lane, reportState: new Reports(deps.config.stateDir).read(key)?.state });
+  if (!lane) return false;
+  const report = new Reports(deps.config.stateDir).read(key, { generation: lane.lifecycleEpoch });
+  return finished({ ...lane, reportState: report?.state });
 };
 
 export const launchScreen = async (

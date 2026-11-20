@@ -13,7 +13,9 @@ import {
 import { hostname } from "node:os";
 import { dirname, join } from "node:path";
 import { alive } from "../../skills/dori-mode/scripts/src/checkpoint-lock.ts";
-import { object, UpdateError } from "./config.ts";
+import { platform } from "../platform/index.ts";
+import { object, UpdateError, UpdateLockBusy } from "./config.ts";
+import { syncDirectory } from "./deployment-files.ts";
 import { claimPromotionRecovery } from "./publish-lock.ts";
 import type { UpdateContext, UpdateJob, UpdateLock, UpdatePhase, UpdateState } from "./types.ts";
 
@@ -27,12 +29,7 @@ export function saveJson(path: string, value: unknown): void {
     closeSync(fd);
   }
   renameSync(tmp, path);
-  const directory = openSync(dirname(path), "r");
-  try {
-    fsyncSync(directory);
-  } finally {
-    closeSync(directory);
-  }
+  syncDirectory(dirname(path));
 }
 
 export function readState(ctx: UpdateContext): UpdateState {
@@ -179,6 +176,15 @@ function recoverPromotionLock(ctx: UpdateContext, owner: UpdateLock | undefined,
   return true;
 }
 
+/** A same-host live owner whose second-resolution start is not later than its lock; same-second PID reuse is unresolved. */
+function liveOwner(owner: UpdateLock | undefined): boolean {
+  if (!owner || owner.host !== hostname() || !alive(owner.pid)) return false;
+  // lstart has no offset; its ps producer and Date.parse observer must use the same zone, which the adapter keeps.
+  const ps = platform.liveOwnerStart(owner.pid);
+  const started = Date.parse(ps);
+  return ps !== "" && Number.isFinite(started) && started <= Date.parse(owner.at);
+}
+
 /** Dead controllers resume only proven ready promotion work; ambiguous model/verification ownership stays held. */
 export function lockUpdate(ctx: UpdateContext): () => void {
   mkdirSync(ctx.config.root, { recursive: true, mode: 0o700 });
@@ -202,6 +208,8 @@ export function lockUpdate(ctx: UpdateContext): () => void {
       } catch {
         throw new UpdateError("another controller acquired the recovered promotion lock");
       }
+    } else if (liveOwner(owner)) {
+      throw new UpdateLockBusy("another live controller owns this updater root; retry after it finishes");
     } else {
       throw new UpdateError(
         owner && owner.host === hostname() && !alive(owner.pid)

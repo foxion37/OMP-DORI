@@ -8,10 +8,10 @@ import { loadUpdateConfig } from "../src/update/load.ts";
 import { detectHead } from "../src/update/prepare.ts";
 import type { UpdateState } from "../src/update/types.ts";
 import { detectionReceipt, detectorFixture, waitFor } from "./update-detection-setup.ts";
-import { fixture } from "./update-setup.ts";
+import { fixture, it } from "./update-setup.ts";
 
 describe("bounded configured ref detection", () => {
-  test("a completed unavailable ref check is retryable and the next check recovers without candidate work", async () => {
+  it("a completed unavailable ref check is retryable and the next check recovers without candidate work", async () => {
     const f = fixture();
     const config = join(f.directory, "config.json");
     f.write(f.directory, "config.json", JSON.stringify(f.config));
@@ -32,7 +32,7 @@ describe("bounded configured ref detection", () => {
     expect(updater.status().state.jobs).toEqual({});
   });
 
-  test("resolves the configured head and retains separate private invocation receipts", async () => {
+  it("resolves the configured head and retains separate private invocation receipts", async () => {
     const f = fixture();
     expect(await detectHead(f.updater.context)).toBe(f.config.baseUpstream);
     const first = detectionReceipt(f.config.root);
@@ -68,7 +68,7 @@ describe("bounded configured ref detection", () => {
     expect(existsSync(join(f.config.root, "jobs"))).toBe(false);
   });
 
-  test.each(["exit", "abort", "escape"] as const)(
+  it.each(["exit", "abort", "escape"] as const)(
     "%s preserves interruption unless the owned group and output are proven stopped",
     async (mode) => {
       const f = detectorFixture(mode);

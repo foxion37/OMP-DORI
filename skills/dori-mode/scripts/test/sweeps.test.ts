@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { deadPaneTick, newDeadPaneState } from "../src/dead-panes.ts";
-import { freshnessTick, lastReportLine } from "../src/freshness.ts";
+import { freshnessTick } from "../src/freshness.ts";
+import { lastReportLine } from "../src/freshness-report.ts";
 import type { Lane } from "../src/registry.ts";
 import { runtimesFor } from "../src/run.ts";
 import { syncRegistry } from "../src/sync.ts";

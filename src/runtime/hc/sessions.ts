@@ -1,6 +1,6 @@
 import type { Exec } from "../exec.ts";
 import type { CreateSpec, SessionInfo, SessionRef } from "../types.ts";
-import { hcCall, isKind } from "./exec.ts";
+import { hcCall, isKind, isReportedKind } from "./exec.ts";
 import { statusWord } from "./probe.ts";
 
 const NAME_MAX = 32;
@@ -85,7 +85,7 @@ export async function create(exec: Exec, spec: CreateSpec, shell: string, space?
   try {
     result = await hcCall(exec, createArgv(spec, shell, name, space));
   } catch (e) {
-    if (name === undefined || !isKind(e, "name_taken")) throw e;
+    if (name === undefined || !isReportedKind(e, "name_taken")) throw e;
     result = await hcCall(exec, createArgv(spec, shell, undefined, space));
   }
   const id = str(result["address"]);
@@ -101,6 +101,19 @@ export async function start(exec: Exec, id: string, command: string): Promise<vo
 /** This core's live terminals, all of them or those labelled `dori.group=<group>`. */
 export async function list(exec: Exec, group: string | undefined): Promise<SessionInfo[]> {
   const result = await hcCall(exec, ["ls", ...(group === undefined ? [] : ["--label", `dori.group=${group}`])]);
+  const terminals = result["terminals"];
+  if (
+    !Array.isArray(terminals) ||
+    terminals.some(
+      (t) =>
+        t === null ||
+        typeof t !== "object" ||
+        typeof t["address"] !== "string" ||
+        t["address"] === "" ||
+        typeof t["state"] !== "string",
+    )
+  )
+    throw new Error("hc did not return a valid terminal list");
   const out: SessionInfo[] = [];
   for (const t of rows(result)) {
     const id = str(t["address"]);

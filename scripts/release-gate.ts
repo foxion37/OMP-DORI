@@ -4,8 +4,11 @@ import { releaseVersion } from "../src/release/version.ts";
 import { object } from "../src/update/config.ts";
 import { githubApi, githubPages } from "./release-process.ts";
 
-export const RELEASE_REPOSITORY = "vntrevx/omp-dori";
-const REQUIRED = ["check", "test-macos", "e2e-herdr", "e2e-hc"];
+export const RELEASE_REPOSITORY = "vntrevx/Cataly";
+const CHECK_RUN_URL = new RegExp(
+  `^https://api\\.github\\.com/repos/${RELEASE_REPOSITORY.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/check-runs/(\\d+)$`,
+);
+const REQUIRED = ["check", "e2e-herdr", "e2e-hc"];
 type Reads = { api: typeof githubApi; pages: typeof githubPages };
 
 function record(value: unknown): Record<string, unknown> {
@@ -119,10 +122,7 @@ export async function releaseGate(
     const matches = jobs.filter((job) => job["name"] === name);
     if (matches.length !== 1) throw new Error(`Required exact-commit CI job is missing or ambiguous: ${name}`);
     const job = matches[0]!;
-    const match =
-      typeof job["check_run_url"] === "string"
-        ? /^https:\/\/api\.github\.com\/repos\/vntrevx\/omp-dori\/check-runs\/(\d+)$/.exec(job["check_run_url"])
-        : null;
+    const match = typeof job["check_run_url"] === "string" ? CHECK_RUN_URL.exec(job["check_run_url"]) : null;
     if (
       job["head_sha"] !== manifest.commit ||
       job["run_id"] !== id ||
@@ -135,7 +135,7 @@ export async function releaseGate(
     }
     return { name, checkId: Number(match[1]) };
   });
-  // Only these four independent GETs overlap. Drain all reads before validating in required-job order.
+  // Only the required independent GETs overlap. Drain all reads before validating in required-job order.
   const results = await Promise.allSettled(
     requiredChecks.map(({ checkId }) => reads.api(`${prefix}/check-runs/${checkId}`)),
   );

@@ -12,11 +12,14 @@ import {
 import { join, relative } from "node:path";
 import { script, setup } from "./install-setup.ts";
 
+// POSIX-only: the fixture runs scripts/install-source.sh and links commands with POSIX symlinks.
+const posix = test.skipIf(process.platform === "win32");
+
 // Version/argv fixtures; the real installer runs while dependency installation is recorded by setup.
 const executable = '#!/bin/sh\nif [ "$1" = --version ]; then echo 18.20.0; else printf \'%s\\0\' "$0" "$@"; fi\n';
 
 for (const mode of ["primary", "side"]) {
-  test.each(["direct", "leaf chain", "parent alias", "directory prefix"])(
+  posix.each(["direct", "leaf chain", "parent alias", "directory prefix"])(
     `${mode} holds a native selection traversing the command relink through %s`,
     (alias) => {
       const s = setup();
@@ -62,7 +65,7 @@ for (const mode of ["primary", "side"]) {
     },
   );
 
-  test.each(["physical target", "independent symlink", "hard link"])(
+  posix.each(["physical target", "independent symlink", "hard link"])(
     `${mode} permits the independent %s of a command link being replaced`,
     (alias) => {
       const s = setup();
@@ -96,7 +99,7 @@ for (const mode of ["primary", "side"]) {
     },
   );
 
-  test(`${mode} retains an existing regular command that link installation leaves untouched`, () => {
+  posix(`${mode} retains an existing regular command that link installation leaves untouched`, () => {
     const s = setup();
     const bin = join(s.home, "global-bin");
     const command = join(bin, mode === "primary" ? "dori" : "omp-dori");

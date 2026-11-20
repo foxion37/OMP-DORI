@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { discordInbound, formatDiscordInbound } from "../src/messenger/discord-inbound.ts";
+import { toInbound } from "../src/messenger/discord-inbound-api.ts";
 import { MessengerError } from "../src/messenger/http.ts";
 import {
   discordRestWorld,
@@ -8,6 +9,9 @@ import {
   type TestDiscordMessage,
 } from "./discord-inbound-fakes.ts";
 import { liveWorld } from "./discord-inbound-live-fakes.ts";
+
+// POSIX-only: the Discord inbound queue requires a private (0700) uid-owned directory.
+const posix = test.skipIf(process.platform === "win32");
 
 const options = { ownerId: "10", channelIds: ["20"] };
 const cdn = (name: string) => `https://cdn.discordapp.com/attachments/20/1/${name}?ex=1&is=2&hm=3`;
@@ -53,7 +57,20 @@ const expected = [
   'INBOUND discord 20 104 from=owner ref=90 "this one"',
   'INBOUND_REPLY discord 20 104 {"id":"90","author":"99","text":"bot said \\"hi\\""}',
   'INBOUND discord 20 105 from=owner ref=91 "gone"',
+  'INBOUND_REPLY discord 20 105 {"id":"91","author":null,"text":null,"status":"unavailable"}',
 ];
+
+test("only a reply's reference is ref=: a forward names a message but answers none", () => {
+  const forward = ownerMessage("107", {
+    content: "",
+    message_reference: { type: 1, message_id: "92" },
+    referenced_message: { id: "92", author: { id: "99" }, content: "the question" },
+  });
+  expect(formatDiscordInbound(toInbound(forward))).toBe('INBOUND discord 20 107 from=owner ref=- ""');
+  expect(toInbound(ownerMessage("108", { type: 19, message_reference: { type: 0, message_id: "92" } })).reference).toBe(
+    "92",
+  );
+});
 
 /** Capture one emit per owner message, before its cursor commit. */
 const restLines = async () => {
@@ -72,10 +89,10 @@ const restLines = async () => {
 test("attachments, voice messages and replies follow their INBOUND line in one REST emit per message", async () => {
   const { lines, groups, cursor } = await restLines();
   expect({ lines, cursor }).toEqual({ lines: expected, cursor: "106" });
-  expect(groups.map((group) => group.split("\n").length)).toEqual([2, 3, 2, 2, 1]);
+  expect(groups.map((group) => group.split("\n").length)).toEqual([2, 3, 2, 2, 2]);
 });
 
-test("Gateway backfill and live dispatch deliver the same record groups without replaying media", async () => {
+posix("Gateway backfill and live dispatch deliver the same record groups without replaying media", async () => {
   const world = await liveWorld(media.slice(0, 3), options, { "20": "100" });
   try {
     const [socket] = world.sockets;
@@ -83,7 +100,7 @@ test("Gateway backfill and live dispatch deliver the same record groups without 
     await world.connect(socket);
     for (const message of media) await world.dispatch(socket, message);
     expect(world.lines.join("\n").split("\n")).toEqual(expected);
-    expect(world.lines.map((group) => group.split("\n").length)).toEqual([2, 3, 2, 2, 1]);
+    expect(world.lines.map((group) => group.split("\n").length)).toEqual([2, 3, 2, 2, 2]);
     expect(world.cursor("20")).toBe("106");
   } finally {
     world.live.close();
@@ -106,12 +123,12 @@ test("the documented INBOUND grammar reads media text unchanged and never matche
     ["105", "91", "gone"],
   ]);
   const extra = lines.filter((line) => !grammar.test(line));
-  expect(extra).toHaveLength(5);
+  expect(extra).toHaveLength(6);
   expect(extra.some((line) => line.startsWith("INBOUND discord "))).toBe(false);
   for (const line of extra) JSON.parse(line.split(" ").slice(4).join(" "));
 });
 
-test("malformed attachment lists and required fields stop before the message commits", async () => {
+posix("malformed attachment lists and required fields stop before the message commits", async () => {
   const malformed = [
     { filename: "x.png", size: 1, url: cdn("x.png") },
     null,

@@ -1,6 +1,7 @@
 import { DeliveryUncertain, failureDetail } from "./delivery.ts";
 import type { Deps } from "./harness.ts";
 import { Refusal } from "./refusal.ts";
+import { nonEmpty } from "./inbox-files.ts";
 import { resolveTarget } from "./target.ts";
 import { refText } from "./refs.ts";
 import type { AgentStatus, SessionRef } from "./runtime/types.ts";
@@ -21,7 +22,10 @@ export async function send(d: Deps, target: string, text: string, from: string):
   return settled(sendOrThrow(d, target, text, from));
 }
 
-/** send for the duty and hourly loops: throws DeliveryUncertain, having recorded it, so they report the failure. */
+/**
+ * send for the duty and hourly loops: throws DeliveryUncertain, having recorded it, so they report the failure. A
+ * message kept for the lead while its route stays held (queueMessage) is QUEUED: the next duty pass moves it.
+ */
 export async function sendOrThrow(
   d: Deps,
   target: string,
@@ -29,8 +33,28 @@ export async function sendOrThrow(
   from: string,
 ): Promise<"DELIVERED" | "QUEUED"> {
   const ref = resolveTarget(d, target);
-  d.store.enqueue(ref, { at: d.now(), from, text });
-  return (await flushInbox(d, ref)) === "delivered" ? "DELIVERED" : "QUEUED";
+  const queued = await d.store.enqueue(
+    ref,
+    { at: d.now(), from, text },
+    target === "lead",
+    resolveAgain(d, target, ref),
+  );
+  if (queued.kind === "kept") return "QUEUED";
+  return (await flushInbox(d, queued.at)) === "delivered" ? "DELIVERED" : "QUEUED";
+}
+
+/**
+ * `target` resolved again (for queueMessage's recheck under the route): a lane or role that switched sessions since
+ * `ref` was resolved names its new session; a name that no longer resolves stays at `ref`.
+ */
+export function resolveAgain(d: Deps, target: string, ref: SessionRef): () => SessionRef {
+  return () => {
+    try {
+      return resolveTarget(d, target);
+    } catch {
+      return ref;
+    }
+  };
 }
 
 /**
@@ -64,9 +88,10 @@ export async function tellLead(d: Deps, text: string, from: string): Promise<"DE
  * session whose inbox was forwarded (a migration) is flushed at its new ref, old entries merged in first.
  */
 export async function flushInbox(d: Deps, from: SessionRef): Promise<"delivered" | "queued" | "no-agent" | "held"> {
-  const ref = d.store.forwardOf(from) ?? from;
+  const ref = d.store.destination(from);
   if (migrating(d.store.root, from) || migrating(d.store.root, ref)) return "queued";
-  if (d.store.queued(ref).length === 0 && !d.store.forwardPending(ref)) return "delivered";
+  // Unlocked, so the queue is not parsed here: a holder may be part way through appending to it.
+  if (!nonEmpty(d.store.inboxPath(ref)) && !d.store.mergePending(ref)) return "delivered";
   const release = d.store.lockInbox(ref, d.now());
   if (!release) return "queued";
   try {
@@ -154,7 +179,7 @@ function settleInbox(d: Deps, ref: SessionRef, batch: readonly QueuedMessage[], 
     const i = left.findIndex((b) =>
       b.id !== undefined || m.id !== undefined
         ? b.id === m.id
-        : b.at === m.at && b.from === m.from && b.text === m.text,
+        : b.spool === m.spool && b.at === m.at && b.from === m.from && b.text === m.text,
     );
     if (i < 0) return [m];
     left.splice(i, 1);

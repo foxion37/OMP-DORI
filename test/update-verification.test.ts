@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { DoriUpdater } from "../src/update/controller.ts";
@@ -8,7 +8,7 @@ import { candidateReport } from "../src/update/report.ts";
 import { parseReview } from "../src/update/review.ts";
 import { gitIdentity, sourceManifest } from "../src/update/source.ts";
 import { REVIEW_ITEMS, type UpdateJob } from "../src/update/types.ts";
-import { fixture } from "./update-setup.ts";
+import { fixture, it } from "./update-setup.ts";
 
 const normalized = "export const behavior = 2;\n";
 
@@ -69,7 +69,7 @@ ${mutatingCheck ? 'await Bun.write("src/behavior.ts", "export const behavior = 3
   return { updater, job, metadata: gitIdentity(job.candidate), before: sourceManifest(job.candidate).hash };
 }
 
-test("explicit preparation normalizes before final binding; check writes and stale review hashes still hold", async () => {
+it("explicit preparation normalizes before final binding; check writes and stale review hashes still hold", async () => {
   const { updater, job, metadata, before } = await prepared(false);
   const finalHash = await verifyCandidate(updater.context, job, metadata);
   expect(finalHash).not.toBe(before);

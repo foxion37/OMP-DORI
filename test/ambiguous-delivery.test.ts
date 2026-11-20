@@ -106,7 +106,7 @@ describe("ambiguous `agent prompt` failure (#89 B)", () => {
     const { w, d, lead, count } = setup();
     const lane = w.addPane("w1:p2", "idle");
     w.promptFails.set("w1:p2", "timeout");
-    d.store.enqueue(href("w1:p2"), { at: w.clock, from: "cli", text: "SECRET instruction" });
+    await d.store.enqueue(href("w1:p2"), { at: w.clock, from: "cli", text: "SECRET instruction" }, false);
 
     const ticks = [await dutyTick(d), await dutyTick(d), await dutyTick(d)];
     for (const events of ticks) {

@@ -1,0 +1,54 @@
+name: Setup Bun and dependencies
+description: Install Bun 1.4.4, restore the Bun install cache, install the workspace dependencies and prepare the optional test fixtures.
+
+inputs:
+  fixtures:
+    description: Test fixtures to prepare; none installs dependencies only, host binds the native OMP host, all adds the ULW and compatibility fixtures.
+    required: false
+    default: none
+
+runs:
+  using: composite
+  steps:
+    - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      with:
+        bun-version: 1.4.4
+    - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+      with:
+        path: ~/.bun/install/cache
+        key: bun-${{ runner.os }}-${{ runner.arch }}-${{ inputs.fixtures }}-${{ hashFiles('bun.lock', 'skills/dori-mode/scripts/bun.lock', 'test/fixtures/omp-native-host/bun.lock') }}
+        restore-keys: bun-${{ runner.os }}-${{ runner.arch }}-${{ inputs.fixtures }}-
+    - name: Install exact native OMP test host
+      if: ${{ inputs.fixtures == 'host' || inputs.fixtures == 'all' }}
+      shell: bash
+      run: cd "$GITHUB_WORKSPACE/test/fixtures/omp-native-host" && bun install --frozen-lockfile
+    - name: Bind exact native OMP test host
+      if: ${{ inputs.fixtures == 'host' || inputs.fixtures == 'all' }}
+      shell: bash
+      run: |
+        host="$GITHUB_WORKSPACE/test/fixtures/omp-native-host/node_modules/@oh-my-pi/pi-coding-agent"
+        bun -e 'const p = await Bun.file(process.argv[1] + "/package.json").json(); if (p.version !== "18.20.0") throw new Error("unexpected native OMP fixture version: " + p.version)' "$host"
+        printf 'DORI_TEST_OMP_ROOT=%s\n' "$host" >> "$GITHUB_ENV"
+    - name: Prepare bound omp-ulw test fixture
+      if: ${{ inputs.fixtures == 'all' }}
+      shell: bash
+      run: |
+        mkdir -p "$RUNNER_TEMP/omp-dori-ci-home"
+        bun "$GITHUB_WORKSPACE/scripts/source-dependencies.ts" ulw "$GITHUB_WORKSPACE" "$RUNNER_TEMP/omp-dori-ci-home" "$GITHUB_WORKSPACE/ref/omp-ulw"
+    - name: Check out exact explicit-override compatibility fixture
+      if: ${{ inputs.fixtures == 'all' }}
+      shell: bash
+      run: |
+        pin=cbfe5ee72e5b2783af01616e7f4d3da5e3f9180d
+        compat="$RUNNER_TEMP/omp-dori-compat-ulw"
+        git clone --quiet --no-checkout --shared "$GITHUB_WORKSPACE/ref/omp-ulw" "$compat"
+        git -C "$compat" fetch --quiet --no-tags https://github.com/dbc-hbin/omp-ulw.git "$pin"
+        git -C "$compat" -c advice.detachedHead=false checkout --quiet "$pin"
+        test "$(git -C "$compat" rev-parse HEAD)" = "$pin"
+        printf 'DORI_TEST_COMPAT_ULW_ENTRY=%s/index.ts\n' "$compat" >> "$GITHUB_ENV"
+    - name: Install root dependencies
+      shell: bash
+      run: cd "$GITHUB_WORKSPACE" && bun install --frozen-lockfile
+    - name: Install dori-mode script dependencies
+      shell: bash
+      run: cd "$GITHUB_WORKSPACE/skills/dori-mode/scripts" && bun install --frozen-lockfile

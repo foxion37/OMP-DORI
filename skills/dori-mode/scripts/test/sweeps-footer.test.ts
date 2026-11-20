@@ -7,7 +7,7 @@ import { adoptLane } from "../src/adopt.ts";
 import { LaunchError, prepareLaunch } from "../src/launch.ts";
 import { cliCommand, shellQuote } from "../src/launch-footer.ts";
 import type { Lane } from "../src/registry.ts";
-import { Reports } from "../src/reports.ts";
+import { Reports, reportId, reportLine } from "../src/reports.ts";
 import { depsFor, fakeClock, newWorld, withState, type World } from "./fakes.ts";
 
 const T0 = Date.parse("2026-01-01T12:00:00.000Z");
@@ -69,7 +69,15 @@ test("the footer CLI command survives a skill path with a space or a quote", asy
   }
 });
 
-test("the selected footer runtime receives one data argument and missing destinations still journal reports", async () => {
+// The launcher stubs are extensionless POSIX executables invoked by the generated shell footer.
+const posix = test.skipIf(process.platform === "win32");
+posix(
+  "the selected footer runtime receives one data argument and missing destinations still journal reports",
+  verifyFooterRuntime,
+  15_000,
+);
+
+async function verifyFooterRuntime() {
   const dir = mkdtempSync(join(tmpdir(), "dori footer send "));
   const priorConfig = process.env["DORI_CONFIG"];
   try {
@@ -116,34 +124,49 @@ next line`;
       expect(await Bun.file(brief).text()).toBe("Perform the fixture work.");
       expect(await deps.registry.read(key)).toBeNull();
       await deps.registry.write(prepared.lane);
-      const command = prepared.preamble.split("\n").find((line) => line.startsWith("line=$("));
-      if (!command) throw new Error("launch footer has no report command");
+      const lines = prepared.preamble.split("\n");
+      const record = lines.find((line) => line.startsWith("receipt=$("));
+      const forward = lines.find((line) => line.startsWith("line=$("));
+      if (!record) throw new Error("launch footer has no report command");
       const argvLog = join(dir, `${index}.argv.json`);
-      const proc = Bun.spawn(["bash", "-c", command], {
-        stdout: "pipe",
-        stderr: "pipe",
-        env: {
-          ...process.env,
-          PATH: `${dir}:${process.env["PATH"]}`,
-          DORI_CONFIG: configFile,
-          DORI_STATE_DIR: state.dir,
-          ARGV_LOG: argvLog,
-          kind: "milestone",
-          text,
-        },
-      });
-      const report = `[REPORT] ${key} | milestone | ${text.replace("\n", " ")}`;
-      expect((await new Response(proc.stdout).text()).trimEnd()).toBe(report);
+      const env = {
+        ...process.env,
+        PATH: `${dir}:${process.env["PATH"]}`,
+        DORI_CONFIG: configFile,
+        DORI_STATE_DIR: state.dir,
+        ARGV_LOG: argvLog,
+        kind: "milestone",
+        text,
+      };
+      const proc = Bun.spawn(["bash", "-c", record], { stdout: "pipe", stderr: "pipe", env });
+      const receipt = (await new Response(proc.stdout).text()).trimEnd();
       expect(await new Response(proc.stderr).text()).toBe("");
       expect(await proc.exited).toBe(0);
-      expect(new Reports(state.dir).read(key)?.lastReport?.text).toBe(text);
+      const journal = new Reports(state.dir);
+      const saved = journal.read(key)?.lastReport;
+      expect(saved?.text).toBe(text);
+      if (!saved) throw new Error("report was not saved");
+      expect(JSON.parse(receipt)).toEqual({ ...saved, id: reportId(saved) });
+      expect(existsSync(argvLog)).toBe(false);
+      const beforeForward = await Bun.file(journal.path(key)).text();
+      expect(beforeForward.trimEnd().split("\n")).toHaveLength(1);
       if (fixture.selected) {
+        if (!forward) throw new Error("launch footer has no forwarding command");
+        const sender = Bun.spawn(["bash", "-c", forward], {
+          stdout: "pipe",
+          stderr: "pipe",
+          env: { ...env, receipt },
+        });
+        expect(await new Response(sender.stderr).text()).toBe("");
+        expect(await sender.exited).toBe(0);
+        const report = reportLine(saved);
         const sent =
           fixture.selected === "herdr"
             ? ["pane", "run", config.leadPane, report]
             : ["send", config.leadPane, "--", report];
         expect(await Bun.file(argvLog).json()).toEqual([fixture.selected, ...sent]);
-      } else expect(existsSync(argvLog)).toBe(false);
+      } else expect(forward).toBeUndefined();
+      expect(await Bun.file(journal.path(key)).text()).toBe(beforeForward);
       expect(existsSync(marker)).toBe(false);
     }
   } finally {
@@ -151,4 +174,4 @@ next line`;
     else process.env["DORI_CONFIG"] = priorConfig;
     rmSync(dir, { recursive: true, force: true });
   }
-}, 15_000);
+}

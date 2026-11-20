@@ -17,6 +17,11 @@ test.each([
     { ...base, messageId: 8, text: 'a "b"\nc', media: { kind: "photo", fileId: "F1" } },
     'INBOUND dm 5250 - 90 mid=8 5250 "a \\"b\\"\\nc" file=photo:F1',
   ],
+  [
+    "a reply appends reply= last, after any file=",
+    { ...base, messageId: 9, text: "2", replyTo: 4, media: { kind: "voice", fileId: "V1" } },
+    'INBOUND dm 5250 - 90 mid=9 5250 "2" file=voice:V1 reply=4',
+  ],
 ] as const)("%s", (_, inbound, line) => {
   expect(formatTelegramInbound(inbound)).toBe(line);
 });

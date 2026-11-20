@@ -3,14 +3,7 @@ import type { ReviewScope } from "./reviewer-guard.ts";
 import type { WorkerScope } from "./worker-guard.ts";
 
 export type UpdatePhase =
-  | "prepared"
-  | "porting"
-  | "verifying"
-  | "reviewing"
-  | "ready"
-  | "failed"
-  | "rejected"
-  | "interrupted";
+  "prepared" | "porting" | "verifying" | "reviewing" | "ready" | "failed" | "rejected" | "interrupted";
 export type UpdateCommand = {
   readonly name: string;
   readonly argv: readonly string[];

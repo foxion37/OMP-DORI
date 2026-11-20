@@ -1,0 +1,95 @@
+name: cross-os
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      os:
+        description: Operating system to test; all runs both jobs.
+        type: choice
+        options: [all, macos, windows]
+        default: all
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cross-os-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test-macos:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.os == 'all' || inputs.os == 'macos' }}
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          fetch-depth: ${{ github.event_name == 'pull_request' && 1 || 0 }}
+      - uses: ./.github/actions/setup
+        with:
+          fixtures: all
+      - run: bun run check:fixtures
+      - name: Root tests
+        if: ${{ !cancelled() }}
+        run: bun test --parallel=3 --timeout=30000 --timings=.bun-test-timings.json ./test/
+      - name: Skill tests
+        if: ${{ !cancelled() }}
+        run: bun run test:skill
+      - name: Extension tests
+        if: ${{ !cancelled() }}
+        run: bun run test:extension
+      - name: Genuine Darwin arm64 hc consumer release smoke
+        if: ${{ !cancelled() && github.event_name != 'pull_request' }}
+        run: |
+          set -euo pipefail
+          test "$(uname -s)" = Darwin
+          test "$(uname -m)" = arm64
+          bun -e 'if (process.platform !== "darwin" || process.arch !== "arm64") throw new Error("Darwin arm64 is required")'
+          gtar="$(command -v gtar)"
+          "$gtar" --version
+          runtime="$RUNNER_TEMP/consumer-hc"
+          mkdir -m 700 "$runtime" "$runtime/home" "$runtime/s" "$runtime/r" "$runtime/c"
+          curl --proto '=https' --tlsv1.2 -fL https://releases.herdr.dev/core/install.sh -o "$runtime/install-hc.sh"
+          printf '%s  %s\n' '9d29a920d796d11b00fde9ab0958b616179d88acc25edf0fde8b574bde0227d2' "$runtime/install-hc.sh" | shasum -a 256 -c -
+          env -i HOME="$runtime/home" PATH=/usr/bin:/bin HC_VERSION=0.1.20 sh "$runtime/install-hc.sh"
+          hc="$runtime/home/.local/bin/hc"
+          env -i HOME="$runtime/home" PATH="$runtime/home/.local/bin:/usr/bin:/bin" \
+            XDG_STATE_HOME="$runtime/s" XDG_RUNTIME_DIR="$runtime/r" XDG_CONFIG_HOME="$runtime/c" \
+            HC_SESSION=consumer-installer hc update --version 0.1.20
+          baseline=74870017f361dad437ba5e4dd97c90698823a1f3
+          git merge-base --is-ancestor "$baseline" HEAD
+          git worktree add --detach "$RUNNER_TEMP/consumer-baseline" "$baseline"
+          git worktree add --detach "$RUNNER_TEMP/consumer-candidate" HEAD
+          bun "$RUNNER_TEMP/consumer-candidate/scripts/verify-consumer-release.ts" \
+            --source-a "$RUNNER_TEMP/consumer-baseline" --source-b "$RUNNER_TEMP/consumer-candidate" \
+            --runtime-bin "$hc" --tar-bin "$gtar" \
+            --out "/private/tmp/odcr-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+
+  test-windows:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.os == 'all' || inputs.os == 'windows' }}
+    runs-on: windows-2025
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: ./.github/actions/setup
+        with:
+          fixtures: host
+      - run: bun run check
+      - run: bun run typecheck
+      - run: bun run knip
+      - run: bun run lint:loc
+      - name: Root tests
+        if: ${{ !cancelled() }}
+        run: bun run test:ci
+      - name: Skill tests
+        if: ${{ !cancelled() }}
+        run: bun run test:skill
+      - name: Extension tests
+        if: ${{ !cancelled() }}
+        run: bun run test:extension

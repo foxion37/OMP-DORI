@@ -1,485 +1,58 @@
---- a/host.ts
-+++ b/host.ts
-@@ -1,6 +1,8 @@
- export interface HostPrompt {
-   blocks: string[];
-   originalBehavior: string;
-+  /** Position of the recognized native template; other extensions may prepend blocks. */
-+  index: number;
- }
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 094adbbbec0d8ee163e15c90f3abe5f1e0b38e5f..6fb81428d67ba68e99e07eb2c4668d3b7f682345 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -6,6 +6,14 @@
  
- /** Adapt known upstream routing rules, not task permissions or model assignments. */
-@@ -23,25 +25,33 @@
+ - Both models use Senpi catalog matching and a [standalone OMP preset](prompts/gpt-6.2.ts) based on the [OpenAI guide](https://developers.openai.com/api/docs/guides/latest-model). Answer follow-up questions and reviews without editing; implement and verify requested changes and corrections to authorized work. Writing guidance preserves necessary comparisons, verification limits and progress updates.
  
- /** Replace only the known default template; custom prompts and agent blocks remain owned by their authors. */
- export function replaceHostBehavior(blocks: string[], behavior: string): HostPrompt | undefined {
--  const base = blocks[0];
--  if (!base || /<om[op]-model-preset>/.test(base)) return undefined;
--  const heading = /\n([§⁂]) Role\n/.exec(base);
--  // OMP 18.20 removed the Role heading from its default template. Recognize
--  // that exact native opening, not arbitrary custom text before Runtime.
--  const headerless = base.startsWith("You are omp's trusted coding assistant.\n\n# Engineering\n");
--  if (!heading && !headerless) return undefined;
--  const role = heading?.index ?? 0;
--  const marker = heading?.[1] ?? "⁂";
--  const runtime = base.indexOf(`\n${marker} Runtime\n`, role);
--  const policy = base.indexOf(`\n${marker} Tool Policy\n`, runtime);
--  const workflow = base.indexOf(`\n${marker} Workflow\n`, policy);
--  if (runtime <= role || policy <= runtime || workflow <= policy) return undefined;
--  // Preserve native defaults here so unsupported-model fallback can restore them.
--  // Model-specific behavioral projection happens after this replacement.
--  const roleBodyStart = heading ? role + heading[0].length : 0;
--  const originalBehavior = base.slice(roleBodyStart, runtime);
--  const host = base.slice(0, roleBodyStart) + behavior + "\n" + base.slice(runtime, policy)
--    + adaptResearchRouting(base.slice(policy, workflow))
--    + base.slice(workflow);
--  return { blocks: [host, ...blocks.slice(1)], originalBehavior };
-+  for (const [index, base] of blocks.entries()) {
-+    // An installed headerless profile has replaced the native role opening.
-+    // Require its closing marker and immediate native Runtime boundary.
-+    const ownedHeaderless = /^<(om[op]-model-preset)>[\s\S]*?<\/\1>\n(?=\n⁂ Runtime\n)/.exec(base);
-+    const heading = ownedHeaderless ? null : /\n([§⁂]) Role\n/.exec(base);
-+    // OMP 18.20 removed the Role heading from its default template. Recognize
-+    // that exact native opening, not arbitrary custom text before Runtime.
-+    const headerless = ownedHeaderless !== null || base.startsWith("You are omp's trusted coding assistant.\n\n# Engineering\n");
-+    if (!heading && !headerless) continue;
-+    const role = heading?.index ?? 0;
-+    const marker = heading?.[1] ?? "⁂";
-+    const runtime = ownedHeaderless ? ownedHeaderless[0].length : base.indexOf(`\n${marker} Runtime\n`, role);
-+    const policy = base.indexOf(`\n${marker} Tool Policy\n`, runtime);
-+    const workflow = base.indexOf(`\n${marker} Workflow\n`, policy);
-+    if (runtime <= role || policy <= runtime || workflow <= policy) continue;
-+    // Stop at the first complete native template, including one already owned.
-+    if (/<om[op]-model-preset>/.test(base)) return undefined;
-+    // Preserve native defaults here so unsupported-model fallback can restore them.
-+    // Model-specific behavioral projection happens after this replacement.
-+    const roleBodyStart = heading ? role + heading[0].length : 0;
-+    const originalBehavior = base.slice(roleBodyStart, runtime);
-+    const host = base.slice(0, roleBodyStart) + behavior + "\n" + base.slice(runtime, policy)
-+      + adaptResearchRouting(base.slice(policy, workflow))
-+      + base.slice(workflow);
-+    const next = blocks.slice();
-+    next[index] = host;
-+    return { blocks: next, originalBehavior, index };
-+  }
-+  return undefined;
- }
---- a/host-guidance.ts
-+++ b/host-guidance.ts
-@@ -6,13 +6,16 @@
-   const headerless = /^<(?:omp|omo)-model-preset>/.test(source);
-   if (!role && !headerless) return text;
-   const roleBodyStart = role ? role.index + role[0].length : 0;
--  if (!text.startsWith(source.slice(0, roleBodyStart))) return text;
--  if (!/^<(?:omp|omo)-model-preset>/.test(text.slice(roleBodyStart))) return text;
-+  const prefix = source.slice(0, roleBodyStart);
-+  const hostAt = prefix ? text.indexOf(prefix) : text.search(/<(?:omp|omo)-model-preset>/);
-+  if (hostAt < 0 || !/^<(?:omp|omo)-model-preset>/.test(text.slice(hostAt + roleBodyStart))) return text;
-   const marker = role?.[1] ?? "⁂";
-   const policyAt = source.indexOf(`\n${marker} Tool Policy\n`);
-   const workflowAt = source.indexOf(`\n${marker} Workflow\n`, policyAt);
-   const deliveryAt = source.indexOf(`\n${marker} Delivery\n`, workflowAt);
-   if (policyAt < 0 || workflowAt <= policyAt) return text;
-+  const leading = text.slice(0, hostAt);
-+  text = text.slice(hostAt);
-   let policy = source.slice(policyAt, workflowAt);
-   let workflow = deliveryAt > workflowAt ? source.slice(workflowAt, deliveryAt) : undefined;
-   if (modelGuidance) {
-@@ -54,7 +57,7 @@
-       : originalCritical;
-     result = result.replace(criticalRegion, () => critical);
-   }
--  return result;
-+  return leading + result;
- }
++### 2026-11-15 Local profile and native host compatibility
++
++- Carry the installed prepended-frame compatibility patch into the current native template matcher, retaining both section markers and headerless main-role support. Track the selected host block through role fallback and host-guidance projection, including merged provider system fields.
++- Restore literal native roles through callback replacement so dollar replacement tokens remain data. Preserve frame, project, capability and child-assignment boundaries.
++- Preserve the read-only local Claude route-policy binding and retained senpi `a854e7ac` DeepSeek base profiles, while keeping the current upstream catalog and OMP transport/reporting adaptations. Exclusions do not disable ULW, prewalk or actual code-mode projection.
++- Package the retained bundle and its types. Add behavioral coverage for prepended hosts, literal fallback, configured Claude harnesses, request-time exclusion changes, code-mode tool projection and complete DeepSeek alias profiles.
++- Annotate prewalk's runtime setting handles as `Setting<unknown>`, matching OMP 18.20's registry lookup contract without changing runtime controls.
++
+ ### 2026-11-15 Model-neutral extension code mode
  
- /** Native mechanics remain authoritative; only the active profile can own duplicate requirements. */
---- a/index.ts
-+++ b/index.ts
-@@ -37,6 +37,7 @@
- import type { PresetModel, PresetOptions } from "./presets";
- import { adaptPrewalkNotice, registerPrewalk } from "./prewalk";
- import type { PrewalkApi } from "./prewalk";
-+import { isExcluded, loadScope } from "./route-scope";
- import { registerUlw, ulwDirective } from "./ulw";
- import type { UlwApi, UlwContext } from "./ulw";
+ - Project supported requests across model families through native JavaScript eval, session controls and required device/plan transports without changing OMP core, active tools or approvals. Require active, actually exposed JavaScript-capable eval and supported payload/schema metadata; retain the original request when these gates are not met.
+diff --git a/README.md b/README.md
+index a7967d8187972567b1a9a50e21f79a944d0c3598..203e69af2fc93de5994c60a5d84585efdf779854 100644
+--- a/README.md
++++ b/README.md
+@@ -44,12 +44,22 @@ See [skills/](skills/) for individual instructions. Cross-product session discov
  
-@@ -87,6 +88,9 @@
-       // merely because a host or skill mentions a tool that is unavailable.
-       toolNames: pi.getAllTools().map(tool => tool.name).filter(name => active.has(name)),
-     };
-+    // Preserve the locally configured native-harness routes without bypassing
-+    // ULW, prewalk or the model-neutral code-mode hooks.
-+    if (isExcluded(ctx.model, loadScope())) return;
-     const preset = ctx.model ? renderPreset(ctx.model, options) : undefined;
-     // Only the base role is replaced. OMP appends the child's specialist role,
-     // assignment and completion contract in later blocks, which remain intact.
-@@ -100,15 +104,18 @@
-       return;
-     }
-     originalBehavior = result.originalBehavior;
--    if (preset && ctx.model) profiles.set(JSON.stringify([ctx.model.provider, ctx.model.id, ctx.model.name, options.toolNames]), { prompt: marked, modelGuidance: true });
--    if (!preset) result.blocks[0] = result.blocks[0].replace(marked, markPreset(originalBehavior, ctx.agent.kind === "sub"));
--    originalHost = result.blocks[0];
--    result.blocks[0] = projectHostGuidance(result.blocks[0], originalHost, preset !== undefined);
-+    if (preset && ctx.model) profiles.set(JSON.stringify([ctx.model.provider, ctx.model.id, ctx.model.name, options.toolNames, false]), { prompt: marked, modelGuidance: true });
-+    if (!preset) {
-+      const restored = markPreset(originalBehavior, ctx.agent.kind === "sub");
-+      result.blocks[result.index] = result.blocks[result.index].replace(marked, () => restored);
-+    }
-+    originalHost = result.blocks[result.index];
-+    result.blocks[result.index] = projectHostGuidance(originalHost, originalHost, preset !== undefined);
-     return { systemPrompt: result.blocks };
-   });
+ Supported model profiles are adapted to OMP and applied independently to main and supported child sessions. Specialist roles, project instructions, permissions and completion protocols remain intact. Custom templates and unsupported models retain native behavior. Explicit investigation and planning-only requests temporarily suppress prewalk; implementation requests restore only overrides owned by this extension.
  
-   pi.on("context", (event, ctx) => {
--    if (originalHost === undefined || !ctx.model || !renderPreset(ctx.model, options)) return;
-+    if (originalHost === undefined || !ctx.model || isExcluded(ctx.model, loadScope()) || !renderPreset(ctx.model, options)) return;
-     let changed = false;
-     const messages = event.messages.map(message => {
-       if (message.role !== "custom" || typeof message.customType !== "string" || typeof message.content !== "string") return message;
-@@ -129,10 +136,11 @@
-     if (originalBehavior === undefined || originalHost === undefined) return payload;
-     const active = new Set(pi.getActiveTools());
-     options = { ...options, toolNames: pi.getAllTools().map(tool => tool.name).filter(name => active.has(name)) };
--    const key = JSON.stringify([ctx.model.provider, ctx.model.id, ctx.model.name, options.toolNames]);
-+    const excluded = isExcluded(ctx.model, loadScope());
-+    const key = JSON.stringify([ctx.model.provider, ctx.model.id, ctx.model.name, options.toolNames, excluded]);
-     let replacement = profiles.get(key);
-     if (replacement === undefined) {
--      const preset = renderPreset(ctx.model, options);
-+      const preset = excluded ? undefined : renderPreset(ctx.model, options);
-       replacement = { prompt: markPreset(preset?.prompt ?? originalBehavior, ctx.agent.kind === "sub"), modelGuidance: preset !== undefined };
-       profiles.set(key, replacement);
-     }
---- a/presets.ts
-+++ b/presets.ts
-@@ -1,4 +1,5 @@
- import { ASYNC_DEFAULT, MONITOR_CONDITIONS, TURN_END_IS_WAIT, buildPreset, resolvePresetName } from "./upstream/presets.js";
-+import { buildPreset as buildPinnedPreset } from "./upstream/presets-deepseek-pin.js";
++### Managed model-profile overlay
++
++This modified copy retains the local DeepSeek base profiles from senpi `a854e7acffa90aba674b9454279035a2fb7140f4` in [`upstream/presets-deepseek-pin.js`](upstream/presets-deepseek-pin.js), with current provider-sensitive selection and OMP transport, reporting and lifecycle adaptations. Other models use the current generated bundle. `upstream/update.mjs` updates that bundle without replacing the retained DeepSeek module.
++
++[`route-scope.ts`](route-scope.ts) reads the existing local model-profile exclusions without importing another extension or writing settings. By default, it reads `.omp/agent/dsh-unbound/route-scope.json` under the home returned by `node:os`'s `homedir()`. To retain a specific policy when a launcher uses a temporary `HOME`, set `OMP_ULW_SCOPE_FILE` to that policy's file path for the process before loading the extension. The override is used as-is, including an empty value; an unreadable or invalid selected file uses the original policy defaults without falling back to another file. Configured provider/model exclusions keep the native OMP harness at turn start; excluded requests do not select a third-party model profile. ULW, prewalk and code mode remain independent of this profile exclusion.
++
++Native templates are recognized after prepended extension frames, using either `§` or `⁂` headings or OMP's exact headerless main-role opening. Replacement, native fallback and request-time host projection all preserve the surrounding frame, project and specialist blocks. Model-specific guidance takes precedence over overlapping native working-style defaults without replacing tool or permission contracts. Remaining native pre-editing duplicates are removed only when the active profile or preserved host instructions cover them, and restored when that coverage changes. Native delivery rules are preserved verbatim, including live additions and changes; model-specific rereading, verification tiers and tool budgets remain intact.
++
++### Code mode
++
+ Code mode depends on request capabilities, not model family:
  
- export interface PresetModel { id: string; name?: string; provider?: string }
- export interface PresetOptions { surface: "terminal" | "app"; toolNames: string[]; subagent?: boolean }
-@@ -25,7 +26,10 @@
-   if (!name) return undefined;
-   // Upstream gates its question directive on its own tool name; transport is adapted below.
-   const selectedTools = options.toolNames.map(tool => tool === "ask" ? "request_user_input" : tool);
--  const preset = buildPreset(name, { surface: options.surface, selectedTools });
-+  // Preserve the user's a854e7ac DeepSeek base profiles while keeping current
-+  // selection rules and all OMP transport, lifecycle and reporting adaptations.
-+  const builder = name.startsWith("deepseek") ? buildPinnedPreset : buildPreset;
-+  const preset = builder(name, { surface: options.surface, selectedTools });
-   if (!preset) return undefined;
-   let prompt = preset.prompt;
-   const hasAsk = options.toolNames.includes("ask");
---- a/prewalk.ts
-+++ b/prewalk.ts
-@@ -1,5 +1,5 @@
- import { ulwRequest, visibleUlwText } from "./ulw";
--import type { Setting } from "@oh-my-pi/pi-coding-agent/config/registry";
-+import type { ScopeLike, Setting } from "@oh-my-pi/pi-coding-agent/config/registry";
+-- Ordinary work tools are documented in native JavaScript eval for `tool.<name>(args)` calls instead of exposed as direct schemas.
++- Ordinary work tools use native eval accessors instead of direct schemas. Prefer Python when available; JavaScript remains available for its specific APIs and libraries. Discoverable tools retain linked `xd://` documentation rather than duplicating their catalog.
+ - Session controls, `write`, `apply_patch`, reserved bridge names (`defined`, `undefine`), unmapped tools and forced tool choices stay direct.
+-- Independent reads, searches and lookups run in parallel. Code mode uses `Promise.allSettled`; mutations, approvals, waits and dependent calls remain sequential.
+-- An active JavaScript-capable eval and a supported provider request hook are required. Restricted agents gain no tools or permissions; unsupported requests remain unchanged with a notice.
++- Independent reads, searches and lookups run in parallel; inspect every result. Mutations, approvals, waits and dependent calls remain sequential. Native `task`, `todo` and JSON `edit` are available through their eval accessors; direct session controls and freeform `apply_patch` remain direct.
++- An active eval exposing `py` or `js` and a supported provider request hook are required. Restricted agents gain no tools or permissions; unsupported requests remain unchanged with a notice.
  
- type TaskIntent = "restricted" | "implementation";
- interface PrewalkContext { cwd: string; agent: { kind: "main" | "sub" } }
-@@ -9,8 +9,8 @@
- }
+ Kiro, Cursor Agent, GitLab Duo Agent and Apple Foundation Models have request-hook limitations; code mode is not guaranteed on those paths. Catalog caches are session-local and follow live tool metadata. **Code mode is a model-facing routing policy, not an execution security boundary.**
  
- export function registerPrewalk(pi: PrewalkApi): void {
--  let scope: object | undefined;
--  let controls: Array<{ setting: Setting; muted: unknown; previous?: { value: unknown; runtime: boolean } }> = [];
-+  let scope: ScopeLike | undefined;
-+  let controls: Array<{ setting: Setting<unknown>; muted: unknown; previous?: { value: unknown; runtime: boolean } }> = [];
-   const restore = () => {
-     if (!scope) return;
-     for (const control of controls) {
---- a/package.json
-+++ b/package.json
-@@ -17,11 +17,14 @@
-     "host-guidance.ts",
-     "payload.ts",
-     "presets.ts",
-+    "route-scope.ts",
-     "prewalk.ts",
-     "omp-settings.d.ts",
-     "ulw.ts",
-     "upstream/presets.js",
-     "upstream/presets.d.ts",
-+    "upstream/presets-deepseek-pin.js",
-+    "upstream/presets-deepseek-pin.d.ts",
-     "prompts/",
-     "skills/",
-     "README*.md",
---- a/host.test.ts
-+++ b/host.test.ts
-@@ -78,6 +78,37 @@
-   expect(result?.originalBehavior).not.toContain("<skills>");
- });
- 
-+test.each(["§", "⁂", "headerless"])("prepended frames preserve the %s native host, project and child boundaries", (format) => {
-+  const marker = format === "§" ? "§" : "⁂";
-+  const role = format === "headerless"
-+    ? "You are omp's trusted coding assistant.\n\n# Engineering\nNative role $& $$ $` $'"
-+    : "Native role $& $$ $` $'";
-+  const prefix = format === "headerless" ? "" : `Host conventions\n${marker} Role\n`;
-+  const runtime = base.slice(base.indexOf("\n§ Runtime\n")).replaceAll("§", marker);
-+  const template = prefix + role + runtime;
-+  const frames = ["<native-extension-frame>Caller-owned frame</native-extension-frame>", "⁂ Role\nCaller-owned role without native runtime"];
-+  const project = "<project-context>Keep every project byte: $& $$ $` $'</project-context>";
-+  const child = "⁂ Role\nRead-only specialist\n⁂ Completion\nReturn through the host protocol";
-+  const input = [...frames, template, project, child];
-+  const before = [...input];
-+  const profile = "<omp-model-preset>Selected profile</omp-model-preset>";
-+  const result = replaceHostBehavior(input, profile)!;
-+
-+  expect(result.index).toBe(frames.length);
-+  expect(result.originalBehavior).toBe(role);
-+  expect(result.blocks).toEqual([...frames, prefix + profile + "\n" + runtime, project, child]);
-+  expect(input).toEqual(before);
-+  expect(replaceHostBehavior([...result.blocks, base], "<omp-model-preset>second</omp-model-preset>")).toBeUndefined();
-+
-+  const source = result.blocks[result.index];
-+  const leading = frames.join("\n") + "\n";
-+  const trailing = "\n" + [project, child].join("\n");
-+  const merged = leading + source + trailing;
-+  const projected = projectHostGuidance(merged, source, true);
-+  expect(projected).toBe(leading + projectHostGuidance(source, source, true) + trailing);
-+  expect(projectHostGuidance(projected, source, false)).toBe(merged);
-+});
-+
- test.each(["§", "⁂"])("OMP %s system template replaces only the role block", (marker) => {
-   const ompTemplate = readFileSync(new URL("./tests/fixtures/omp-system-prompt.md", import.meta.url), "utf8").replaceAll("§", marker);
-   const project = "<repo-rules>Keep the existing task contract</repo-rules>";
---- a/index.test.ts
-+++ b/index.test.ts
-@@ -318,3 +318,81 @@
-   ctx.model.id = "unknown-model";
-   expect(Reflect.apply(context, undefined, [{ messages }, ctx])).toBeUndefined();
- });
-+
-+test.each(["§", "⁂", "headerless"])("prepended %s hosts retain literal native roles and refresh the correct block across fallback", (format) => {
-+  const marker = format === "§" ? "§" : "⁂";
-+  const role = format === "headerless"
-+    ? "You are omp's trusted coding assistant.\n\n# Engineering\nLiteral native role: $& $$ $` $'"
-+    : "Literal native role: $& $$ $` $'";
-+  const prefix = format === "headerless" ? "" : `Host conventions\n${marker} Role\n`;
-+  const runtime = `\n${marker} Runtime\n<skills>catalog</skills>\n${marker} Tool Policy\n# General\nNative behavioral defaults\n# Tool I/O\nNative capabilities\n${marker} Workflow\nNative workflow`;
-+  const template = prefix + role + runtime;
-+  const frame = "<native-extension-frame>Retain caller-owned frame $& $$ $` $'</native-extension-frame>";
-+  const project = "<project-context>Retain project $& $$ $` $'</project-context>";
-+  const tools = [{ type: "function", function: { name: "read", parameters: { type: "object" } } }];
-+  const profileRegion = /<omp-model-preset>\n([\s\S]*?)\n<\/omp-model-preset>/;
-+
-+  for (const initialModel of ["unknown-model", "gpt-6.1-sol"]) {
-+    for (const packing of ["separate", "merged"]) {
-+      const handlers = new Map<string, Handler[]>();
-+      const activeTools = ["read"];
-+      ompUlw({
-+        setLabel: () => {}, getActiveTools: () => activeTools, getAllTools: () => [{ name: "read" }],
-+        registerCommand: () => {}, sendUserMessage: () => {}, registerFlag: () => {},
-+        getFlag: () => false, appendEntry: () => {},
-+        on: (event: string, handler: Handler) => { handlers.set(event, [...(handlers.get(event) ?? []), handler]); },
-+      });
-+      const ctx = {
-+        cwd: ".", mode: "rpc", agent: { kind: "main" },
-+        sessionManager: { getSessionId: () => `prepended-${format}-${initialModel}-${packing}`, getBranch: () => [] },
-+        ui: { notify: (message: string) => { throw new Error(message); } },
-+        model: { id: initialModel, api: "openai-completions" },
-+      };
-+      const input = [frame, template, project];
-+      let blocks = input;
-+      for (const handler of handlers.get("before_agent_start") ?? []) {
-+        const result: unknown = Reflect.apply(handler, undefined, [{ prompt: "ordinary task", systemPrompt: blocks }, ctx]);
-+        if (typeof result === "object" && result !== null && "systemPrompt" in result && Array.isArray(result.systemPrompt) && result.systemPrompt.every((block: unknown) => typeof block === "string")) blocks = result.systemPrompt;
-+      }
-+      expect(input).toEqual([frame, template, project]);
-+      expect(blocks[0]).toBe(frame);
-+      expect(blocks[2]).toBe(project);
-+      expect(profileRegion.exec(blocks[1])?.[1]).toBe(renderPreset(ctx.model, { surface: "app", toolNames: activeTools })?.prompt ?? role);
-+
-+      const request = handlers.get("before_provider_request")![0];
-+      const context = handlers.get("context")![0];
-+      const user = { role: "user", content: blocks.join("\n") };
-+      const system = packing === "merged" ? [blocks.join("\n")] : blocks;
-+      const payload = { messages: [...system.map(content => ({ role: "system", content })), user], tools };
-+      for (const id of ["unknown-model", "gpt-6.1-sol", "deepseek-v4.1-flash", "unknown-model"]) {
-+        ctx.model.id = id;
-+        const updated = Reflect.apply(request, undefined, [{ payload }, ctx]) as typeof payload;
-+        const host = packing === "merged"
-+          ? updated.messages[0].content.slice(frame.length + 1, -("\n" + project).length)
-+          : updated.messages[1].content;
-+        expect(profileRegion.exec(host)?.[1]).toBe(renderPreset(ctx.model, { surface: "app", toolNames: activeTools })?.prompt ?? role);
-+        if (id === "unknown-model") {
-+          expect(host.slice(host.indexOf(`\n${marker} Tool Policy\n`))).toBe(runtime.slice(runtime.indexOf(`\n${marker} Tool Policy\n`)));
-+        }
-+        if (packing === "merged") {
-+          expect(updated.messages[0].content).toBe(frame + "\n" + host + "\n" + project);
-+        } else {
-+          expect(updated.messages[0]).toBe(payload.messages[0]);
-+          expect(updated.messages[2]).toBe(payload.messages[2]);
-+        }
-+        expect(updated.messages.at(-1)).toBe(user);
-+        expect(updated.tools).toBe(tools);
-+        expect(activeTools).toEqual(["read"]);
-+
-+        const native = { role: "custom", customType: "orchestrate-notice", content: "Session mode. Re-read source documents; NEVER work from memory." };
-+        const messages = [native, { role: "user", content: native.content }];
-+        const refreshed = Reflect.apply(context, undefined, [{ messages }, ctx]) as { messages: typeof messages } | undefined;
-+        if (id === "unknown-model") expect(refreshed).toBeUndefined();
-+        else {
-+          expect(refreshed?.messages[0].content).not.toBe(native.content);
-+          expect(refreshed?.messages[1]).toBe(messages[1]);
-+        }
-+      }
-+    }
-+  }
-+});
---- a/tests/presets.test.ts
-+++ b/tests/presets.test.ts
-@@ -1,6 +1,7 @@
- import { describe, expect, test } from "bun:test";
- import { renderPreset } from "../presets";
- import { buildPreset, presetNames } from "../upstream/presets.js";
-+import { buildPreset as buildPinnedPreset } from "../upstream/presets-deepseek-pin.js";
- 
- const toolNames = ["eval", "ask", "task", "bash", "wait", "read", "grep", "glob", "write", "edit", "todo", "web_search"];
- const models: Record<string, string> = {
-@@ -12,7 +13,7 @@
-     for (const name of presetNames) {
-       for (const surface of ["terminal", "app"] as const) {
-         for (const activeTools of [toolNames, toolNames.filter(tool => tool !== "eval"), []]) {
--          const original = buildPreset(name, { surface, selectedTools: activeTools });
-+          const original = (name.startsWith("deepseek") ? buildPinnedPreset : buildPreset)(name, { surface, selectedTools: activeTools });
-           expect(original?.name).toBe(name);
-           expect(original?.prompt).not.toMatch(/\$\{|\bundefined\b|\[object Object\]/);
-           // gpt-5 is an explicit-only upstream preset, never selected by original auto resolution.
-@@ -220,4 +221,30 @@
-     expect(renderPreset({ ...model, provider: "openrouter" }, options)?.name).toBe("deepseek-v4-flash");
-     expect(renderPreset(model, options)?.name).toBe("deepseek-v4-flash");
-   });
-+
-+  test("DeepSeek provider aliases preserve complete pinned profiles across surfaces and child contexts", () => {
-+    const routes = [
-+      [{ id: "deepseek-v4-flash", provider: "deepseek" }, "deepseek-v4-1-flash"],
-+      [{ id: "deepseek-v4.1-flash", provider: "openrouter" }, "deepseek-v4-1-flash"],
-+      [{ id: "deepseek-flash" }, "deepseek-v4-1-flash"],
-+      [{ id: "deepseek-v4-flash", provider: "openrouter" }, "deepseek-v4-flash"],
-+      [{ id: "deepseek-v4-flash-0731", provider: "openrouter" }, "deepseek-v4-flash-0731"],
-+      [{ id: "deepseek-v4-pro", provider: "openrouter" }, "deepseek-v4-pro"],
-+    ] as const;
-+    for (const surface of ["terminal", "app"] as const) {
-+      for (const subagent of [false, true]) {
-+        for (const activeTools of [toolNames, toolNames.filter(tool => tool !== "eval"), []]) {
-+          const options = { surface, subagent, toolNames: activeTools };
-+          const profiles = new Map<string, string>();
-+          for (const [model, name] of routes) {
-+            const expected = renderPreset({ id: name, provider: "openrouter" }, options);
-+            expect(expected?.name).toBe(name);
-+            expect(renderPreset(model, options)).toEqual(expected);
-+            profiles.set(name, expected!.prompt);
-+          }
-+          expect(new Set(profiles.values()).size).toBe(4);
-+        }
-+      }
-+    }
-+  });
- });
---- /dev/null
-+++ b/route-scope.ts
-@@ -0,0 +1,42 @@
-+import { readFileSync } from "node:fs";
-+import { homedir } from "node:os";
-+import { join } from "node:path";
-+import type { PresetModel } from "./presets";
-+
-+export interface RouteScope {
-+  excludeProviders: string[];
-+  excludeModelPatterns: string[];
-+}
-+
-+// Use an explicit process-local policy path when launchers isolate HOME.
-+export const CONFIG_PATH = process.env.OMP_ULW_SCOPE_FILE ?? join(homedir(), ".omp", "agent", "dsh-unbound", "route-scope.json");
-+export const DEFAULTS: RouteScope = {
-+  excludeProviders: ["anthropic"],
-+  excludeModelPatterns: ["claude", "mythos", "fable"],
-+};
-+
-+export function loadScope(path = CONFIG_PATH): RouteScope {
-+  let raw: unknown;
-+  try {
-+    raw = JSON.parse(readFileSync(path, "utf8"));
-+  } catch {
-+    return { ...DEFAULTS };
-+  }
-+  if (!raw || typeof raw !== "object") return { ...DEFAULTS };
-+  const value = raw as Record<string, unknown>;
-+  return {
-+    excludeProviders: Array.isArray(value.excludeProviders)
-+      ? value.excludeProviders.filter((provider): provider is string => typeof provider === "string").map(provider => provider.toLowerCase())
-+      : DEFAULTS.excludeProviders,
-+    excludeModelPatterns: Array.isArray(value.excludeModelPatterns)
-+      ? value.excludeModelPatterns.filter((pattern): pattern is string => typeof pattern === "string")
-+      : DEFAULTS.excludeModelPatterns,
-+  };
-+}
-+
-+export function isExcluded(model: PresetModel | undefined, scope: RouteScope): boolean {
-+  if (!model) return false;
-+  if (scope.excludeProviders.includes((model.provider ?? "").toLowerCase())) return true;
-+  const identity = `${model.id} ${model.name ?? ""}`.toLowerCase();
-+  return scope.excludeModelPatterns.some(pattern => pattern !== "" && identity.includes(pattern.toLowerCase()));
-+}
---- /dev/null
-+++ b/route-scope.test.ts
-@@ -0,0 +1,46 @@
-+import { expect, test } from "bun:test";
-+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-+import { tmpdir } from "node:os";
-+import { join } from "node:path";
-+import { DEFAULTS, isExcluded, loadScope } from "./route-scope";
-+
-+test("existing provider-only preferences override the default model patterns without changing settings", () => {
-+  const directory = mkdtempSync(join(tmpdir(), "omp-ulw-route-scope-"));
-+  const path = join(directory, "route-scope.json");
-+  const content = JSON.stringify({ excludeProviders: ["ANTHROPIC", 7], excludeModelPatterns: [] });
-+  try {
-+    writeFileSync(path, content);
-+    const scope = loadScope(path);
-+    expect(scope).toEqual({ excludeProviders: ["anthropic"], excludeModelPatterns: [] });
-+    expect(isExcluded({ id: "claude-opus-5-5", provider: "Anthropic" }, scope)).toBe(true);
-+    expect(isExcluded({ id: "claude-opus-5-5", provider: "openrouter" }, scope)).toBe(false);
-+    expect(isExcluded({ id: "gpt-6.1-sol", provider: "openai" }, scope)).toBe(false);
-+    expect(isExcluded(undefined, scope)).toBe(false);
-+    expect(readFileSync(path, "utf8")).toBe(content);
-+
-+    writeFileSync(path, JSON.stringify({ excludeProviders: [], excludeModelPatterns: ["MyThOs", "", false] }));
-+    const models = loadScope(path);
-+    expect(isExcluded({ id: "provider/CLAUDE-MYTHOS-5-2", provider: "custom" }, models)).toBe(true);
-+    expect(isExcluded({ id: "opaque", name: "Mythos 5.2" }, models)).toBe(true);
-+    expect(isExcluded({ id: "claude-opus-5-5", provider: "anthropic" }, models)).toBe(false);
-+  } finally {
-+    rmSync(directory, { recursive: true, force: true });
-+  }
-+});
-+
-+test("missing and invalid local preferences retain the existing default routes", () => {
-+  const directory = mkdtempSync(join(tmpdir(), "omp-ulw-route-defaults-"));
-+  const path = join(directory, "route-scope.json");
-+  try {
-+    expect(loadScope(path)).toEqual(DEFAULTS);
-+    for (const invalid of ["not json", "null", "1"]) {
-+      writeFileSync(path, invalid);
-+      expect(loadScope(path)).toEqual(DEFAULTS);
-+      expect(readFileSync(path, "utf8")).toBe(invalid);
-+    }
-+    expect(isExcluded({ id: "claude-sonnet-4-6", provider: "openrouter" }, DEFAULTS)).toBe(true);
-+    expect(isExcluded({ id: "deepseek-v4-flash", provider: "deepseek" }, DEFAULTS)).toBe(false);
-+  } finally {
-+    rmSync(directory, { recursive: true, force: true });
-+  }
-+});
+diff --git a/claude-harness.test.ts b/claude-harness.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..d6a36d4bb1d98966a7d2d26082c35f16d34461b7
 --- /dev/null
 +++ b/claude-harness.test.ts
-@@ -0,0 +1,163 @@
+@@ -0,0 +1,166 @@
 +import { expect, spyOn, test } from "bun:test";
 +import ompUlw from "./index";
 +import { renderPreset } from "./presets";
@@ -599,12 +172,15 @@
 +      }
 +      expect(updated.system).toBe(payload.system);
 +      expect(updated.messages).toBe(payload.messages);
-+      expect(updated.tools.map(tool => tool.name)).toEqual(wire.filter(tool => tool.name !== "read").map(tool => tool.name));
-+      for (const tool of wire.filter(tool => tool.name !== "eval" && tool.name !== "read")) expect(updated.tools.find(candidate => candidate.name === tool.name)).toBe(tool);
++      expect(updated.tools.map(tool => tool.name)).toEqual(wire.filter(tool => !["read", "todo", "task"].includes(tool.name)).map(tool => tool.name));
++      for (const tool of wire.filter(tool => !["eval", "read", "todo", "task"].includes(tool.name))) expect(updated.tools.find(candidate => candidate.name === tool.name)).toBe(tool);
 +      const projectedEval = updated.tools.find(tool => tool.name === "eval")!;
 +      expect(projectedEval.input_schema).toBe(wire[0].input_schema);
 +      expect(projectedEval.description).toContain("<omp-code-mode>");
-+      expect(projectedEval.description).toContain("await tool.read(args)");
++      for (const name of ["read", "todo", "task"]) {
++        expect(projectedEval.description).toContain(`await tool.${name}(args)`);
++        expect(projectedEval.description).toContain(tools.find(tool => tool.name === name)!.description);
++      }
 +      expect(projectedEval.description).toContain(JSON.stringify(parameters));
 +      expect(active).toEqual(tools.map(tool => tool.name));
 +      expect(payload).toEqual(before);
@@ -643,6 +219,603 @@
 +    scope.mockRestore();
 +  }
 +});
+diff --git a/host-guidance.ts b/host-guidance.ts
+index 17fc11011331e6ffde9f56a199948d54f8eeaca6..4bcc958d4ccac114b2a8bf85caf14239f46c05d5 100644
+--- a/host-guidance.ts
++++ b/host-guidance.ts
+@@ -6,13 +6,16 @@ export function projectHostGuidance(text: string, source: string, modelGuidance:
+   const headerless = /^<(?:omp|omo)-model-preset>/.test(source);
+   if (!role && !headerless) return text;
+   const roleBodyStart = role ? role.index + role[0].length : 0;
+-  if (!text.startsWith(source.slice(0, roleBodyStart))) return text;
+-  if (!/^<(?:omp|omo)-model-preset>/.test(text.slice(roleBodyStart))) return text;
++  const prefix = source.slice(0, roleBodyStart);
++  const hostAt = prefix ? text.indexOf(prefix) : text.search(/<(?:omp|omo)-model-preset>/);
++  if (hostAt < 0 || !/^<(?:omp|omo)-model-preset>/.test(text.slice(hostAt + roleBodyStart))) return text;
+   const marker = role?.[1] ?? "⁂";
+   const policyAt = source.indexOf(`\n${marker} Tool Policy\n`);
+   const workflowAt = source.indexOf(`\n${marker} Workflow\n`, policyAt);
+   const deliveryAt = source.indexOf(`\n${marker} Delivery\n`, workflowAt);
+   if (policyAt < 0 || workflowAt <= policyAt) return text;
++  const leading = text.slice(0, hostAt);
++  text = text.slice(hostAt);
+   let policy = source.slice(policyAt, workflowAt);
+   let workflow = deliveryAt > workflowAt ? source.slice(workflowAt, deliveryAt) : undefined;
+   if (modelGuidance) {
+@@ -54,7 +57,7 @@ export function projectHostGuidance(text: string, source: string, modelGuidance:
+       : originalCritical;
+     result = result.replace(criticalRegion, () => critical);
+   }
+-  return result;
++  return leading + result;
+ }
+ 
+ /** Native mechanics remain authoritative; only the active profile can own duplicate requirements. */
+diff --git a/host.test.ts b/host.test.ts
+index f5a8247bab0031bd587dc9a0f5e3c5cd0e23bb76..226c189492fc38e7190a5e3782e542118853854d 100644
+--- a/host.test.ts
++++ b/host.test.ts
+@@ -78,6 +78,37 @@ test("behavior replacement preserves host capabilities, project instructions, an
+   expect(result?.originalBehavior).not.toContain("<skills>");
+ });
+ 
++test.each(["§", "⁂", "headerless"])("prepended frames preserve the %s native host, project and child boundaries", (format) => {
++  const marker = format === "§" ? "§" : "⁂";
++  const role = format === "headerless"
++    ? "You are omp's trusted coding assistant.\n\n# Engineering\nNative role $& $$ $` $'"
++    : "Native role $& $$ $` $'";
++  const prefix = format === "headerless" ? "" : `Host conventions\n${marker} Role\n`;
++  const runtime = base.slice(base.indexOf("\n§ Runtime\n")).replaceAll("§", marker);
++  const template = prefix + role + runtime;
++  const frames = ["<native-extension-frame>Caller-owned frame</native-extension-frame>", "⁂ Role\nCaller-owned role without native runtime"];
++  const project = "<project-context>Keep every project byte: $& $$ $` $'</project-context>";
++  const child = "⁂ Role\nRead-only specialist\n⁂ Completion\nReturn through the host protocol";
++  const input = [...frames, template, project, child];
++  const before = [...input];
++  const profile = "<omp-model-preset>Selected profile</omp-model-preset>";
++  const result = replaceHostBehavior(input, profile)!;
++
++  expect(result.index).toBe(frames.length);
++  expect(result.originalBehavior).toBe(role);
++  expect(result.blocks).toEqual([...frames, prefix + profile + "\n" + runtime, project, child]);
++  expect(input).toEqual(before);
++  expect(replaceHostBehavior([...result.blocks, base], "<omp-model-preset>second</omp-model-preset>")).toBeUndefined();
++
++  const source = result.blocks[result.index];
++  const leading = frames.join("\n") + "\n";
++  const trailing = "\n" + [project, child].join("\n");
++  const merged = leading + source + trailing;
++  const projected = projectHostGuidance(merged, source, true);
++  expect(projected).toBe(leading + projectHostGuidance(source, source, true) + trailing);
++  expect(projectHostGuidance(projected, source, false)).toBe(merged);
++});
++
+ test.each(["§", "⁂"])("OMP %s system template replaces only the role block", (marker) => {
+   const ompTemplate = readFileSync(new URL("./tests/fixtures/omp-system-prompt.md", import.meta.url), "utf8").replaceAll("§", marker);
+   const project = "<repo-rules>Keep the existing task contract</repo-rules>";
+diff --git a/host.ts b/host.ts
+index 07691459d46a1b465e5be23c73c5b1aeca76be82..586ac8c29df92d8d7b6242de7735f948eda24792 100644
+--- a/host.ts
++++ b/host.ts
+@@ -1,6 +1,8 @@
+ export interface HostPrompt {
+   blocks: string[];
+   originalBehavior: string;
++  /** Position of the recognized native template; other extensions may prepend blocks. */
++  index: number;
+ }
+ 
+ /** Adapt known upstream routing rules, not task permissions or model assignments. */
+@@ -23,25 +25,33 @@ export function adaptResearchRouting(text: string): string {
+ 
+ /** Replace only the known default template; custom prompts and agent blocks remain owned by their authors. */
+ export function replaceHostBehavior(blocks: string[], behavior: string): HostPrompt | undefined {
+-  const base = blocks[0];
+-  if (!base || /<om[op]-model-preset>/.test(base)) return undefined;
+-  const heading = /\n([§⁂]) Role\n/.exec(base);
+-  // OMP 18.20 removed the Role heading from its default template. Recognize
+-  // that exact native opening, not arbitrary custom text before Runtime.
+-  const headerless = base.startsWith("You are omp's trusted coding assistant.\n\n# Engineering\n");
+-  if (!heading && !headerless) return undefined;
+-  const role = heading?.index ?? 0;
+-  const marker = heading?.[1] ?? "⁂";
+-  const runtime = base.indexOf(`\n${marker} Runtime\n`, role);
+-  const policy = base.indexOf(`\n${marker} Tool Policy\n`, runtime);
+-  const workflow = base.indexOf(`\n${marker} Workflow\n`, policy);
+-  if (runtime <= role || policy <= runtime || workflow <= policy) return undefined;
+-  // Preserve native defaults here so unsupported-model fallback can restore them.
+-  // Model-specific behavioral projection happens after this replacement.
+-  const roleBodyStart = heading ? role + heading[0].length : 0;
+-  const originalBehavior = base.slice(roleBodyStart, runtime);
+-  const host = base.slice(0, roleBodyStart) + behavior + "\n" + base.slice(runtime, policy)
+-    + adaptResearchRouting(base.slice(policy, workflow))
+-    + base.slice(workflow);
+-  return { blocks: [host, ...blocks.slice(1)], originalBehavior };
++  for (const [index, base] of blocks.entries()) {
++    // An installed headerless profile has replaced the native role opening.
++    // Require its closing marker and immediate native Runtime boundary.
++    const ownedHeaderless = /^<(om[op]-model-preset)>[\s\S]*?<\/\1>\n(?=\n⁂ Runtime\n)/.exec(base);
++    const heading = ownedHeaderless ? null : /\n([§⁂]) Role\n/.exec(base);
++    // OMP 18.20 removed the Role heading from its default template. Recognize
++    // that exact native opening, not arbitrary custom text before Runtime.
++    const headerless = ownedHeaderless !== null || base.startsWith("You are omp's trusted coding assistant.\n\n# Engineering\n");
++    if (!heading && !headerless) continue;
++    const role = heading?.index ?? 0;
++    const marker = heading?.[1] ?? "⁂";
++    const runtime = ownedHeaderless ? ownedHeaderless[0].length : base.indexOf(`\n${marker} Runtime\n`, role);
++    const policy = base.indexOf(`\n${marker} Tool Policy\n`, runtime);
++    const workflow = base.indexOf(`\n${marker} Workflow\n`, policy);
++    if (runtime <= role || policy <= runtime || workflow <= policy) continue;
++    // Stop at the first complete native template, including one already owned.
++    if (/<om[op]-model-preset>/.test(base)) return undefined;
++    // Preserve native defaults here so unsupported-model fallback can restore them.
++    // Model-specific behavioral projection happens after this replacement.
++    const roleBodyStart = heading ? role + heading[0].length : 0;
++    const originalBehavior = base.slice(roleBodyStart, runtime);
++    const host = base.slice(0, roleBodyStart) + behavior + "\n" + base.slice(runtime, policy)
++      + adaptResearchRouting(base.slice(policy, workflow))
++      + base.slice(workflow);
++    const next = blocks.slice();
++    next[index] = host;
++    return { blocks: next, originalBehavior, index };
++  }
++  return undefined;
+ }
+diff --git a/index.test.ts b/index.test.ts
+index 6dc8144760514c65d7e8ba84eab326e07033d597..f7dc5603aa06462c8e46c6373a7816470c32d3d6 100644
+--- a/index.test.ts
++++ b/index.test.ts
+@@ -1,7 +1,8 @@
+-import { expect, test } from "bun:test";
++import { expect, spyOn, test } from "bun:test";
+ import { readFileSync } from "node:fs";
+ import ompUlw from "./index";
+ import { renderPreset } from "./presets";
++import * as routeScope from "./route-scope";
+ import type { UlwContext } from "./ulw";
+ import { ulwDirective } from "./ulw";
+ 
+@@ -154,7 +155,9 @@ test("ULW policy refreshes stale system blocks across model fallback without tou
+   }
+ });
+ 
+-test("child profiles follow their model while preserving role, assignment, tools and completion", () => {
++test.each([false, true])("child profiles follow their model and exclusions (%s) while preserving role, assignment, tools and completion", (excludeClaude) => {
++  const policy = spyOn(routeScope, "loadScope").mockReturnValue({ excludeProviders: [], excludeModelPatterns: excludeClaude ? ["claude"] : [] });
++  try {
+   const handlers = new Map<string, Handler[]>();
+   let activeTools = ["read", "eval"];
+   ompUlw({
+@@ -188,7 +191,8 @@ test("child profiles follow their model while preserving role, assignment, tools
+   for (const id of ["claude-haiku-5.5", "gpt-6.1-terra-fast", "gemini-4", "google/gemini-4-hydrogen", "gemini-4-hydrogen-xhigh", "deepseek-v4.1-flash", "unknown-model", "gpt-6-astra"]) {
+     ctx.model.id = id;
+     ctx.model.name = id;
+-    const expected = renderPreset(ctx.model, { surface: "app", toolNames: activeTools, subagent: true })?.prompt ?? base.slice(base.indexOf("\n§ Role\n") + "\n§ Role\n".length, base.indexOf("\n§ Runtime\n"));
++    const selected = excludeClaude && id.startsWith("claude") ? undefined : renderPreset(ctx.model, { surface: "app", toolNames: activeTools, subagent: true });
++    const expected = selected?.prompt ?? base.slice(base.indexOf("\n§ Role\n") + "\n§ Role\n".length, base.indexOf("\n§ Runtime\n"));
+     const payload = { messages: [...blocks.map(content => ({ role: "system", content })), user], tools };
+     const updated = hook({ payload } as never, ctx as never) as typeof payload;
+     expect(updated.messages[0].content).toContain(`<omp-model-preset>\n${expected}${scope}\n</omp-model-preset>`);
+@@ -212,6 +216,9 @@ test("child profiles follow their model while preserving role, assignment, tools
+   const result = handlers.get("before_agent_start")![1]({ prompt: "continue", systemPrompt: assignment } as never, ctx as never) as { systemPrompt: string[] };
+   expect(result.systemPrompt[0]).toContain(`<omp-model-preset>\n${renderPreset(ctx.model, { surface: "app", toolNames: activeTools, subagent: true })!.prompt}`);
+   expect(result.systemPrompt.slice(1)).toEqual(assignment.slice(1));
++  } finally {
++    policy.mockRestore();
++  }
+ });
+ 
+ test("custom child prompts and their request payloads remain untouched", () => {
+@@ -318,3 +325,81 @@ test("native prewalk rewriting preserves user and tool content and unsupported p
+   ctx.model.id = "unknown-model";
+   expect(Reflect.apply(context, undefined, [{ messages }, ctx])).toBeUndefined();
+ });
++
++test.each(["§", "⁂", "headerless"])("prepended %s hosts retain literal native roles and refresh the correct block across fallback", (format) => {
++  const marker = format === "§" ? "§" : "⁂";
++  const role = format === "headerless"
++    ? "You are omp's trusted coding assistant.\n\n# Engineering\nLiteral native role: $& $$ $` $'"
++    : "Literal native role: $& $$ $` $'";
++  const prefix = format === "headerless" ? "" : `Host conventions\n${marker} Role\n`;
++  const runtime = `\n${marker} Runtime\n<skills>catalog</skills>\n${marker} Tool Policy\n# General\nNative behavioral defaults\n# Tool I/O\nNative capabilities\n${marker} Workflow\nNative workflow`;
++  const template = prefix + role + runtime;
++  const frame = "<native-extension-frame>Retain caller-owned frame $& $$ $` $'</native-extension-frame>";
++  const project = "<project-context>Retain project $& $$ $` $'</project-context>";
++  const tools = [{ type: "function", function: { name: "read", parameters: { type: "object" } } }];
++  const profileRegion = /<omp-model-preset>\n([\s\S]*?)\n<\/omp-model-preset>/;
++
++  for (const initialModel of ["unknown-model", "gpt-6.1-sol"]) {
++    for (const packing of ["separate", "merged"]) {
++      const handlers = new Map<string, Handler[]>();
++      const activeTools = ["read"];
++      ompUlw({
++        setLabel: () => {}, getActiveTools: () => activeTools, getAllTools: () => [{ name: "read" }],
++        registerCommand: () => {}, sendUserMessage: () => {}, registerFlag: () => {},
++        getFlag: () => false, appendEntry: () => {},
++        on: (event: string, handler: Handler) => { handlers.set(event, [...(handlers.get(event) ?? []), handler]); },
++      });
++      const ctx = {
++        cwd: ".", mode: "rpc", agent: { kind: "main" },
++        sessionManager: { getSessionId: () => `prepended-${format}-${initialModel}-${packing}`, getBranch: () => [] },
++        ui: { notify: (message: string) => { throw new Error(message); } },
++        model: { id: initialModel, api: "openai-completions" },
++      };
++      const input = [frame, template, project];
++      let blocks = input;
++      for (const handler of handlers.get("before_agent_start") ?? []) {
++        const result: unknown = Reflect.apply(handler, undefined, [{ prompt: "ordinary task", systemPrompt: blocks }, ctx]);
++        if (typeof result === "object" && result !== null && "systemPrompt" in result && Array.isArray(result.systemPrompt) && result.systemPrompt.every((block: unknown) => typeof block === "string")) blocks = result.systemPrompt;
++      }
++      expect(input).toEqual([frame, template, project]);
++      expect(blocks[0]).toBe(frame);
++      expect(blocks[2]).toBe(project);
++      expect(profileRegion.exec(blocks[1])?.[1]).toBe(renderPreset(ctx.model, { surface: "app", toolNames: activeTools })?.prompt ?? role);
++
++      const request = handlers.get("before_provider_request")![0];
++      const context = handlers.get("context")![0];
++      const user = { role: "user", content: blocks.join("\n") };
++      const system = packing === "merged" ? [blocks.join("\n")] : blocks;
++      const payload = { messages: [...system.map(content => ({ role: "system", content })), user], tools };
++      for (const id of ["unknown-model", "gpt-6.1-sol", "deepseek-v4.1-flash", "unknown-model"]) {
++        ctx.model.id = id;
++        const updated = Reflect.apply(request, undefined, [{ payload }, ctx]) as typeof payload;
++        const host = packing === "merged"
++          ? updated.messages[0].content.slice(frame.length + 1, -("\n" + project).length)
++          : updated.messages[1].content;
++        expect(profileRegion.exec(host)?.[1]).toBe(renderPreset(ctx.model, { surface: "app", toolNames: activeTools })?.prompt ?? role);
++        if (id === "unknown-model") {
++          expect(host.slice(host.indexOf(`\n${marker} Tool Policy\n`))).toBe(runtime.slice(runtime.indexOf(`\n${marker} Tool Policy\n`)));
++        }
++        if (packing === "merged") {
++          expect(updated.messages[0].content).toBe(frame + "\n" + host + "\n" + project);
++        } else {
++          expect(updated.messages[0]).toBe(payload.messages[0]);
++          expect(updated.messages[2]).toBe(payload.messages[2]);
++        }
++        expect(updated.messages.at(-1)).toBe(user);
++        expect(updated.tools).toBe(tools);
++        expect(activeTools).toEqual(["read"]);
++
++        const native = { role: "custom", customType: "orchestrate-notice", content: "Session mode. Re-read source documents; NEVER work from memory." };
++        const messages = [native, { role: "user", content: native.content }];
++        const refreshed = Reflect.apply(context, undefined, [{ messages }, ctx]) as { messages: typeof messages } | undefined;
++        if (id === "unknown-model") expect(refreshed).toBeUndefined();
++        else {
++          expect(refreshed?.messages[0].content).not.toBe(native.content);
++          expect(refreshed?.messages[1]).toBe(messages[1]);
++        }
++      }
++    }
++  }
++});
+diff --git a/index.ts b/index.ts
+index f2740534845aa7ae88dcc372579fbd13ac0844bd..45970fcde8a8260e684168d95b5ca55edbee44bc 100644
+--- a/index.ts
++++ b/index.ts
+@@ -37,6 +37,7 @@ import { renderPreset } from "./presets";
+ import type { PresetModel, PresetOptions } from "./presets";
+ import { adaptPrewalkNotice, registerPrewalk } from "./prewalk";
+ import type { PrewalkApi } from "./prewalk";
++import { isExcluded, loadScope } from "./route-scope";
+ import { registerUlw, ulwDirective } from "./ulw";
+ import type { UlwApi, UlwContext } from "./ulw";
+ 
+@@ -87,6 +88,9 @@ export default function ompUlw(pi: ExtensionApi): void {
+       // merely because a host or skill mentions a tool that is unavailable.
+       toolNames: pi.getAllTools().map(tool => tool.name).filter(name => active.has(name)),
+     };
++    // Preserve the locally configured native-harness routes without bypassing
++    // ULW, prewalk or the model-neutral code-mode hooks.
++    if (isExcluded(ctx.model, loadScope())) return;
+     const preset = ctx.model ? renderPreset(ctx.model, options) : undefined;
+     // Only the base role is replaced. OMP appends the child's specialist role,
+     // assignment and completion contract in later blocks, which remain intact.
+@@ -100,15 +104,18 @@ export default function ompUlw(pi: ExtensionApi): void {
+       return;
+     }
+     originalBehavior = result.originalBehavior;
+-    if (preset && ctx.model) profiles.set(JSON.stringify([ctx.model.provider, ctx.model.id, ctx.model.name, options.toolNames]), { prompt: marked, modelGuidance: true });
+-    if (!preset) result.blocks[0] = result.blocks[0].replace(marked, markPreset(originalBehavior, ctx.agent.kind === "sub"));
+-    originalHost = result.blocks[0];
+-    result.blocks[0] = projectHostGuidance(result.blocks[0], originalHost, preset !== undefined);
++    if (preset && ctx.model) profiles.set(JSON.stringify([ctx.model.provider, ctx.model.id, ctx.model.name, options.toolNames, false]), { prompt: marked, modelGuidance: true });
++    if (!preset) {
++      const restored = markPreset(originalBehavior, ctx.agent.kind === "sub");
++      result.blocks[result.index] = result.blocks[result.index].replace(marked, () => restored);
++    }
++    originalHost = result.blocks[result.index];
++    result.blocks[result.index] = projectHostGuidance(originalHost, originalHost, preset !== undefined);
+     return { systemPrompt: result.blocks };
+   });
+ 
+   pi.on("context", (event, ctx) => {
+-    if (originalHost === undefined || !ctx.model || !renderPreset(ctx.model, options)) return;
++    if (originalHost === undefined || !ctx.model || isExcluded(ctx.model, loadScope()) || !renderPreset(ctx.model, options)) return;
+     let changed = false;
+     const messages = event.messages.map(message => {
+       if (message.role !== "custom" || typeof message.customType !== "string" || typeof message.content !== "string") return message;
+@@ -129,10 +136,11 @@ export default function ompUlw(pi: ExtensionApi): void {
+     if (originalBehavior === undefined || originalHost === undefined) return payload;
+     const active = new Set(pi.getActiveTools());
+     options = { ...options, toolNames: pi.getAllTools().map(tool => tool.name).filter(name => active.has(name)) };
+-    const key = JSON.stringify([ctx.model.provider, ctx.model.id, ctx.model.name, options.toolNames]);
++    const excluded = isExcluded(ctx.model, loadScope());
++    const key = JSON.stringify([ctx.model.provider, ctx.model.id, ctx.model.name, options.toolNames, excluded]);
+     let replacement = profiles.get(key);
+     if (replacement === undefined) {
+-      const preset = renderPreset(ctx.model, options);
++      const preset = excluded ? undefined : renderPreset(ctx.model, options);
+       replacement = { prompt: markPreset(preset?.prompt ?? originalBehavior, ctx.agent.kind === "sub"), modelGuidance: preset !== undefined };
+       profiles.set(key, replacement);
+     }
+diff --git a/omp-settings.d.ts b/omp-settings.d.ts
+index b3302c4a791e864b6765f0497461e16c820cc89f..513aa36585447ed68bfc22848dcda1feae7dec78 100644
+--- a/omp-settings.d.ts
++++ b/omp-settings.d.ts
+@@ -1,11 +1,12 @@
+ // Host-provided exports consumed by the extension (OMP 18.19).
+ // These declarations have no runtime implementation or package dependency.
+ declare module "@oh-my-pi/pi-coding-agent/config/registry" {
+-  export interface Setting {
+-    get(scope: object): unknown;
+-    provenance(scope: object): string;
+-    override(scope: object, value: unknown): void;
+-    clearOverride(scope: object): void;
++  export type ScopeLike = object;
++  export interface Setting<T = unknown> {
++    get(scope: ScopeLike): T;
++    provenance(scope: ScopeLike): string;
++    override(scope: ScopeLike, value: T): void;
++    clearOverride(scope: ScopeLike): void;
+   }
+   export function lookup(id: string): Setting | undefined;
+ }
+diff --git a/package.json b/package.json
+index a01dd885d22c4f635a72bedc7b0fa48869552818..4b5f5bfda886f29525ce2a6f63e72a045234055c 100644
+--- a/package.json
++++ b/package.json
+@@ -17,11 +17,14 @@
+     "host-guidance.ts",
+     "payload.ts",
+     "presets.ts",
++    "route-scope.ts",
+     "prewalk.ts",
+     "omp-settings.d.ts",
+     "ulw.ts",
+     "upstream/presets.js",
+     "upstream/presets.d.ts",
++    "upstream/presets-deepseek-pin.js",
++    "upstream/presets-deepseek-pin.d.ts",
+     "prompts/",
+     "skills/",
+     "README*.md",
+diff --git a/presets.ts b/presets.ts
+index 738af5e3a2474ab2c58a1be8c427d533eb40cacd..13aec7063e008388a2351ce31c53d96ab4eed787 100644
+--- a/presets.ts
++++ b/presets.ts
+@@ -1,5 +1,6 @@
+ import { ASYNC_DEFAULT, MONITOR_CONDITIONS, TURN_END_IS_WAIT, buildPreset, resolvePresetName } from "./upstream/presets.js";
+ import { gpt62Body } from "./prompts/gpt-6.2";
++import { buildPreset as buildPinnedPreset } from "./upstream/presets-deepseek-pin.js";
+ 
+ export interface PresetModel { id: string; name?: string; provider?: string }
+ export interface PresetOptions { surface: "terminal" | "app"; toolNames: string[]; subagent?: boolean }
+@@ -52,7 +53,10 @@ export function renderPreset(model: PresetModel, options: PresetOptions): { name
+   }
+   // Upstream gates its question directive on its own tool name; transport is adapted below.
+   const selectedTools = options.toolNames.map(tool => tool === "ask" ? "request_user_input" : tool);
+-  const preset = buildPreset(name, { surface: options.surface, selectedTools });
++  // Preserve the user's a854e7ac DeepSeek base profiles while keeping current
++  // selection rules and all OMP transport, lifecycle and reporting adaptations.
++  const builder = name.startsWith("deepseek") ? buildPinnedPreset : buildPreset;
++  const preset = builder(name, { surface: options.surface, selectedTools });
+   if (!preset) return undefined;
+   let prompt = preset.prompt;
+   if (preset.name === "gemini-4-argon") {
+diff --git a/prewalk.ts b/prewalk.ts
+index 7b86054d686ffa08a11f9098e245977b31764260..50d0bba989a4117fe7f34d51560e9a111a8f31a3 100644
+--- a/prewalk.ts
++++ b/prewalk.ts
+@@ -1,5 +1,5 @@
+ import { ulwRequest, visibleUlwText } from "./ulw";
+-import type { Setting } from "@oh-my-pi/pi-coding-agent/config/registry";
++import type { ScopeLike, Setting } from "@oh-my-pi/pi-coding-agent/config/registry";
+ 
+ type TaskIntent = "restricted" | "implementation";
+ interface PrewalkContext { cwd: string; agent: { kind: "main" | "sub" } }
+@@ -9,8 +9,8 @@ export interface PrewalkApi {
+ }
+ 
+ export function registerPrewalk(pi: PrewalkApi): void {
+-  let scope: object | undefined;
+-  let controls: Array<{ setting: Setting; muted: unknown; previous?: { value: unknown; runtime: boolean } }> = [];
++  let scope: ScopeLike | undefined;
++  let controls: Array<{ setting: Setting<unknown>; muted: unknown; previous?: { value: unknown; runtime: boolean } }> = [];
+   const restore = () => {
+     if (!scope) return;
+     for (const control of controls) {
+diff --git a/route-scope.test.ts b/route-scope.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..62b0d78519ebc91c45023de45e26ec18ba3d591e
+--- /dev/null
++++ b/route-scope.test.ts
+@@ -0,0 +1,46 @@
++import { expect, test } from "bun:test";
++import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
++import { tmpdir } from "node:os";
++import { join } from "node:path";
++import { DEFAULTS, isExcluded, loadScope } from "./route-scope";
++
++test("existing provider-only preferences override the default model patterns without changing settings", () => {
++  const directory = mkdtempSync(join(tmpdir(), "omp-ulw-route-scope-"));
++  const path = join(directory, "route-scope.json");
++  const content = JSON.stringify({ excludeProviders: ["ANTHROPIC", 7], excludeModelPatterns: [] });
++  try {
++    writeFileSync(path, content);
++    const scope = loadScope(path);
++    expect(scope).toEqual({ excludeProviders: ["anthropic"], excludeModelPatterns: [] });
++    expect(isExcluded({ id: "claude-opus-5-5", provider: "Anthropic" }, scope)).toBe(true);
++    expect(isExcluded({ id: "claude-opus-5-5", provider: "openrouter" }, scope)).toBe(false);
++    expect(isExcluded({ id: "gpt-6.1-sol", provider: "openai" }, scope)).toBe(false);
++    expect(isExcluded(undefined, scope)).toBe(false);
++    expect(readFileSync(path, "utf8")).toBe(content);
++
++    writeFileSync(path, JSON.stringify({ excludeProviders: [], excludeModelPatterns: ["MyThOs", "", false] }));
++    const models = loadScope(path);
++    expect(isExcluded({ id: "provider/CLAUDE-MYTHOS-5-2", provider: "custom" }, models)).toBe(true);
++    expect(isExcluded({ id: "opaque", name: "Mythos 5.2" }, models)).toBe(true);
++    expect(isExcluded({ id: "claude-opus-5-5", provider: "anthropic" }, models)).toBe(false);
++  } finally {
++    rmSync(directory, { recursive: true, force: true });
++  }
++});
++
++test("missing and invalid local preferences retain the existing default routes", () => {
++  const directory = mkdtempSync(join(tmpdir(), "omp-ulw-route-defaults-"));
++  const path = join(directory, "route-scope.json");
++  try {
++    expect(loadScope(path)).toEqual(DEFAULTS);
++    for (const invalid of ["not json", "null", "1"]) {
++      writeFileSync(path, invalid);
++      expect(loadScope(path)).toEqual(DEFAULTS);
++      expect(readFileSync(path, "utf8")).toBe(invalid);
++    }
++    expect(isExcluded({ id: "claude-sonnet-4-6", provider: "openrouter" }, DEFAULTS)).toBe(true);
++    expect(isExcluded({ id: "deepseek-v4-flash", provider: "deepseek" }, DEFAULTS)).toBe(false);
++  } finally {
++    rmSync(directory, { recursive: true, force: true });
++  }
++});
+diff --git a/route-scope.ts b/route-scope.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..dca2a9faeb3b3d8a312f974af4e6e62f005a8d52
+--- /dev/null
++++ b/route-scope.ts
+@@ -0,0 +1,42 @@
++import { readFileSync } from "node:fs";
++import { homedir } from "node:os";
++import { join } from "node:path";
++import type { PresetModel } from "./presets";
++
++export interface RouteScope {
++  excludeProviders: string[];
++  excludeModelPatterns: string[];
++}
++
++// Use an explicit process-local policy path when launchers isolate HOME.
++export const CONFIG_PATH = process.env.OMP_ULW_SCOPE_FILE ?? join(homedir(), ".omp", "agent", "dsh-unbound", "route-scope.json");
++export const DEFAULTS: RouteScope = {
++  excludeProviders: ["anthropic"],
++  excludeModelPatterns: ["claude", "mythos", "fable"],
++};
++
++export function loadScope(path = CONFIG_PATH): RouteScope {
++  let raw: unknown;
++  try {
++    raw = JSON.parse(readFileSync(path, "utf8"));
++  } catch {
++    return { ...DEFAULTS };
++  }
++  if (!raw || typeof raw !== "object") return { ...DEFAULTS };
++  const value = raw as Record<string, unknown>;
++  return {
++    excludeProviders: Array.isArray(value.excludeProviders)
++      ? value.excludeProviders.filter((provider): provider is string => typeof provider === "string").map(provider => provider.toLowerCase())
++      : DEFAULTS.excludeProviders,
++    excludeModelPatterns: Array.isArray(value.excludeModelPatterns)
++      ? value.excludeModelPatterns.filter((pattern): pattern is string => typeof pattern === "string")
++      : DEFAULTS.excludeModelPatterns,
++  };
++}
++
++export function isExcluded(model: PresetModel | undefined, scope: RouteScope): boolean {
++  if (!model) return false;
++  if (scope.excludeProviders.includes((model.provider ?? "").toLowerCase())) return true;
++  const identity = `${model.id} ${model.name ?? ""}`.toLowerCase();
++  return scope.excludeModelPatterns.some(pattern => pattern !== "" && identity.includes(pattern.toLowerCase()));
++}
+diff --git a/tests/code-mode-host-check.ts b/tests/code-mode-host-check.ts
+index 1703026201aec67747b1bc336c006ad10e3dc08f..0979734366c08e971921ecb42687c3f4b696614a 100644
+--- a/tests/code-mode-host-check.ts
++++ b/tests/code-mode-host-check.ts
+@@ -323,7 +323,13 @@ try {
+       assert(description.includes(`JSON Schema: ${JSON.stringify(read.function.parameters)}`), `${current.name}: catalog must contain the actual native read wire schema`);
+       for (const name of directProbeNames) assert(!description.includes(`await tool.${name}(args)`), `${name}: must not advertise a reserved eval accessor`);
+       const regions = [...systemText(body).matchAll(/<omp-model-preset>([\s\S]*?)<\/omp-model-preset>/g)];
+-      assert.equal(regions.length, 1, `${current.name}: actual request must contain exactly one installed model preset`);
++      const excluded = current.model.startsWith("claude");
++      assert.equal(regions.length, excluded ? 0 : 1, `${current.name}: actual request must honor the retained default profile exclusions`);
++      if (excluded) {
++        const native = current.observations.find(item => item.stage === "agent" && item.phase === "before")!.blocks!;
++        const installed = current.observations.find(item => item.stage === "agent" && item.phase === "after")!.blocks!;
++        assert.deepEqual(installed, native, `${current.name}: excluded model must retain every native system block`);
++      }
+       for (const region of regions) {
+         presetRegions++;
+         assert(!/\beval\b|await tool\./i.test(region[1]!), `${current.name}: any installed preset region must have no eval steering`);
+diff --git a/tests/presets.test.ts b/tests/presets.test.ts
+index a7ac08845bbfd148249163cb6a68838313df3a1f..26332e6c485cef0a61f872bd4a530947f0040921 100644
+--- a/tests/presets.test.ts
++++ b/tests/presets.test.ts
+@@ -1,6 +1,7 @@
+ import { describe, expect, test } from "bun:test";
+ import { renderPreset } from "../presets";
+ import { buildPreset, presetNames } from "../upstream/presets.js";
++import { buildPreset as buildPinnedPreset } from "../upstream/presets-deepseek-pin.js";
+ 
+ const toolNames = ["eval", "ask", "task", "bash", "wait", "read", "grep", "glob", "write", "edit", "todo", "web_search"];
+ const models: Record<string, string> = {
+@@ -13,7 +14,7 @@ describe("faithful omo presets", () => {
+     for (const name of presetNames) {
+       for (const surface of ["terminal", "app"] as const) {
+         for (const activeTools of [toolNames, toolNames.filter(tool => tool !== "eval"), []]) {
+-          const original = buildPreset(name, { surface, selectedTools: activeTools });
++          const original = (name.startsWith("deepseek") ? buildPinnedPreset : buildPreset)(name, { surface, selectedTools: activeTools });
+           expect(original?.name).toBe(name);
+           expect(original?.prompt).not.toMatch(/\$\{|\bundefined\b|\[object Object\]/);
+           // gpt-5 is an explicit-only upstream preset, never selected by original auto resolution.
+@@ -225,4 +226,30 @@ describe("faithful omo presets", () => {
+     expect(renderPreset({ ...model, provider: "openrouter" }, options)?.name).toBe("deepseek-v4-flash");
+     expect(renderPreset(model, options)?.name).toBe("deepseek-v4-flash");
+   });
++
++  test("DeepSeek provider aliases preserve complete pinned profiles across surfaces and child contexts", () => {
++    const routes = [
++      [{ id: "deepseek-v4-flash", provider: "deepseek" }, "deepseek-v4-1-flash"],
++      [{ id: "deepseek-v4.1-flash", provider: "openrouter" }, "deepseek-v4-1-flash"],
++      [{ id: "deepseek-flash" }, "deepseek-v4-1-flash"],
++      [{ id: "deepseek-v4-flash", provider: "openrouter" }, "deepseek-v4-flash"],
++      [{ id: "deepseek-v4-flash-0731", provider: "openrouter" }, "deepseek-v4-flash-0731"],
++      [{ id: "deepseek-v4-pro", provider: "openrouter" }, "deepseek-v4-pro"],
++    ] as const;
++    for (const surface of ["terminal", "app"] as const) {
++      for (const subagent of [false, true]) {
++        for (const activeTools of [toolNames, toolNames.filter(tool => tool !== "eval"), []]) {
++          const options = { surface, subagent, toolNames: activeTools };
++          const profiles = new Map<string, string>();
++          for (const [model, name] of routes) {
++            const expected = renderPreset({ id: name, provider: "openrouter" }, options);
++            expect(expected?.name).toBe(name);
++            expect(renderPreset(model, options)).toEqual(expected);
++            profiles.set(name, expected!.prompt);
++          }
++          expect(new Set(profiles.values()).size).toBe(4);
++        }
++      }
++    }
++  });
+ });
+diff --git a/upstream/presets-deepseek-pin.d.ts b/upstream/presets-deepseek-pin.d.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..82c04c1443c6bcf3c868ccd05c80ba9fc1adb13a
+--- /dev/null
++++ b/upstream/presets-deepseek-pin.d.ts
+@@ -0,0 +1,2 @@
++// The retained bundle exposes the same builder contract as the current bundle.
++export { buildPreset, resolvePresetName, presetNames, ASYNC_DEFAULT, TURN_END_IS_WAIT, MONITOR_CONDITIONS } from "./presets.js";
+diff --git a/upstream/presets-deepseek-pin.js b/upstream/presets-deepseek-pin.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..59472c98f79bd9012e21e3171e34a97c5698e871
 --- /dev/null
 +++ b/upstream/presets-deepseek-pin.js
 @@ -0,0 +1,2404 @@
@@ -3050,52 +3223,3 @@
 +  presetNames,
 +  resolvePresetName2 as resolvePresetName
 +};
---- /dev/null
-+++ b/upstream/presets-deepseek-pin.d.ts
-@@ -0,0 +1,2 @@
-+// The retained bundle exposes the same builder contract as the current bundle.
-+export { buildPreset, resolvePresetName, presetNames, ASYNC_DEFAULT, TURN_END_IS_WAIT, MONITOR_CONDITIONS } from "./presets.js";
---- a/README.md
-+++ b/README.md
-@@ -48,15 +48,24 @@
- ## Model prompts
- 
- - [`upstream/presets.js`](upstream/presets.js): generated upstream model presets and selection rules.
-+- [`upstream/presets-deepseek-pin.js`](upstream/presets-deepseek-pin.js): retained local DeepSeek base profiles from senpi `a854e7acffa90aba674b9454279035a2fb7140f4`.
- - [`presets.ts`](presets.ts): adapts prompts to OMP's tool and async contracts.
- - [`code-mode.ts`](code-mode.ts): projects supported requests onto native JavaScript eval and direct session controls, independent of model family.
- - [`index.ts`](index.ts): applies prompts to main and supported subagent sessions.
- - [`host-guidance.ts`](host-guidance.ts): removes overlapping native behavioral defaults for selected profiles while preserving tool and permission contracts.
-+- [`route-scope.ts`](route-scope.ts): reads the existing local model-profile exclusions without importing another extension or writing settings.
- - [`upstream/update.mjs`](upstream/update.mjs): updates presets from a pinned upstream revision.
- - [`upstream/omp-build.mjs`](upstream/omp-build.mjs): avoids duplicating sections already supplied by OMP.
- 
- For supported profiles, model-specific guidance takes precedence over generic OMP working style; duplicated native planning, rereading, delegation and verification rules are removed. Tool availability is refreshed before provider requests. Subagents retain their specialist role, permissions and completion protocol. Custom or unrecognized system templates are preserved; unsupported models retain native OMP behavior, including after fallback. Restart OMP after changing an installed extension.
- 
-+By default, the route policy is read from `.omp/agent/dsh-unbound/route-scope.json` under the home returned by `node:os`'s `homedir()`. To retain a specific policy when a launcher uses a temporary `HOME`, set `OMP_ULW_SCOPE_FILE` to that policy's file path for the process before loading the extension. The override is used as-is, including an empty value; an unreadable or invalid selected file uses the original policy defaults without falling back to another file. The module never writes the policy or settings. Configured provider/model exclusions keep the native OMP harness at turn start; excluded requests do not select a third-party model profile. ULW, prewalk and code mode remain independent of this profile exclusion.
-+
-+DeepSeek uses the retained base builder with current provider-sensitive selection and current OMP transport, reporting and lifecycle adaptations. Other models use the latest generated bundle. `upstream/update.mjs` updates that bundle without replacing the retained DeepSeek module.
-+
-+Native templates are recognized after prepended extension frames, using either `§` or `⁂` headings or OMP's exact headerless main-role opening. Replacement, native fallback and request-time host projection all preserve the surrounding frame, project and specialist blocks.
-+
-+
- Role routing and response-format guidance are compact; ULW leaves invocation parsing to the host and links browser/desktop contracts on demand. Remaining native pre-editing duplicates are removed only when the active profile or preserved host instructions cover them, and restored when that coverage changes. Native delivery rules are preserved verbatim, including live additions and changes. Model-specific rereading, verification tiers and tool budgets remain intact.
- 
- Native todo explanation duplicates are removed only when the exact current preset supplies the same requirement and the native description is recognized. Shell-helper contracts remain in native eval documentation. Unique tool mechanics and custom descriptions are preserved; unsupported presets retain native descriptions.
---- a/CHANGELOG.md
-+++ b/CHANGELOG.md
-@@ -2,6 +2,14 @@
- 
- [English](CHANGELOG.md) | [한국어](CHANGELOG.ko.md)
- 
-+### 2026-11-15 Local profile and native host compatibility
-+
-+- Carry the installed prepended-frame compatibility patch into the current native template matcher, retaining both section markers and headerless main-role support. Track the selected host block through role fallback and host-guidance projection, including merged provider system fields.
-+- Restore literal native roles through callback replacement so dollar replacement tokens remain data. Preserve frame, project, capability and child-assignment boundaries.
-+- Preserve the read-only local Claude route-policy binding and retained senpi `a854e7ac` DeepSeek base profiles, while keeping the current upstream catalog and OMP transport/reporting adaptations. Exclusions do not disable ULW, prewalk or actual code-mode projection.
-+- Package the retained bundle and its types. Add behavioral coverage for prepended hosts, literal fallback, configured Claude harnesses, request-time exclusion changes, code-mode tool projection and complete DeepSeek alias profiles.
-+- Annotate prewalk's runtime setting handles as `Setting<unknown>`, matching OMP 18.20's registry lookup contract without changing runtime controls.
-+
- ### 2026-11-15 Model-neutral extension code mode
- 
- - Project supported requests across model families through native JavaScript eval, session controls and required device/plan transports without changing OMP core, active tools or approvals. Require active, actually exposed JavaScript-capable eval and supported payload/schema metadata; retain the original request when these gates are not met.

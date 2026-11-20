@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { dirname, join } from "node:path";
-import { LOCK_STALE_MS } from "../src/checkpoint-lock.ts";
+import { LOCK_STALE_MS, takeLock } from "../src/checkpoint-lock.ts";
 import { Checkpoints, type CheckpointInput } from "../src/checkpoints.ts";
 import { withState } from "./fakes.ts";
 
@@ -144,6 +144,33 @@ describe("checkpoints", () => {
       expect(JSON.parse(readFileSync(lock, "utf8")).at).toBe(new Date(1000 + LOCK_STALE_MS).toISOString());
       other!();
       expect(readdirSync(dirname(lock))).toEqual([]);
+    } finally {
+      state.done();
+    }
+  });
+
+  test("a live lock a stale takeover moved aside is kept when a third writer takes the path first", () => {
+    const state = withState();
+    const original = fs.renameSync;
+    try {
+      const lock = join(state.dir, "demo.lock");
+      const record = (nonce: string, at: number) =>
+        JSON.stringify({ pid: process.pid, host: hostname(), at: new Date(at).toISOString(), nonce });
+      writeFileSync(lock, record("stale", 0));
+      const live = record("live", Date.now());
+      // Between the stale judgement and the move, a writer takes the lock over; right after the move a third one locks.
+      const spy = spyOn(fs, "renameSync").mockImplementation(((from: string, to: string) => {
+        spy.mockRestore();
+        fs.rmSync(lock);
+        writeFileSync(lock, live);
+        original(from, to);
+        writeFileSync(lock, record("third", Date.now()));
+      }) as typeof fs.renameSync);
+      expect(() => takeLock(lock, Date.now(), (m) => new Error(m))).toThrow("it is kept at");
+      spy.mockRestore();
+      const kept = readdirSync(state.dir).filter((name) => name.endsWith(".stale"));
+      expect(kept.map((name) => readFileSync(join(state.dir, name), "utf8"))).toEqual([live]);
+      expect(JSON.parse(readFileSync(lock, "utf8")).nonce).toBe("third");
     } finally {
       state.done();
     }

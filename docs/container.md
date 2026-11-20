@@ -113,7 +113,7 @@ Named volumes are prefixed by the compose project, so a second `-p` value gets s
 - `~/.config/agent-messenger` (`messenger-auth`): messenger auth.
 - `~/projects` (`projects`): repository checkouts and build artifacts.
 
-The source, global packages and `.agents` skill link live in the image. Fresh named volumes inherit the prepared `dori` ownership and extension/omp-ulw links; existing volumes keep their content on rebuild. Runtime processes and live approvals are not durable evidence of resumed work. After a restart inspect the selected runtime and run `dori boot`; only recreate missing harness sessions with `dori harness up`. Saved OMP sessions can be resumed deliberately, retaining roles and recorded monitors, while a native goal may need `/goal resume`.
+The source, global packages and `.agents` skill link live in the image. Fresh named volumes inherit the prepared `dori` ownership and extension/omp-ulw links; existing volumes keep their content on rebuild. Runtime processes and live approvals are not durable evidence of resumed work. After a restart inspect the selected runtime and run `dori boot`; only recreate missing harness sessions with `dori harness up`. Saved OMP sessions can be restored deliberately, retaining roles and recorded monitors. For a native goal restored paused, wait until the user explicitly directs resumption before using `/goal resume`, and confirm the resulting state.
 
 `docker compose restart`, or `down` followed by `up -d` without volume removal, retains named data. Backup and recovery must include all five volumes and the exact candidate/image input. This source port has not exercised recovery or modified the existing source archives.
 
