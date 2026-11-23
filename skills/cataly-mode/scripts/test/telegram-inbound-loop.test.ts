@@ -3,7 +3,12 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Http, HttpRequest, HttpResponse } from "../src/messenger/http.ts";
 import { Telegram } from "../src/messenger/telegram.ts";
-import { pollTelegramInbound, type TgInbound, telegramInboundLoop } from "../src/messenger/telegram-inbound.ts";
+import {
+  ERROR_BACKOFF_CAP_MS,
+  pollTelegramInbound,
+  type TgInbound,
+  telegramInboundLoop,
+} from "../src/messenger/telegram-inbound.ts";
 import { fakeClock, withState } from "./fakes.ts";
 import { telegramTestStore } from "./telegram-win32-fixtures.ts";
 
@@ -62,6 +67,38 @@ test("live-location edit refreshes carry no text and are dropped, not one line e
   expect(out.length).toBe(1); // the text edit survives
   expect(out[0]!.text).toBe("moved the pin");
   expect(store.load()?.offset).toBe(207); // the location stream was consumed, not replayed
+});
+
+test("transient poll errors retry within the cap instead of the whole loop interval", async () => {
+  // A single non-retryable poll failure must not silence intake for the --loop interval:
+  // the loop-level error backoff is capped so the next poll happens within seconds.
+  let calls = 0;
+  const http: Http = async () => {
+    calls += 1;
+    return { status: 401, headers: {}, body: "{}" };
+  };
+  const emitted: TgInbound[] = [];
+  const sleeps: number[] = [];
+  const warnings: string[] = [];
+  const stop = new Error("STOP");
+  await telegramInboundLoop(
+    mk(http),
+    async () => telegramTestStore(join(state.dir, "tg-error-backoff"), 900),
+    { ownerId: OWNER },
+    60,
+    (i) => emitted.push(i),
+    (m) => warnings.push(m),
+    async (ms) => {
+      sleeps.push(ms);
+      throw stop;
+    },
+  ).catch((e: unknown) => {
+    if (e !== stop) throw e;
+  });
+  expect(calls).toBe(1); // the failing poll, then the capped backoff sleep
+  expect(emitted).toHaveLength(0);
+  expect(sleeps).toEqual([ERROR_BACKOFF_CAP_MS]);
+  expect(warnings).toHaveLength(1);
 });
 
 test("--loop re-polls after a poll whose updates were all gate-dropped", async () => {

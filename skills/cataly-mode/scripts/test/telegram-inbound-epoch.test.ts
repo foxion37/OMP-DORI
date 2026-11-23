@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import type { Http } from "../src/messenger/http.ts";
 import { Telegram } from "../src/messenger/telegram.ts";
 import type { TgUpdate } from "../src/messenger/telegram-inbound-update.ts";
-import { pollTelegramInbound, telegramInboundLoop } from "../src/messenger/telegram-inbound.ts";
+import { ERROR_BACKOFF_CAP_MS, pollTelegramInbound, telegramInboundLoop } from "../src/messenger/telegram-inbound.ts";
 import { fakeClock, withState } from "./fakes.ts";
 import { telegramTestStore } from "./telegram-win32-fixtures.ts";
 
@@ -198,6 +198,7 @@ test("failed store initialization uses the existing retry loop and successful in
   ).rejects.toThrow("test stop");
   expect(opens).toBe(2);
   expect(warnings).toEqual(["identity temporarily unavailable"]);
-  expect(sleeps).toEqual([60_000, 60_000]);
+  // A failed poll/open backs off at the capped error delay, not the whole loop interval.
+  expect(sleeps).toEqual([ERROR_BACKOFF_CAP_MS, 60_000]);
   expect(bodies).toHaveLength(2);
 });
