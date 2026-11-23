@@ -8,6 +8,9 @@ import { mediaOf, replyOf, telegramUpdateReceipt, threadOf, type TgUpdate } from
 /** `message` for a new message, `edit` when the owner edited an earlier one. */
 export type TgInboundKind = "message" | "edit";
 
+/** Transient poll errors retry within this cap instead of sleeping the whole --loop interval. */
+export const ERROR_BACKOFF_CAP_MS = 15_000;
+
 export type TgMedia = { readonly kind: string; readonly fileId: string; readonly messageId?: number };
 
 export type TgInbound = {
@@ -79,8 +82,15 @@ export const telegramInboundLoop = async (
     } catch (error) {
       if (error instanceof InboundActivityError || error instanceof TelegramCursorError) throw error;
       observe?.(false);
-      wait = inboundPollRetryDelay(error, wait);
-      warn(error instanceof Error ? error.message : String(error));
+      // A transient poll failure must not silence intake for the whole --loop interval:
+      // cap the error backoff (rate limits keep their own retry_after via inboundPollRetryDelay).
+      wait = inboundPollRetryDelay(error, Math.min(wait, ERROR_BACKOFF_CAP_MS));
+      const message = error instanceof Error ? error.message : String(error);
+      warn(
+        error instanceof MessengerError && error.status === 409
+          ? `${message} (another getUpdates consumer is polling this bot token; stop it or use a separate token)`
+          : message,
+      );
     }
     if (updates !== undefined) observe?.(updates < 100);
     if (loopMin > 0 && updates) continue;
