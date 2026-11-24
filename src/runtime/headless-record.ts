@@ -125,7 +125,8 @@ export async function observeHost(stateDir: string, ref: SessionRef): Promise<He
   if (!entry) return { ...base, status: "gone" };
   const stopped = readPrivate<StopReceipt>(join(entry.dir, "stopped.json"));
   if (stopped) return { ...base, ...(stopped.detail ? { detail: stopped.detail } : {}), status: "gone" };
-  if (!readPrivate<Endpoint>(join(entry.dir, "endpoint.json"))) return { ...base, status: "unknown" };
+  const endpoint = readPrivate<Endpoint>(join(entry.dir, "endpoint.json"));
+  if (!endpoint) return { ...base, status: "unknown" };
   try {
     const observation = await requestHost<Omit<HeadlessObservation, "role"> & { readonly role?: unknown }>(
       stateDir,
@@ -137,10 +138,22 @@ export async function observeHost(stateDir: string, ref: SessionRef): Promise<He
     if (rawRole !== undefined && role === undefined) throw new HeadlessError("invalid headless runtime role");
     return role === undefined ? rest : { ...rest, role };
   } catch (error) {
-    // Socket loss is not proof of exit. A broker killed externally cannot be rebound or signaled by PID.
-    return { ...base, status: "unknown", detail: error instanceof Error ? error.message : String(error) };
+    // Socket loss alone is not proof of exit; a host whose recorded pid is dead cannot answer again.
+    if (hostPidAlive(endpoint.pid))
+      return { ...base, status: "unknown", detail: error instanceof Error ? error.message : String(error) };
+    return { ...base, status: "gone", detail: `broker pid ${endpoint.pid} is not running; no stop receipt` };
   }
 }
+
+/** True when a process with this pid could still exist (alive, or alive but not ours to signal). */
+export const hostPidAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+};
 
 export async function listHosts(stateDir: string, group: string | undefined): Promise<readonly SessionInfo[]> {
   const base = dataDir(stateDir);
