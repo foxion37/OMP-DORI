@@ -31,6 +31,7 @@ class World:
         self.active_threads = []
         self.history_channels = set()
         self.discovery = Queue()
+        self.typings = Queue()
 
     def dispatch(self, name, data):
         self.seq += 1
@@ -107,13 +108,17 @@ class Discord(BaseHTTPRequestHandler):
                 self.json({}, 404)
 
     def do_POST(self):
-        data = json.loads(self.rfile.read(int(self.headers["content-length"])))
         if self.path.startswith("/api/v10/interactions/"):
+            data = json.loads(self.rfile.read(int(self.headers["content-length"])))
             assert self.headers.get("Authorization") is None
             assert self.path.endswith("/callback-local-only/callback")
             self.world.callbacks.put((self.path.split("/")[4], data))
             self.json(status=204)
+        elif self.authorized() and self.path.startswith("/api/v10/channels/") and self.path.endswith("/typing"):
+            self.world.typings.put(self.path.split("/")[-2])
+            self.json(status=204)
         elif self.authorized() and self.path.startswith("/api/v10/channels/") and self.path.endswith("/messages"):
+            data = json.loads(self.rfile.read(int(self.headers["content-length"])))
             channel = self.path.split("/")[-2]
             card = "components" in data
             if self.world.reject_text is not None and self.world.reject_text == data.get("content"):

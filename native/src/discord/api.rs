@@ -13,6 +13,7 @@ mod extra;
 mod http;
 pub(in crate::discord) use extra::{PartPost, RestStatus};
 
+#[derive(Clone)]
 pub(super) struct DiscordApi {
     client: Client,
     base: Url,
@@ -153,6 +154,17 @@ impl DiscordApi {
     pub(super) async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
         serde_json::from_slice(&self.call(Method::GET, path, None, true).await?)
             .context("invalid Discord REST response")
+    }
+
+    pub(super) async fn typing(&self, channel: Snowflake) -> Result<()> {
+        self.call(
+            Method::POST,
+            &format!("channels/{channel}/typing"),
+            None,
+            true,
+        )
+        .await?;
+        Ok(())
     }
 
     pub(super) async fn reply(

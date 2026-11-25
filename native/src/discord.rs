@@ -286,6 +286,14 @@ fn discord_token() -> Result<String> {
     Ok(token)
 }
 
+pub(crate) struct TypingTask(tokio::task::JoinHandle<()>);
+
+impl Drop for TypingTask {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
 pub struct Transport {
     api: api::DiscordApi,
     interactions: tokio::sync::mpsc::Receiver<Interaction>,
@@ -303,6 +311,21 @@ impl Transport {
 
     pub(crate) async fn clear(&self, origin: Destination) -> Result<()> {
         self.api.clear(origin.channel, origin.message).await
+    }
+    pub(crate) fn start_typing(&self, channel: Snowflake) -> TypingTask {
+        let api = self.api.clone();
+        TypingTask(tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(8));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            let mut warned = false;
+            loop {
+                interval.tick().await;
+                if api.typing(channel).await.is_err() && !warned {
+                    eprintln!("DISCORD_TYPING_FAILED channel={channel}");
+                    warned = true;
+                }
+            }
+        }))
     }
 
     pub(crate) async fn interaction(&mut self) -> Option<Interaction> {

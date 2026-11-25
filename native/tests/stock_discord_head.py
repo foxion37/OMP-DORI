@@ -3,6 +3,7 @@
 from http.server import ThreadingHTTPServer
 import json
 from pathlib import Path
+from queue import Empty
 from select import select
 import subprocess
 from threading import Thread
@@ -75,6 +76,11 @@ def hold_head(head, env, harness, model, run_harness, world: World) -> None:
     # Supply work only after the baseline and connection are established.
     model.controlled_started.clear()
     model.controlled_release.clear()
+    while not world.typings.empty():
+        try:
+            world.typings.get_nowait()
+        except Empty:
+            break
     prior = model.calls.count("controlled interruption")
     with subprocess.Popen([*head, "--gateway"], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as worker:
         try:
@@ -86,6 +92,8 @@ def hold_head(head, env, harness, model, run_harness, world: World) -> None:
             assert contender.returncode != 0 and "already controlled" in contender.stderr, contender
             world.add(message("104", "cataly-test: controlled interruption"))
             assert model.controlled_started.wait(15)
+            assert world.typings.get(timeout=5) == "20"
+            assert world.typings.get(timeout=10) == "20"
         finally:
             worker.terminate()
             output, error = worker.communicate(timeout=20)

@@ -195,6 +195,8 @@ To let Discord follow-ups reopen a registered lane after its session retired cle
 
 Automatic reopen waits for the new process to own the same native session. The lane uses the saved model; when its identity differs, the monitor leaves the message queued. The reopened process uses a bundled quota/retry overlay that disables model fallback, provider-error retries, and automatic saved-reset redemption. It does not edit your OMP configuration. Interrupted or rejected Discord dispatches are held without replay, and a deleted Discord original is never replaced with an unthreaded reply.
 
+During a native OMP turn, the receiver posts a typing indicator immediately and refreshes it every eight seconds. It pauses while an approval card waits for owner input and stops when the turn finishes. This is separate from the Gateway online-presence monitor.
+
 This path currently requires Linux to confirm native session ownership. The shared receiver must remain running while a lane is retired; it does not start if the monitor or its owning session has exited.
 
 For a long-running receiver, optionally set `"restart": "on-failure"` in the

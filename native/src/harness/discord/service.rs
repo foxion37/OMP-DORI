@@ -167,6 +167,8 @@ impl<'a, 'b> Worker<'a, 'b> {
             discord_head,
         };
         let mut card = None;
+        let mut typing = Some(transport.start_typing(origin.channel));
+
         let result = {
             let run = self.harness.execute(run, options);
             let mut run = pin!(run);
@@ -182,6 +184,7 @@ impl<'a, 'b> Worker<'a, 'b> {
                     }
                     Some(approval) = approvals.recv(), if cancel.is_some() => {
                         if let Ok(pending) = issue_card(transport, origin, approval).await {
+                            drop(typing.take());
                             card = Some(pending);
                         } else {
                             eprintln!("DISCORD_APPROVAL_CARD_FAILED id={}", id.as_str());
@@ -189,23 +192,29 @@ impl<'a, 'b> Worker<'a, 'b> {
                                 eprintln!("DISCORD_TURN_ALREADY_SETTLED id={}", id.as_str());
                             }
                         }
+
                     }
                     Some(event) = transport.interaction() => {
                         let decision = card.as_ref().and_then(|(card, _)| event.decision(card));
                         if transport.callback(&event, decision.is_some()).await.is_ok() {
                             if let Some(decision) = decision
                                 && let Some((_, approval)) = card.take()
-                                && approval.decision.send(decision).is_err()
                             {
-                                eprintln!("DISCORD_APPROVAL_ALREADY_SETTLED id={}", id.as_str());
+                                if approval.decision.send(decision).is_err() {
+                                    eprintln!("DISCORD_APPROVAL_ALREADY_SETTLED id={}", id.as_str());
+                                } else {
+                                    typing = Some(transport.start_typing(origin.channel));
+                                }
                             }
                         } else {
                             eprintln!("DISCORD_INTERACTION_CALLBACK_FAILED id={}", id.as_str());
                         }
                     }
+
                 }
             }
         };
+        drop(typing);
         if let Some((card, _)) = card
             && transport
                 .clear(Destination {
