@@ -198,6 +198,29 @@ describe("capability matrix", () => {
     expect(darwinMemFreePct(() => "garbage", free)).toBe(3);
   });
 
+  // native/src/discord/lanes/guard.rs darwin_memory_policy_matches_darwin_ts pins the same cases.
+  test("macOS takes only a whole-percent level, and reads 0 when neither the level nor free pages answer", () => {
+    const unread = () => {
+      throw new Error("a readable level never reads free pages");
+    };
+    expect(darwinMemFreePct(() => "0", unread)).toBe(0);
+    expect(darwinMemFreePct(() => " 100 ", unread)).toBe(100);
+    for (const level of ["", "101", "-1", "7.5", "0072", "1e2"])
+      expect([
+        level,
+        darwinMemFreePct(
+          () => level,
+          () => 13,
+        ),
+      ]).toEqual([level, 13]);
+    const noLevel = () => {
+      throw new Error("no sysctl");
+    };
+    for (const free of [Number.NaN, Number.POSITIVE_INFINITY, -1, 101])
+      expect([free, darwinMemFreePct(noLevel, () => free)]).toEqual([free, 0]);
+    expect(darwinMemFreePct(noLevel, () => 0)).toBe(0);
+  });
+
   test("absolute paths follow the adapter's own OS, not the running host", () => {
     expect(adapterFor("linux").isAbsolutePath("/a")).toBe(true);
     expect(adapterFor("linux").isAbsolutePath("C:\\a")).toBe(false);

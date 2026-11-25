@@ -34,9 +34,8 @@ export function notes(manifest: ReleaseManifest): string {
   return [
     `Cataly ${manifest.tag}${manifest.prerelease ? " Linux x64 preview" : ""}.`,
     "Supported consumer runtime: headless OMP on Linux x64 and macOS arm64, Discord. Other CI platforms do not imply consumer support.",
-    `Requires existing Bun ${manifest.requirements.bun} and git; the bound OMP ${manifest.requirements.omp} is provisioned.`,
+    `Requires existing Bun 1.4.4+ and git; the bound OMP ${manifest.requirements.omp} is provisioned.`,
     `Commit: \`${manifest.commit}\`. SourceManifest: \`${manifest.source.hash}\`.`,
-    `Pinned external omp-ulw: \`${manifest.ompUlw.commit}\`; dependency bodies are not bundled.`,
     `Verify all files in \`SHA256SUMS\` before running \`bash install.sh --version ${manifest.tag}\` from this release.`,
     `Installation, prerequisites and support limits: https://github.com/${RELEASE_REPOSITORY}/blob/${manifest.commit}/docs/releases.md`,
     `Publication requires all required trusted own-main CI jobs at this exact commit: https://github.com/${RELEASE_REPOSITORY}/commit/${manifest.commit}/checks`,
@@ -46,7 +45,7 @@ export function notes(manifest: ReleaseManifest): string {
 }
 
 export function marker(body: string, operation: string): string {
-  return `${body}\n\n<!-- omp-dori-publication:${operation} -->`;
+  return `${body}\n\n<!-- cataly-publication:${operation} -->`;
 }
 
 export async function findRelease(manifest: ReleaseManifest): Promise<Release | undefined> {

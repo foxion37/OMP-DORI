@@ -22,11 +22,7 @@ function withRenderer(bundle: VerifiedBundle, text?: string): VerifiedBundle {
     file.path !== rendererPath ? [file] : text === undefined ? [] : [{ ...file, bytes: Buffer.from(text) }],
   );
   const entries = files.map((file) => ({ path: file.path, sha256: digest(file.bytes), executable: file.executable }));
-  const source = {
-    ...bundle.manifest.source,
-    files: entries,
-    hash: digest(JSON.stringify({ files: entries, ulwPresent: false })),
-  };
+  const source = { ...bundle.manifest.source, files: entries, hash: digest(JSON.stringify({ files: entries })) };
   const bytes = archive(
     files.map((file) => ({
       name: `${bundle.manifest.archive.root}/${file.path}`,
@@ -47,7 +43,7 @@ import { join } from "node:path";
 import { installIsolatedReferences as render } from ${rendererModule};
 export function installIsolatedReferences(paths, source) {
   render(paths, source);
-  const file = join(paths.dori, "bin/omp");
+  const file = join(paths.cataly, "bin/omp");
   const bytes = readFileSync(file, "utf8") + ${JSON.stringify(`# Release ${version} wrapper\n`)};
   writeFileSync(file, bytes);
   const receipt = join(paths.root, "consumer-references.json");
@@ -62,16 +58,16 @@ posix("isolated update and rollback restore exact release-specific wrapper bytes
   const f = fixture(true);
   const first = withRenderer(f.release("one").bundle, renderer("A"));
   const one = await installBundle(f.paths, first, undefined);
-  const wrappers = snapshot(join(f.paths.dori, "bin"));
+  const wrappers = snapshot(join(f.paths.cataly, "bin"));
   const receipt = readFileSync(join(f.paths.root, "consumer-references.json"));
   const config = readFileSync(f.paths.config);
-  expect(readFileSync(join(f.paths.dori, "bin/omp"), "utf8")).toEndWith("# Release A wrapper\n");
+  expect(readFileSync(join(f.paths.cataly, "bin/omp"), "utf8")).toEndWith("# Release A wrapper\n");
   const second = withRenderer(f.release("two").bundle, renderer("B"));
   const two = await installBundle(f.paths, second, one);
-  expect(readFileSync(join(f.paths.dori, "bin/omp"), "utf8")).toEndWith("# Release B wrapper\n");
-  expect(snapshot(join(f.paths.dori, "bin"))).not.toBe(wrappers);
+  expect(readFileSync(join(f.paths.cataly, "bin/omp"), "utf8")).toEndWith("# Release B wrapper\n");
+  expect(snapshot(join(f.paths.cataly, "bin"))).not.toBe(wrappers);
   await rollbackRelease(f.paths, two);
-  expect(snapshot(join(f.paths.dori, "bin"))).toBe(wrappers);
+  expect(snapshot(join(f.paths.cataly, "bin"))).toBe(wrappers);
   expect(readFileSync(join(f.paths.root, "consumer-references.json"))).toEqual(receipt);
   expect(readFileSync(f.paths.config)).toEqual(config);
   expect(readlinkSync(f.paths.live)).toBe(releasePath(f.paths, one.current));
@@ -90,7 +86,7 @@ posix.each([
 ] as const)("a selected renderer with %s holds before activation", async (_name, text, error) => {
   const f = fixture(true);
   const one = await installBundle(f.paths, f.release("one").bundle, undefined);
-  const wrappers = snapshot(join(f.paths.dori, "bin"));
+  const wrappers = snapshot(join(f.paths.cataly, "bin"));
   const state = readFileSync(f.paths.state);
   const config = readFileSync(f.paths.config);
   const candidate = withRenderer(f.release("two").bundle, text);
@@ -98,7 +94,7 @@ posix.each([
   expect(readlinkSync(f.paths.live)).toBe(releasePath(f.paths, one.current));
   expect(readFileSync(f.paths.state)).toEqual(state);
   expect(readFileSync(f.paths.config)).toEqual(config);
-  expect(snapshot(join(f.paths.dori, "bin"))).toBe(wrappers);
+  expect(snapshot(join(f.paths.cataly, "bin"))).toBe(wrappers);
   acquireLaunchGate(f.paths)();
 });
 
@@ -126,7 +122,7 @@ posix("a tampered retained renderer is rejected before rollback import or refere
   const f = fixture(true);
   const one = await installBundle(f.paths, f.release("one").bundle, undefined);
   const two = await installBundle(f.paths, f.release("two").bundle, one);
-  const wrappers = snapshot(join(f.paths.dori, "bin"));
+  const wrappers = snapshot(join(f.paths.cataly, "bin"));
   const state = readFileSync(f.paths.state);
   const file = join(releasePath(f.paths, one.current), rendererPath);
   chmodSync(file, 0o600);
@@ -134,7 +130,7 @@ posix("a tampered retained renderer is rejected before rollback import or refere
   await expect(rollbackRelease(f.paths, two)).rejects.toThrow("Retained release source bytes");
   expect(readlinkSync(f.paths.live)).toBe(releasePath(f.paths, two.current));
   expect(readFileSync(f.paths.state)).toEqual(state);
-  expect(snapshot(join(f.paths.dori, "bin"))).toBe(wrappers);
+  expect(snapshot(join(f.paths.cataly, "bin"))).toBe(wrappers);
 });
 
 posix("postflight reference admission rejects an inconsistent target renderer before activation", async () => {
@@ -143,7 +139,7 @@ posix("postflight reference admission rejects an inconsistent target renderer be
   const candidate = withRenderer(
     f.release("two").bundle,
     `import {writeFileSync} from "node:fs";
-     export function installIsolatedReferences(paths) { writeFileSync(paths.dori + "/bin/omp", "unreceipted"); }`,
+     export function installIsolatedReferences(paths) { writeFileSync(paths.cataly + "/bin/omp", "unreceipted"); }`,
   );
   await expect(installBundle(f.paths, candidate, one)).rejects.toThrow("Consumer reference changed");
   expect(readlinkSync(f.paths.live)).toBe(releasePath(f.paths, one.current));
@@ -153,22 +149,22 @@ posix("new side wrappers read the side config even while the old source is still
   const { root, paths } = fixture(true);
   const old = join(root, "old");
   const current = join(root, "current");
-  const legacySkill = "skills/dori-mode";
-  mkdirSync(join(current, legacySkill), { recursive: true });
-  writeFileSync(join(current, legacySkill, "SKILL.md"), "---\nname: dori-mode\ndescription: Fixture\n---\n");
+  const skill = "skills/cataly-mode";
+  mkdirSync(join(current, skill), { recursive: true });
+  writeFileSync(join(current, skill, "SKILL.md"), "---\nname: cataly-mode\ndescription: Fixture\n---\n");
   writeFileSync(join(current, "release-headless.json"), "{}\n");
   writeFileSync(paths.config, '{"profile":"side"}\n');
-  const primary = join(paths.home, ".dori");
+  const primary = join(paths.home, ".cataly");
   mkdirSync(primary);
   const primaryConfig = join(primary, "config.json");
   writeFileSync(primaryConfig, '{"profile":"primary"}\n');
-  for (const entry of [join(legacySkill, "scripts/src/cli.ts"), "src/cli.ts"]) {
+  for (const entry of [join(skill, "scripts/src/cli.ts"), "src/cli.ts"]) {
     const path = join(old, entry);
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(
       path,
-      `const profile = await Bun.file(process.env.DORI_CONFIG ?? ${JSON.stringify(primaryConfig)}).json();
-console.log(JSON.stringify({ profile, home: process.env.DORI_HOME, state: process.env.DORI_STATE_DIR ?? null }));
+      `const profile = await Bun.file(process.env.CATALY_CONFIG ?? ${JSON.stringify(primaryConfig)}).json();
+console.log(JSON.stringify({ profile, home: process.env.CATALY_HOME, state: process.env.CATALY_STATE_DIR ?? null }));
 `,
     );
   }
@@ -184,9 +180,7 @@ console.log(JSON.stringify({ profile, home: process.env.DORI_HOME, state: proces
         PATH: process.env["PATH"],
         CATALY_HOME: primary,
         CATALY_CONFIG: primaryConfig,
-        DORI_HOME: primary,
-        DORI_CONFIG: primaryConfig,
-        DORI_STATE_DIR: join(primary, "state"),
+        CATALY_STATE_DIR: join(primary, "state"),
       },
     });
     expect(result.exitCode, result.stderr.toString()).toBe(0);

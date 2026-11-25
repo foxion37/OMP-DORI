@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { type Monitor, monitorCleanup } from "../src/boot-monitors.ts";
+import { laneWords } from "../src/monitor-command.ts";
 import type { Lane, LaneStatus } from "../src/registry.ts";
 
 // Every reviewed counterexample of a watch's own words against its lane: 0 is a watch the closed lane must not claim
@@ -8,14 +9,15 @@ const SKILL = "/w/skills/cataly-mode/scripts";
 const lane = (key: string, status: LaneStatus = "closed"): Lane => ({
   key,
   status,
-  pane: `w1:${key}`,
+  sessionRef: { runtime: "tern", id: `w1:${key}` },
   title: key,
   thread: "none",
   brief: "/b.md",
   done: "file /done.md",
   openedAt: "2026-01-01T12:00:00.000Z",
 });
-type Row = readonly [string | readonly unknown[], string, 0 | 1, { cwd?: string; open?: boolean; also?: string }?];
+// A string is a shell command line, read by the same parser (monitor-command.ts) as an argv; an argv row is a watch.
+type Row = readonly [string | readonly string[], string, 0 | 1, { cwd?: string; open?: boolean; also?: string }?];
 const ROWS: readonly Row[] = [
   // Shared cataly watches, however they are wrapped.
   [["cataly", "inbound", "slack"], "slack", 0],
@@ -201,8 +203,6 @@ const ROWS: readonly Row[] = [
   ['x="$(printf \\); cataly inbound slack --loop 1)"', "slack", 0],
   ['x="$(echo "$(true)"; cataly inbound slack --loop 1)"', "slack", 0],
   ["echo '$(cataly inbound slack )'", "slack", 1],
-  // A non-string argv word holds the program's place; the words after it name lanes as before.
-  [[7, "checkpoints", "api"], "checkpoints", 1],
   // Bun's own options come before the entry; --cwd reads a relative entry.
   [["bun", "--", `${SKILL}/src/cli.ts`, "freshness"], "freshness", 0, { cwd: "/other" }],
   [["bun", "--smol", `${SKILL}/src/cli.ts`, "freshness"], "freshness", 0, { cwd: "/other" }],
@@ -223,27 +223,12 @@ const ROWS: readonly Row[] = [
 
 test.each(ROWS.map((row) => [JSON.stringify(row[0]), row[1], row[2], row]))("%s lane %s → %d", (_, __, ___, row) => {
   const [command, key, want, { cwd = SKILL, open = false, also } = {}] = row as Row;
-  const monitor: Monitor = {
-    persistent: true,
-    monitorId: "mon_TEST",
-    sessionId: "owner",
-    cwd,
-    ...(typeof command === "string" ? { command } : { argv: command as string[] }),
-    ...(also ? { description: also } : {}),
-  };
+  if (typeof command === "string") {
+    expect(laneWords(command, cwd).includes(key) ? 1 : 0).toBe(want);
+    return;
+  }
+  const monitor: Monitor = { name: "test", cwd, argv: [...command], ...(also ? { filter: also } : {}) };
   const lanes = [lane(key, open ? "working" : "closed"), ...(also ? [lane(also, "working")] : [])];
   const manifests = [{ path: "fixture", data: { version: 1, sessionId: "owner", monitors: [monitor] } }];
   expect(monitorCleanup(lanes, manifests).length).toBe(want);
-});
-
-test("a legacy argv holding any non-string is matched by its command, never crashing the boot", () => {
-  const monitors = [7, null, {}, [], true].map((arg, index) => ({
-    sessionId: "owner",
-    persistent: true,
-    monitorId: `mon_BAD${index}`,
-    argv: [arg] as unknown as string[],
-    command: "cataly checkpoints api",
-  }));
-  const manifests = [{ path: "fixture", data: { version: 1, sessionId: "owner", monitors } }];
-  expect(monitorCleanup([lane("api")], manifests).map((m) => m.match)).toEqual(monitors.map(() => ["api:command:key"]));
 });

@@ -27,7 +27,7 @@ test("an idle working lane on the same repo is preferred over opening a new one"
     brief: "",
     done: "",
     cwd,
-    pane,
+    sessionRef: { runtime: "tern", id: pane },
     openedAt: "2026-01-01T00:00:00Z",
     ...(status ? { status } : {}),
   });

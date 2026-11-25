@@ -10,7 +10,7 @@ import { LEAD_REF, setup } from "./harness-setup.ts";
 async function quietLane() {
   const s = setup();
   const lane = await startLane(s.d, "talker", s.brief, { group: "w1" });
-  const pane = s.w.panes.get(lane.paneId)!;
+  const pane = s.w.panes.get(lane.sessionRef.id)!;
   pane.status = "idle";
   s.lead.received.length = 0;
   const at = (min: number) => {
@@ -42,7 +42,7 @@ describe("a duty notice written while another process rewrites the queue it goes
   test("owed LOST repayment waits for the destination lock, then delivers once", async () => {
     const { w, d, lane, told } = await quietLane();
     rmSync(join(d.store.root, "roles.json"));
-    w.panes.delete(lane.paneId);
+    w.panes.delete(lane.sessionRef.id);
     await dutyTick(d);
     const owed = join(d.store.root, "duty", "lead.jsonl");
     const kept = readFileSync(owed, "utf8");
@@ -68,7 +68,7 @@ describe("a duty notice written while another process rewrites the queue it goes
   test("a LOST notice for a registered lead during a flush of its inbox: the lane is lost and the lead hears of it once", async () => {
     const { w, d, lane, told } = await quietLane();
     const finish = flushInFlight(d, LEAD_REF);
-    w.panes.delete(lane.paneId);
+    w.panes.delete(lane.sessionRef.id);
     expect(await dutyTick(d)).toContainEqual({ lane: "talker", action: "lost" });
     expect(d.store.lane("talker")!.status).toBe("lost");
     finish();

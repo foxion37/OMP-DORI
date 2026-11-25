@@ -16,7 +16,7 @@ export type DiscordLaneInbox = {
   add(session: string, message: DiscordInbound, options?: { readonly reply: LaneReplyIdentity }): void;
   next(session: string, channel: string, options?: { readonly optedInOnly: true }): LaneMessage | null;
   outstanding(session: string, channel: string): boolean;
-  claimInput(session: string, channel: string, id: string, legacy?: boolean): boolean;
+  claimInput(session: string, channel: string, id: string, plain?: boolean): boolean;
   holdInput(session: string, channel: string, id: string): void;
   acknowledge(session: string, channel: string, id: string): void;
   enqueueReply(
@@ -138,8 +138,8 @@ export function openDiscordLaneInbox(stateDir: string): DiscordLaneInbox {
         return optedIn === 1 ? { id, text, reply: true } : { id, text };
       },
       outstanding: (session, channel) => outstanding.get(session, channel) !== null,
-      claimInput: (session, channel, id, legacy) =>
-        (legacy ? claimNative : claim).run(session, channel, id).changes === 1,
+      claimInput: (session, channel, id, plain) =>
+        (plain ? claimNative : claim).run(session, channel, id).changes === 1,
       holdInput: (session, channel, id) => hold.run(session, channel, id),
       acknowledge: (session: string, channel: string, id: string) => acknowledge.run(session, channel, id),
       enqueueReply,

@@ -123,12 +123,7 @@ export function isolatedEnv(
   };
   const names = capability === "model" ? ctx.config.modelEnv : capability === "reporter" ? ctx.config.reporterEnv : [];
   for (const name of names) {
-    // The CLI translated the operator environment, but a retained reporter still requests its exact legacy keys.
-    const current =
-      capability === "reporter" && /^DORI_(?:SLACK_TOKEN|SLACK_COOKIE|TELEGRAM_TOKEN|DISCORD_TOKEN)$/.test(name)
-        ? `CATALY_${name.slice("DORI_".length)}`
-        : name;
-    const value = process.env[current] ?? process.env[name];
+    const value = process.env[name];
     if (value === undefined || !value) {
       throw new UpdateError(`required ${capability} environment capability ${name} is missing`);
     }

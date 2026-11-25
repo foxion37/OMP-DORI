@@ -1,4 +1,3 @@
-import { importLegacyEnvironment } from "../legacy-environment.ts";
 import { realpathSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { captureSetupFile, SetupConflict, type SetupSnapshot } from "../setup-files.ts";
@@ -15,7 +14,7 @@ import { acquireConsumerLock, ConsumerLockBusy, type ConsumerPaths, consumerPath
 import { installBundle } from "./install.ts";
 import { assertNoConsumerLaunches, registerConsumerLaunch, waitLaunchGate } from "./launch-leases.ts";
 import { validateReleaseManifest } from "./manifest.ts";
-import { assertReleaseTarget, assertUpdateProtocol } from "./profile.ts";
+import { assertReleaseTarget } from "./profile.ts";
 import { prerequisites } from "./provision.ts";
 import { consumerReleaseHome } from "./runtime.ts";
 import { hasConsumerState, loadInstalled, recoverInstalled, releaseId, releasePath, verifyRelease } from "./state.ts";
@@ -89,7 +88,7 @@ export async function automaticUpdate(paths: ConsumerPaths, options: AutomaticOp
     }
     const config = automaticConfig(paths);
     if (automaticOverrides(paths, config)) {
-      finish("held", "Explicit native or ULW override; use the manual release updater");
+      finish("held", "Explicit native override; use the manual release updater");
       return source;
     }
     // Record attempts, not only successes: offline launches and failed preparation cannot hammer the channel.
@@ -110,9 +109,7 @@ export async function automaticUpdate(paths: ConsumerPaths, options: AutomaticOp
         finish("current", undefined, manifest.tag);
         return source;
       }
-      assertUpdateProtocol(installed.current, manifest);
       assertReleaseTarget(
-        paths,
         { manifest, bytes: (path) => candidate.files.find((file) => file.path === path)?.bytes },
         snapshot,
       );
@@ -175,7 +172,6 @@ export async function automaticLaunch(
 }
 
 if (import.meta.main) {
-  importLegacyEnvironment();
   const [source, home, rawPid, ...argv] = process.argv.slice(2);
   try {
     if (!source || !home || !rawPid || !/^\d+$/.test(rawPid))

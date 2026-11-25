@@ -41,6 +41,13 @@ jobs:
       - name: Extension tests
         if: ${{ !cancelled() }}
         run: bun run test:extension
+      # The whole native suite, so every macOS-only Rust test runs somewhere: the launch-guard memory and disk readers
+      # and the receiver and activity identities compare with the TypeScript readers through the bun setup put on PATH.
+      - name: Native tests
+        if: ${{ !cancelled() }}
+        run: |
+          bun --version
+          cargo test --locked
       - name: Darwin arm64 headless consumer release
         if: ${{ !cancelled() && github.event_name != 'pull_request' }}
         run: |
@@ -50,12 +57,9 @@ jobs:
           bun -e 'if (process.platform !== "darwin" || process.arch !== "arm64") throw new Error("Darwin arm64 is required")'
           gtar="$(command -v gtar)"
           "$gtar" --version
-          baseline=97371823c4936f7e83f656cfa6ca9d446ecf1995
-          git merge-base --is-ancestor "$baseline" HEAD
-          git worktree add --detach "$RUNNER_TEMP/consumer-baseline" "$baseline"
           git worktree add --detach "$RUNNER_TEMP/consumer-candidate" HEAD
           bun "$RUNNER_TEMP/consumer-candidate/scripts/verify-consumer-release.ts" \
-            --source-a "$RUNNER_TEMP/consumer-baseline" --source-b "$RUNNER_TEMP/consumer-candidate" \
+            --source "$RUNNER_TEMP/consumer-candidate" \
             --tar-bin "$gtar" \
             --out "/private/tmp/odcr-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
 

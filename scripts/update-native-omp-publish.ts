@@ -7,21 +7,25 @@ import { NATIVE_UPDATE_FILES } from "../src/release/native-update-dependencies.t
 import { bundleGit } from "../src/release/source-bundle.ts";
 import { RELEASE_REPOSITORY } from "./release-gate.ts";
 import { githubApi } from "./release-process.ts";
-import { existingNativeCommit, existingNativePull } from "./update-native-omp-existing.ts";
-import { canonicalUlwPull, type UlwApi } from "./update-ulw-existing.ts";
+import {
+  canonicalPull,
+  existingNativeCommit,
+  existingNativePull,
+  type GitHubApi,
+} from "./update-native-omp-existing.ts";
 
 const object = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value);
 const sha = (value: unknown): value is string => typeof value === "string" && /^[a-f0-9]{40}$/.test(value);
 const root = `repos/${RELEASE_REPOSITORY}`;
 
-async function mainAt(commit: string, api: UlwApi) {
+async function mainAt(commit: string, api: GitHubApi) {
   const main = await api(`${root}/git/ref/heads/main`);
   if (!object(main) || !object(main["object"]) || main["object"]["sha"] !== commit)
     throw new Error("Main advanced after native preparation; prepare again instead of rebasing automatically");
 }
 
-async function dispatch(branch: string, commit: string, api: UlwApi) {
+async function dispatch(branch: string, commit: string, api: GitHubApi) {
   const runs = await api(
     `${root}/actions/workflows/ci.yml/runs?head_sha=${commit}&event=workflow_dispatch&per_page=100`,
   );
@@ -38,7 +42,7 @@ export async function publishNativeUpdate(
   source: string,
   directory: string,
   runId: string,
-  api: UlwApi = githubApi,
+  api: GitHubApi = githubApi,
 ): Promise<string> {
   if (api === githubApi && process.env["GITHUB_REPOSITORY"] !== RELEASE_REPOSITORY)
     throw new Error("Native publication is restricted to the canonical repository");
@@ -125,7 +129,7 @@ export async function publishNativeUpdate(
     await mainAt(candidate.sourceCommit, api);
     await api(`${root}/git/refs`, "POST", { ref: `refs/heads/${branch}`, sha: commit });
   }
-  const pull = canonicalUlwPull(
+  const pull = canonicalPull(
     await api(`${root}/pulls`, "POST", {
       title: `chore(native): stage OMP ${candidate.nativeVersion}`,
       head: branch,

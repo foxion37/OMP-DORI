@@ -112,24 +112,6 @@ posix.each(["discord", "telegram"] as const)("board delivery removes private URL
   expectPublicLinks(JSON.stringify(requests[0]));
 });
 
-test("explicit out-of-tree session monitor metadata is included like boot", async () => {
-  const external = join(state.dir, "external");
-  const monitors = join(external, "extensions", "terminal");
-  mkdirSync(monitors, { recursive: true });
-  writeFileSync(
-    join(monitors, "x.json"),
-    JSON.stringify({
-      version: 1,
-      sessionId: "outside",
-      monitors: [{ monitorId: "mon_a", sessionId: "outside", persistent: true }],
-    }),
-  );
-  // Terminal metadata belongs to a terminal scope: here a Tern lead.
-  const world = depsFor(newWorld(), fakeClock(now), state.dir, { leadPane: "tern:5001" });
-  const deps = { ...world, env: { PI_SESSION_DIR: external } };
-  expect((await laneStatus(deps)).monitors.recorded).toBe(1);
-});
-
 test("invalid elapsed timestamps are explicit unknown rather than NaN", async () => {
   const deps = depsFor(newWorld(), fakeClock(now), state.dir);
   await deps.registry.write({ ...lane, openedAt: "broken" });

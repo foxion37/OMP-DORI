@@ -106,7 +106,9 @@ impl LaneInbox {
             directory.is_dir() && directory.uid() == uid && directory.mode().trailing_zeros() >= 6,
             "Discord lane inbox directory must be private and owned by this user"
         );
-        let path = dir.join("inbox.sqlite");
+        // SQLITE_OPEN_NOFOLLOW refuses a symlink in any path component, such as macOS's `/var -> /private/var`
+        // above `$TMPDIR`. The inbox directory itself is not a link (checked above), so resolve only its ancestors.
+        let path = fs::canonicalize(&dir)?.join("inbox.sqlite");
         match OpenOptions::new()
             .create_new(true)
             .write(true)
@@ -118,7 +120,7 @@ impl LaneInbox {
             Err(error) => return Err(error).context("creating Discord lane inbox"),
         }
         for suffix in ["", "-wal", "-shm", "-journal"] {
-            check_file(&super::util::sibling(&path, suffix), directory.uid())?;
+            check_file(&crate::util::sibling(&path, suffix), directory.uid())?;
         }
         let db = Connection::open_with_flags(
             path,
@@ -134,7 +136,7 @@ impl LaneInbox {
             .map_err(|_| anyhow::anyhow!("Discord lane inbox owner failed"))
     }
 
-    /// `add(session, message)`: a legacy input the lane may answer in its own transcript.
+    /// `add(session, message)`: a plain input, without a reply request, the lane may answer in its own transcript.
     pub(super) fn add(&self, session: &str, channel: &str, id: &str, text: &str) -> Result<()> {
         self.db()?
             .prepare_cached(INSERT)?
@@ -257,7 +259,7 @@ mod tests {
     fn temp() -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!(
             "cataly-lane-inbox-{}",
-            super::super::util::uuid().unwrap()
+            crate::util::uuid().unwrap()
         ));
         DirBuilder::new().mode(0o700).create(&dir).unwrap();
         dir
@@ -308,14 +310,34 @@ mod tests {
     }
 
     #[test]
+    fn a_symlinked_ancestor_opens_but_a_symlinked_inbox_directory_does_not() {
+        let real = temp();
+        let link = real.with_extension("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        // macOS's $TMPDIR sits under /var -> /private/var.
+        drop(LaneInbox::open(&link).unwrap());
+        assert!(real.join("discord-lanes/inbox.sqlite").is_file());
+        let aliased = temp();
+        DirBuilder::new()
+            .mode(0o700)
+            .create(real.join("target"))
+            .unwrap();
+        std::os::unix::fs::symlink(real.join("target"), aliased.join("discord-lanes")).unwrap();
+        assert!(LaneInbox::open(&aliased).is_err());
+        fs::remove_file(link).unwrap();
+        fs::remove_dir_all(real).unwrap();
+        fs::remove_dir_all(aliased).unwrap();
+    }
+
+    #[test]
     fn add_is_idempotent_and_only_replied_inputs_wake() {
         let state = temp();
         let inbox = LaneInbox::open(&state).unwrap();
-        inbox.add("s", "1", "10", "legacy").unwrap();
+        inbox.add("s", "1", "10", "plain").unwrap();
         assert_eq!(inbox.pending_sessions(Some(ME)).unwrap(), []);
         inbox.add_with_reply("s", "1", "11", "first", ME).unwrap();
         inbox.add_with_reply("s", "1", "11", "second", ME).unwrap();
-        // A legacy row with the same key never gains a reply request.
+        // A plain row with the same key never gains a reply request.
         inbox.add_with_reply("s", "1", "10", "again", ME).unwrap();
         assert_eq!(
             inbox.count("SELECT count(*) FROM inbox WHERE id='11' AND text='first'"),

@@ -290,16 +290,13 @@ fn parse_purposes(bytes: &[u8]) -> Result<Map<String, Value>, ()> {
     let Ok(Value::Object(mut record)) = serde_json::from_str::<Value>(&text) else {
         return Err(());
     };
-    let (notes, receipts) = if record.contains_key("version") {
-        if record.len() != 3 || record.get("version").and_then(Value::as_f64) != Some(1.0) {
-            return Err(());
-        }
-        match (record.remove("notes"), record.remove("receipts")) {
-            (Some(Value::Object(notes)), Some(Value::Object(receipts))) => (notes, receipts),
-            _ => return Err(()),
-        }
-    } else {
-        (record, Map::new())
+    if record.len() != 3 || record.get("version").and_then(Value::as_f64) != Some(1.0) {
+        return Err(());
+    }
+    let (Some(Value::Object(notes)), Some(Value::Object(receipts))) =
+        (record.remove("notes"), record.remove("receipts"))
+    else {
+        return Err(());
     };
     for (id, entry) in &notes {
         if !is_snowflake(id) || !is_purpose(entry) {
@@ -493,8 +490,9 @@ mod tests {
 
     #[test]
     fn purpose_file_validation() {
+        let state = |notes: &str| format!(r#"{{"version":1,"notes":{notes},"receipts":{{}}}}"#);
         assert_eq!(
-            parse_purposes(br#"{"5":{"purpose":"a","updatedAt":"x"}}"#)
+            parse_purposes(state(r#"{"5":{"purpose":"a","updatedAt":"x"}}"#).as_bytes())
                 .unwrap()
                 .len(),
             1
@@ -510,21 +508,24 @@ mod tests {
             }
         });
         assert!(parse_purposes(receipt.to_string().as_bytes()).is_ok());
+        let bad_notes = [
+            r#"{"x":{"purpose":"a","updatedAt":"x"}}"#,
+            r#"{"5":{"purpose":" a","updatedAt":"x"}}"#,
+            r#"{"5":{"purpose":"a\u202e","updatedAt":"x"}}"#,
+            r#"{"5":{"purpose":"a","updatedAt":"x","name":null}}"#,
+        ]
+        .map(state);
         for bad in [
-            &b"not json"[..],
-            b"[]",
-            br#"{"version":1,"notes":{}}"#,
-            br#"{"x":{"purpose":"a","updatedAt":"x"}}"#,
-            br#"{"5":{"purpose":" a","updatedAt":"x"}}"#,
-            br#"{"5":{"purpose":"a\u202e","updatedAt":"x"}}"#,
-            br#"{"5":{"purpose":"a","updatedAt":"x","name":null}}"#,
-            br#"{"version":1,"notes":{},"receipts":{"k":{}}}"#,
-        ] {
-            assert!(
-                parse_purposes(bad).is_err(),
-                "{}",
-                String::from_utf8_lossy(bad)
-            );
+            "not json",
+            "[]",
+            r#"{"version":1,"notes":{}}"#,
+            r#"{"5":{"purpose":"a","updatedAt":"x"}}"#,
+            r#"{"version":1,"notes":{},"receipts":{"k":{}}}"#,
+        ]
+        .into_iter()
+        .chain(bad_notes.iter().map(String::as_str))
+        {
+            assert!(parse_purposes(bad.as_bytes()).is_err(), "{bad}");
         }
     }
 

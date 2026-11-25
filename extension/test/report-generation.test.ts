@@ -18,7 +18,7 @@ test("cataly_report scopes reopened evidence while sharing the journal acceptanc
   const saved = Object.fromEntries(names.map((name) => [name, process.env[name]]));
   let pi: FakePi | undefined;
   try {
-    const stateDir = useConfig(join(import.meta.dir, "fake-ulw.ts"));
+    const stateDir = useConfig();
     const key = "generation-evidence";
     const generation = randomUUID();
     const oldGeneration = randomUUID();
@@ -28,7 +28,6 @@ test("cataly_report scopes reopened evidence while sharing the journal acceptanc
       key,
       title: "reopened evidence",
       thread: "none",
-      pane: HEADLESS,
       sessionRef: { runtime: "headless", id: HEADLESS },
       brief: "/brief.md",
       done: "file /done.md",
@@ -94,7 +93,7 @@ test("cataly_report accepts only the verified native run and scopes both journal
   const saved = Object.fromEntries(names.map((name) => [name, process.env[name]]));
   let pi: FakePi | undefined;
   try {
-    const stateDir = useConfig("");
+    const stateDir = useConfig();
     const key = "verified-evidence";
     const now = Date.parse("2026-01-02T00:00:00.000Z");
     const session: FakeSession = {
@@ -123,7 +122,6 @@ test("cataly_report accepts only the verified native run and scopes both journal
       key,
       title: "verified evidence",
       thread: "none",
-      pane: HEADLESS,
       sessionRef: { runtime: "headless", id: HEADLESS },
       session: session.id,
       brief: "/brief.md",

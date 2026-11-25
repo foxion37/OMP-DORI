@@ -1,21 +1,16 @@
 import {
   chmodSync,
-  closeSync,
-  constants,
-  cpSync,
-  fstatSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
-  openSync,
   readFileSync,
   realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { headlessReleaseProfiles, nativeMetadata, terminalMetadata } from "../src/release/capabilities.ts";
+import { headlessReleaseProfiles, nativeMetadata } from "../src/release/capabilities.ts";
 import { validateReleaseManifest } from "../src/release/manifest.ts";
 import type { ReleaseManifest } from "../src/release/types.ts";
 import { isReleaseVersion, releaseVersion } from "../src/release/version.ts";
@@ -23,81 +18,39 @@ import { readSourceBundle } from "../src/release/source-bundle.ts";
 import { digest, sameManifest, sourceManifest } from "../src/update/source.ts";
 import { command, git } from "./release-process.ts";
 import { committedSource } from "./release-source.ts";
+import {
+  buildNativeRelease,
+  currentNativeHost,
+  nativeHosts,
+  nativeReleasePath,
+  readNativeInputs,
+  readRegularFile as readAsset,
+} from "./release-native.ts";
 
 export type Distribution = { manifest: ReleaseManifest; assets: Record<string, Buffer> };
 
-export const nativeReleasePath = "native-bin/linux-x64/cataly";
-
-async function buildNativeRelease(source: string, temporary: string): Promise<Buffer | undefined> {
-  // The public producer is Linux x64. Other hosts can still build source-only
-  // distributions (notably the historical Darwin consumer transition smoke).
-  if (process.platform !== "linux" || process.arch !== "x64") return;
-  const cargo = Bun.which("cargo");
-  if (!cargo) throw new Error("Cargo is required to package the Linux x64 Cataly release");
-  const target = "x86_64-unknown-linux-gnu";
-  const targetDir = join(temporary, "cargo-target");
-  const child = Bun.spawn(
-    [
-      cargo,
-      "build",
-      "--manifest-path",
-      join(source, "Cargo.toml"),
-      "--locked",
-      "--release",
-      "--bin",
-      "cataly",
-      "--target",
-      target,
-      "--target-dir",
-      targetDir,
-    ],
-    {
-      // Cargo discovers .cargo/config relative to its invocation directory, not --manifest-path.
-      cwd: "/",
-      // Do not load user Cargo config, RUSTFLAGS, compiler wrappers or linker settings.
-      env: {
-        PATH: process.env["PATH"],
-        RUSTUP_HOME: process.env["RUSTUP_HOME"] ?? join(homedir(), ".rustup"),
-        RUSTUP_TOOLCHAIN: process.env["RUSTUP_TOOLCHAIN"],
-        CARGO_HOME: join(temporary, "cargo-home"),
-        CARGO_ENCODED_RUSTFLAGS: `--remap-path-prefix=${temporary}=/cataly`,
-        CARGO_INCREMENTAL: "0",
-        SOURCE_DATE_EPOCH: "0",
-        LC_ALL: "C",
-        TZ: "UTC",
-      },
-      stdin: "ignore",
-      stdout: "ignore",
-      stderr: "pipe",
-      timeout: 600_000,
-      killSignal: "SIGKILL",
-    },
-  );
-  const [stderr, code] = await Promise.all([new Response(child.stderr).text(), child.exited]);
-  if (code !== 0) throw new Error(`Cargo release build failed (${code}): ${stderr.trim()}`);
-  return readAsset(join(targetDir, target, "release"), "cataly");
+/**
+ * Package committed blobs plus the native binaries: the running host's own, rebuilt here, and any other host's from
+ * `nativeInput` (see `readNativeInputs`).
+ */
+export function buildRelease(
+  root: string,
+  output: string,
+  prerelease: boolean,
+  nativeInput?: string,
+): Promise<ReleaseManifest> {
+  return buildReleaseAssets(root, output, prerelease, nativeInput);
 }
 
-function readAsset(directory: string, name: string): Buffer {
-  if (!lstatSync(directory).isDirectory()) throw new Error("Distribution must be a real directory");
-  const fd = openSync(join(directory, name), constants.O_RDONLY | constants.O_NOFOLLOW);
-  try {
-    if (!fstatSync(fd).isFile()) throw new Error(`Release asset must be a regular file: ${name}`);
-    return readFileSync(fd);
-  } finally {
-    closeSync(fd);
-  }
-}
-
-/** Package committed blobs plus the generated legacy shims and host release binary. */
-export function buildRelease(root: string, output: string, prerelease: boolean): Promise<ReleaseManifest> {
-  return buildReleaseAssets(root, output, prerelease);
-}
-
-async function buildReleaseAssets(root: string, output: string, prerelease: boolean): Promise<ReleaseManifest> {
+async function buildReleaseAssets(
+  root: string,
+  output: string,
+  prerelease: boolean,
+  nativeInput: string | undefined,
+): Promise<ReleaseManifest> {
   const commit = (await git(root, ["rev-parse", "--verify", "HEAD^{commit}"])).toString().trim();
   const tree = (await git(root, ["rev-parse", "--verify", `${commit}^{tree}`])).toString().trim();
-  return packageReleaseTree({ root, commit, tree }, output, prerelease);
+  return packageReleaseTree({ root, commit, tree }, output, prerelease, nativeInput);
 }
 
 /** Package one immutable tree. The publishing gate still independently regenerates from actual committed HEAD. */
@@ -105,48 +58,29 @@ export async function packageReleaseTree(
   identity: { readonly root: string; readonly commit: string; readonly tree: string },
   output: string,
   prerelease: boolean,
+  nativeInput?: string,
 ): Promise<ReleaseManifest> {
   if (!isReleaseVersion(releaseVersion)) throw new Error("Canonical package version is not a release version");
   const { root, commit, tree } = identity;
+  const local = currentNativeHost();
+  const binaries = readNativeInputs(nativeInput, local);
   const temporary = realpathSync(mkdtempSync(join(tmpdir(), "cataly-release-")));
   try {
-    const archiveRoot = `omp-dori-${releaseVersion}`;
+    const archiveRoot = `cataly-${releaseVersion}`;
     const source = join(temporary, archiveRoot);
     const committed = await committedSource(root, tree, source);
     if (lstatSync(join(source, "native-bin"), { throwIfNoEntry: false }))
       throw new Error("Committed source uses the reserved native-bin release path");
-    const binary = await buildNativeRelease(source, temporary);
-    if (binary) {
-      const afterBuild = sourceManifest(source);
-      if (!sameManifest(committed, afterBuild) || afterBuild.excluded.length !== 0)
-        throw new Error("Committed source changed during the Cargo release build");
-      const artifact = join(source, nativeReleasePath);
+    // Hosts without a native release target still build source-only distributions.
+    if (local) binaries.set(local, await buildNativeRelease(source, temporary, local, committed));
+    for (const host of nativeHosts) {
+      const binary = binaries.get(host);
+      if (!binary) continue;
+      const artifact = join(source, nativeReleasePath(host));
       mkdirSync(dirname(artifact), { recursive: true, mode: 0o700 });
       writeFileSync(artifact, binary, { flag: "wx" });
       chmodSync(artifact, 0o755);
     }
-    // The archived v1 updater needs these paths, not a duplicate copy of the old skill or runtime.
-    const legacySkill = join(source, "skills/dori-mode");
-    const currentSkill = join(source, "skills/cataly-mode");
-    mkdirSync(join(legacySkill, "scripts/src"), { recursive: true, mode: 0o700 });
-    // An upgraded primary's old discovery link is still its skill:// root. Traversal to a sibling is not allowed.
-    // Only copy read-only skill resources; all executable code goes through the one canonical CLI.
-    for (const resource of ["SKILL.md", "references", "assets"])
-      cpSync(join(currentSkill, resource), join(legacySkill, resource), {
-        recursive: true,
-        errorOnExist: true,
-        force: false,
-      });
-    const example = readFileSync(join(currentSkill, "references/config.example.json"), "utf8");
-    writeFileSync(
-      join(legacySkill, "references/config.example.json"),
-      example.replaceAll("~/.cataly/", "~/.dori/").replaceAll('"--cataly-role"', '"--dori-role"'),
-    );
-    const cli = join(legacySkill, "scripts/src/cli.ts");
-    writeFileSync(cli, '#!/usr/bin/env bun\nimport "../../../cataly-mode/scripts/src/cli.ts";\n', {
-      flag: "wx",
-      mode: 0o755,
-    });
     const observed = sourceManifest(source);
     const packageData: unknown = JSON.parse(readFileSync(join(source, "package.json"), "utf8"));
     if (
@@ -161,23 +95,17 @@ export async function packageReleaseTree(
       "LICENSE.integration",
       "NOTICE",
       "install.sh",
-      "omp-ulw.lock",
       "native-omp.lock",
       "native-omp.patch",
-      "omp-ulw.overlay.lock",
-      "omp-ulw.patch",
       "native-addon/package.json",
       "native-addon/bun.lock",
       "scripts/source-dependencies.ts",
       "scripts/consumer/omp",
-      terminalMetadata,
       nativeMetadata,
     ]) {
       if (!observed.files.some((file) => file.path === name)) throw new Error(`Committed release is missing ${name}`);
     }
-    const pin = readFileSync(join(source, "omp-ulw.lock"), "utf8").trim();
-    const native = readSourceBundle(source, true);
-    if (readSourceBundle(source).lock.commit !== pin) throw new Error("Committed ULW base and overlay differ");
+    const native = readSourceBundle(source);
     const paths = new Set([archiveRoot]);
     for (const file of observed.files) {
       let parent = dirname(`${archiveRoot}/${file.path}`);
@@ -213,36 +141,24 @@ export async function packageReleaseTree(
     const archive = await command(["gzip", "-n", "-9", "-c"], temporary, tar);
     if (!sameManifest(observed, sourceManifest(source))) throw new Error("Source changed during release packaging");
     const manifest = validateReleaseManifest({
-      version: 1,
-      product: "omp-dori",
+      version: 2,
+      product: "cataly",
       releaseVersion,
       tag: `v${releaseVersion}`,
       commit,
       tree,
       prerelease,
       archive: {
-        name: `omp-dori-v${releaseVersion}.tar.gz`,
+        name: `cataly-v${releaseVersion}.tar.gz`,
         root: archiveRoot,
         sha256: digest(archive),
         bytes: archive.length,
       },
       source: observed,
-      requirements: {
-        platform: "linux",
-        arch: "x64",
-        bun: "1.4.4",
-        omp: native.lock.nativeVersion,
-        // Frozen v1 requirement value: updaters installed before the headless-only cutover validate it exactly.
-        runtime: "herdr",
-        messenger: "discord",
-      },
-      ompUlw: { repository: "https://github.com/dbc-hbin/omp-ulw.git", commit: pin },
+      requirements: { omp: native.lock.nativeVersion },
     });
     const profiles = headlessReleaseProfiles(manifest, readFileSync(join(source, nativeMetadata)));
-    for (const host of [
-      { platform: "linux", arch: "x64" },
-      { platform: "darwin", arch: "arm64" },
-    ]) {
+    for (const host of nativeHosts) {
       if (!profiles.some((profile) => profile.platform === host.platform && profile.arch === host.arch))
         throw new Error(`Release must provide headless on ${host.platform}/${host.arch}`);
     }
@@ -266,14 +182,17 @@ export async function packageReleaseTree(
   }
 }
 
-/** Regeneration binds every input asset to actual HEAD without extracting any untrusted distribution bytes. */
-export async function verifyDistribution(root: string, directory: string): Promise<Distribution> {
+/**
+ * Regeneration binds every input asset to actual HEAD without extracting any untrusted distribution bytes. Other hosts'
+ * binaries cannot be rebuilt here; the same `nativeInput` must reproduce them.
+ */
+export async function verifyDistribution(root: string, directory: string, nativeInput?: string): Promise<Distribution> {
   const manifest = validateReleaseManifest(JSON.parse(readAsset(directory, "release-manifest.json").toString("utf8")));
   const names = [manifest.archive.name, "install.sh", "release-manifest.json", "SHA256SUMS"];
   const assets = Object.fromEntries(names.map((name) => [name, readAsset(directory, name)]));
   const temporary = mkdtempSync(join(tmpdir(), "cataly-dist-check-"));
   try {
-    const expected = await buildReleaseAssets(root, join(temporary, "dist"), manifest.prerelease);
+    const expected = await buildReleaseAssets(root, join(temporary, "dist"), manifest.prerelease, nativeInput);
     if (!sameManifest(manifest.source, expected.source))
       throw new Error("Distribution source is not actual committed HEAD");
     for (const name of names) {

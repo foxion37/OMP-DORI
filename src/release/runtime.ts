@@ -1,9 +1,8 @@
-import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { existsSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { consumerPaths, isPrimaryConsumer, owned, realDirectory, regularFile } from "./files.ts";
+import { consumerPaths, isPrimaryConsumer } from "./files.ts";
 import { assertNativeSource } from "./native.ts";
-import { assertSourceBundle, readSourceBundle, SourceBundleError } from "./source-bundle.ts";
 
 /** A loaded physical release binds its home independently of the caller's inherited Cataly environment. */
 export function consumerReleaseHome(source: string): string | undefined {
@@ -14,54 +13,6 @@ export function consumerReleaseHome(source: string): string | undefined {
   )
     return undefined;
   return dirname(dirname(dirname(source)));
-}
-
-/** Managed cache paths follow this loaded release's lock without changing the user's config. */
-export function resolveConsumerOmpUlwPath(
-  configuredPath: string,
-  {
-    home = homedir(),
-    sourceRoot = resolve(import.meta.dir, "../.."),
-    useDefault = false,
-  }: {
-    readonly home?: string;
-    readonly sourceRoot?: string;
-    readonly useDefault?: boolean;
-  } = {},
-): string {
-  // The physical release, not inherited CATALY_HOME, owns its dependency namespace.
-  const source = realpathSync(sourceRoot);
-  const catalyHome = consumerReleaseHome(source);
-  if (!catalyHome) return configuredPath;
-  const paths = consumerPaths(home, catalyHome);
-  const entry = relative(paths.dependencies, configuredPath);
-  if (
-    !useDefault &&
-    (configuredPath !== join(paths.dependencies, entry) ||
-      !/^omp-ulw-[a-f0-9]{40}(?:-[a-f0-9]{64})?(?:\/index\.ts)?$/.test(entry))
-  )
-    return configuredPath;
-
-  try {
-    owned(source);
-    const lock = join(source, "omp-ulw.lock");
-    if (!regularFile(lock)) throw new Error(`Missing consumer release lock: ${lock}`);
-    const commit = readFileSync(lock, "utf8").trim();
-    if (!/^[a-f0-9]{40}$/.test(commit)) throw new Error(`Invalid consumer release lock: ${lock}`);
-
-    const receipt = join(paths.manifests, `${basename(source)}.json`);
-    const required = regularFile(receipt) && JSON.parse(readFileSync(receipt, "utf8")).requirements.omp !== "18.18.8";
-    const bundle = required || regularFile(join(source, "omp-ulw.overlay.lock")) ? readSourceBundle(source) : undefined;
-    if (bundle && bundle.lock.commit !== commit) throw new Error("Consumer release ULW base and overlay differ");
-    const dependency = join(paths.dependencies, `omp-ulw-${commit}${bundle ? `-${bundle.identity}` : ""}`);
-    realDirectory(dependency);
-    owned(dependency);
-    if (!regularFile(join(dependency, "index.ts"))) throw new Error(`Missing consumer dependency entry: ${dependency}`);
-    if (bundle) assertSourceBundle(dependency, bundle, home);
-    return useDefault || entry.endsWith("/index.ts") ? join(dependency, "index.ts") : dependency;
-  } catch (error) {
-    throw new SourceBundleError(error instanceof Error ? error.message : String(error));
-  }
 }
 
 function managedWindowsAlias(command: string, cataly: string, releases: string): boolean {
@@ -105,8 +56,6 @@ export function resolveConsumerOmpCommand(
       ) ||
       managedWindowsAlias(first, paths.cataly, paths.releases));
   if (first !== "omp" && !managed) return configured;
-  const manifest = JSON.parse(readFileSync(join(paths.manifests, `${basename(source)}.json`), "utf8"));
-  if (manifest.requirements.omp === "18.18.8") return configured;
   assertNativeSource(source, home);
   return [
     join(source, "scripts/consumer/omp"),
@@ -152,59 +101,24 @@ export function resolveProcessOmpCommand(
   const installation = resolve(dirname(configFile));
   const installed =
     selected !== undefined &&
-    [".omp-cataly", ".omp-dori", "releases/consumer-owner.json"].some((part) => existsSync(join(installation, part))) &&
+    [".omp-cataly", "releases/consumer-owner.json"].some((part) => existsSync(join(installation, part))) &&
     (configured[0] === join(installation, "bin/omp") || configured[0] === join(realpathSync(installation), "bin/omp"));
   if (selected && (configured[0] === "omp" || installed)) return [...selected, ...configured.slice(1)];
-  const legacy = configured[0] === "omp" ? env["CATALY_AGENT_CMD"] : undefined;
-  return legacy ? [legacy, ...configured.slice(1)] : configured;
-}
-
-/** A managed process selects its prepared default, while an explicit external dependency remains a user choice. */
-export function resolveProcessOmpUlwPath(
-  configured: string,
-  home: string,
-  env: Readonly<Record<string, string | undefined>> = process.env,
-): string {
-  const selected = env["CATALY_OMP_ULW_PATH"];
-  if (!selected) return configured;
-  const managed = [".cataly", ".dori"].some((root) =>
-    /^omp-ulw-[a-f0-9]{40}(?:-[a-f0-9]{64})?(?:\/index\.ts)?$/.test(
-      relative(consumerPaths(home, join(home, root)).dependencies, configured),
-    ),
-  );
-  if (
-    configured !== "" &&
-    ![".cataly", ".dori"].some((root) => configured === join(home, root, "omp-ulw/index.ts")) &&
-    !managed
-  )
-    return configured;
-  if (
-    ["omp-cataly", "omp-dori"].some((root) =>
-      /^omp-ulw-[a-f0-9]{64}\/index\.ts$/.test(relative(join(home, ".cache", root), selected)),
-    )
-  ) {
-    try {
-      assertSourceBundle(dirname(selected), readSourceBundle(resolve(import.meta.dir, "../..")), home);
-    } catch (error) {
-      throw new SourceBundleError(error instanceof Error ? error.message : String(error));
-    }
-  }
-  return selected;
+  const command = configured[0] === "omp" ? env["CATALY_AGENT_CMD"] : undefined;
+  return command ? [command, ...configured.slice(1)] : configured;
 }
 
 /** Empty assignments override tokens retained by the terminal server; lanes do not host messenger bots. */
 export const laneMessengerOverrides = {
   CATALY_DISCORD_TOKEN: "",
   CATALY_TELEGRAM_TOKEN: "",
-  DORI_DISCORD_TOKEN: "",
-  DORI_TELEGRAM_TOKEN: "",
 } as const;
 
 /** Only launch context crosses a terminal server boundary; paths retain the caller's OS resolution. */
 export function catalyLaunchEnv(
   env: Readonly<Record<string, string | undefined>>,
   configFile: string,
-  resolved: { readonly catalyHome?: string; readonly stateDir?: string; readonly ompUlwPath?: string } = {},
+  resolved: { readonly catalyHome?: string; readonly stateDir?: string } = {},
 ): Record<string, string> {
   const context: Record<string, string> = { CATALY_MANAGED_STARTUP: "" };
   for (const [key, path] of Object.entries({
@@ -212,8 +126,6 @@ export function catalyLaunchEnv(
     CATALY_CONFIG: configFile,
     CATALY_HOME: resolved.catalyHome ?? env["CATALY_HOME"] ?? dirname(configFile),
     CATALY_STATE_DIR: resolved.stateDir ?? env["CATALY_STATE_DIR"],
-    CATALY_OMP_ULW_PATH: resolved.ompUlwPath ?? env["CATALY_OMP_ULW_PATH"],
-    OMP_ULW_SCOPE_FILE: env["OMP_ULW_SCOPE_FILE"],
   })) {
     if (path !== undefined) context[key] = path === "" || isAbsolute(path) ? path : `${process.cwd()}${sep}${path}`;
   }

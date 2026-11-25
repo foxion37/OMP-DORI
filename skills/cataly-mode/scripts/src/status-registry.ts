@@ -20,7 +20,7 @@ const readable = (lane: Lane): boolean => {
     if (typeof lane[field] !== "string") return false;
   const opened = Date.parse(lane.openedAt);
   if (!LANE_KEY.test(lane.key) || !Number.isFinite(opened)) return false;
-  for (const field of ["closedAt", "cwd", "pane", "tab", "session", "lastFreshnessNote"] as const)
+  for (const field of ["closedAt", "cwd", "session", "lastFreshnessNote"] as const)
     if (lane[field] !== undefined && typeof lane[field] !== "string") return false;
   if (lane.closedAt !== undefined) {
     const closed = Date.parse(lane.closedAt);
@@ -37,9 +37,7 @@ const readable = (lane: Lane): boolean => {
       !Array.isArray(ref) &&
       typeof ref.id === "string" &&
       ref.id.length > 0 &&
-      (ref.runtime === "herdr" ||
-        ref.runtime === "hc" ||
-        ref.runtime === "tern" ||
+      (ref.runtime === "tern" ||
         (ref.runtime === "headless" && HEADLESS_ADDRESS.test(ref.id) && ref.container === undefined)) &&
       (ref.container === undefined || typeof ref.container === "string"))
   );

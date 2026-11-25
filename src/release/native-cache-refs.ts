@@ -74,7 +74,7 @@ export function protections(
     // No lock binds nothing; a lock that cannot be read could bind any identity.
     if (!lstatSync(join(source, "native-omp.lock"), { throwIfNoEntry: false })) return;
     try {
-      add(readSourceBundle(source, true).identity, `source ${where}`);
+      add(readSourceBundle(source).identity, `source ${where}`);
     } catch {
       all(`unreadable source lock ${where}`);
     }

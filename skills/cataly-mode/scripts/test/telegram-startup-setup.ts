@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileTgInboundStore } from "../src/messenger/telegram-inbound-state.ts";
 import { withState } from "./fakes.ts";
-import { telegramTestDirectory, telegramTestStore } from "./telegram-win32-fixtures.ts";
 
 export const telegramStartupToken = "test-startup-token-not-for-network";
 type Request = { method: string; params: Record<string, unknown> };
@@ -12,9 +12,9 @@ export const startup = async (
   environment: Record<string, string | undefined> = {},
 ) => {
   const state = withState();
-  const stateDir = telegramTestDirectory(state.dir);
+  const stateDir = state.dir;
   const journal = join(stateDir, "requests.jsonl");
-  const store = telegramTestStore(stateDir, 222);
+  const store = fileTgInboundStore(stateDir, 222);
   const config = join(state.dir, "config.json");
   store.save({ offset: 17, observedAt: Date.now(), seen: [] });
   writeFileSync(join(state.dir, "telegram-lag.jsonl"), '{"lagMs":12}\n');

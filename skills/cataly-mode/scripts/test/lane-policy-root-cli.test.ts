@@ -27,19 +27,20 @@ function rootPolicy(configState: string) {
   store.saveLane({
     key,
     sessionRef: { runtime: "headless", id },
-    paneId: id,
-    tabId: "",
     policyBinding: policyRef,
     brief: "/test/root-brief.md",
     cwd: state.dir,
     status: "working",
     createdAt: NOW,
     lastActivityAt: NOW,
+    progressAt: NOW,
+    noticeId: "demo-notice",
+    progressEpoch: 0,
     nudges: 0,
     log: [],
   });
   const config = join(state.dir, "config.json");
-  writeFileSync(config, JSON.stringify({ stateDir: configState, ompUlwPath: "", agentCommand: ["omp"] }));
+  writeFileSync(config, JSON.stringify({ stateDir: configState, agentCommand: ["omp"] }));
   const grant = async (args: readonly string[], callerBinding = "") => {
     const child = Bun.spawn(
       [
@@ -89,7 +90,7 @@ test("an explicit root grant binds the registered reservation and never aliases 
     brief: "/test/brief.md",
     done: "file /test/done",
     thread: "none",
-    pane: "w1:p2",
+    sessionRef: { runtime: "tern", id: "2" },
     openedAt: new Date(NOW).toISOString(),
     lifecycleEpoch,
   });
@@ -132,4 +133,19 @@ test("a root-only lane grants from its registration, not the skill configuration
   expect(await grant([])).toMatchObject({ code: 1, err: expect.stringContaining("requires --root") });
   expect(await grant(["--root", address])).toMatchObject({ code: 0, err: "" });
   expect(checkPolicyCommand(policyRef, "sudo true", NOW)).toBeUndefined();
+});
+
+test("--root takes the unique prefix harness status shows and refuses one that names two sessions", async () => {
+  const { store, address, policyRef, grant } = rootPolicy(state.dir);
+  const short = address.slice(0, "headless:".length + 8);
+  expect(checkPolicyCommand(policyRef, "sudo true", NOW)).toContain("BLOCKED");
+  expect(await grant(["--root", short])).toMatchObject({ code: 0, err: "" });
+  expect(checkPolicyCommand(policyRef, "sudo true", NOW)).toBeUndefined();
+  const twin = `${address.slice("headless:".length, "headless:".length + 8)}-0000-4000-8000-000000000000`;
+  store.saveLane({ ...store.lane("demo")!, key: "twin", sessionRef: { runtime: "headless", id: twin } });
+  expect(await grant(["--root", short])).toMatchObject({
+    code: 1,
+    err: expect.stringContaining(`${short} is ambiguous`),
+  });
+  expect(checkPolicyCommand(policyRef, "sudo true", NOW)).toContain("BLOCKED");
 });

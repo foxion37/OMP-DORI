@@ -1,7 +1,5 @@
 /** cataly sync, boot, verify-pr and the host loops: watch, freshness, dead-panes, guard, heavy, can-launch. */
 import { bootCheck, envSlackCheck } from "./boot.ts";
-import { assertNoLegacyRuntime, LegacyRuntimeError } from "../../../../src/release/legacy-runtime.ts";
-import { configPath } from "./config.ts";
 import { type Command, die, every, slackAuth } from "./cli-context.ts";
 import { deadPaneTick, newDeadPaneState } from "./dead-panes.ts";
 import { Decisions } from "./decisions.ts";
@@ -44,13 +42,6 @@ const sync: Command = async ({ values, deps }) => {
 };
 
 const boot: Command = async ({ deps, config }) => {
-  // A home still on the removed herdr/hc runtime stops here with the upgrade steps, before any check reads its lanes.
-  try {
-    assertNoLegacyRuntime({ stateDir: config.stateDir, configPath: configPath() });
-  } catch (error) {
-    if (error instanceof LegacyRuntimeError) die(error.message);
-    throw error;
-  }
   const r = await bootCheck({
     ...deps,
     reports: new Reports(config.stateDir),

@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/vntrevx/Cataly/releases/tag/v0.1.2"><img alt="Published preview" src="https://img.shields.io/github/v/release/vntrevx/Cataly?include_prereleases&label=preview&labelColor=2b2d33&color=c8102e"></a>
+  <a href="https://github.com/vntrevx/Cataly/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/vntrevx/Cataly?include_prereleases&label=release&labelColor=2b2d33&color=c8102e"></a>
   <a href="https://github.com/vntrevx/Cataly/actions/workflows/ci.yml?query=branch%3Amain"><img alt="CI on main" src="https://img.shields.io/github/actions/workflow/status/vntrevx/Cataly/ci.yml?branch=main&label=ci&labelColor=2b2d33"></a>
   <a href="LICENSING.md"><img alt="License: SUL 1.0 with a scoped MIT notice" src="https://img.shields.io/badge/license-SUL%201.0%20%2B%20scoped%20MIT-8b9099?labelColor=2b2d33"></a>
   <a href="https://bun.sh"><img alt="Bun 1.4.4 or later" src="https://img.shields.io/badge/bun-%E2%89%A51.4.4-8b9099?labelColor=2b2d33&logo=bun&logoColor=white"></a>
@@ -83,10 +83,8 @@ Cataly は、メッセンジャーでの会話をネイティブのコーディ�
 - 任意のスケジューリング、モニター、監督機能は、明示的に有効にした場合に
   継続的な作業を支えます。
 
-この実装は、
-[dori-superagent](https://github.com/sisyphuslabs/dori-superagent)、
-[oh-my-pi](https://github.com/can1357/oh-my-pi)、
-[omp-ulw](https://github.com/dbc-hbin/omp-ulw)を組み合わせています。各プロジェクトの
+この実装は [dori-superagent](https://github.com/sisyphuslabs/dori-superagent) から派生し、
+[oh-my-pi](https://github.com/can1357/oh-my-pi) を基盤としています。各プロジェクトの
 著作者、ライセンス、ソースの由来は、引き続きこのプロジェクトの一部として保持されます。
 
 ## 運用原則
@@ -107,35 +105,25 @@ Cataly は、ユーザーが提供するアカウントと権限で動作しま�
 
 <table width="100%"><tr><td>
 
-**注記**
+**Cataly は omp-dori の更新版ではなく、新しい製品です**
+
+このバージョンでは、omp-dori の名前をすべて削除し、herdr と hc の端末ランタイム、
+omp-ulw オーバーレイも削除しました。omp-dori のコードを上書き更新することはできませんが、
+移行はインストーラーが行います。以前の `~/.dori` または `~/.omp-dori` の設定、トークン、
+オーナープロファイルを新しいインストール先に取り込み（既にある設定は上書きしません）、
+そのインストール先で何も動いていないことを確認してから、以前のインストール先と、
+以前のバージョンが残したリンクやキャッシュを削除します
+（[移行の仕組み](docs/releases.md#cataly-is-a-new-product-moving-from-omp-dori)）。
 
 現在のコマンドは `cataly`、`cataly-harness`、`omp-cataly`（分離インストール用）です。
 新規インストール先は `~/.cataly` または `~/.omp-cataly` です。
 Cataly は macOS と Linux で既定では headless OMP として動作します。Tern は任意の端末ランタイムです。
 
-[検証済みの現行リリースをインストール](docs/releases.md#install-a-current-release)するか、
-[v0.1.3 から更新](docs/releases.md#upgrade-a-v013-installation)してください。
-更新時は既存のインストール先と設定を保持します。
-
-このバージョンでは herdr と hc の端末ランタイムを削除しました。まだそれらを使うインストール先では、
-インストールと更新が次のメッセージで停止します。
-
-```text
-This Cataly home still uses the herdr/hc terminal runtime, which this version removed.
-1. Close every herdr/hc lane (`cataly status` lists them) with your previous Cataly version.
-2. Remove "runtime" (if it names herdr or hc) and "sessionRuntime" from <configPath>.
-3. Run this command again. Cataly state and OMP sessions are kept; lanes reopen on headless.
-```
-
 </td></tr></table>
 
 ### 公開済みリリースを使う
 
-既存の **v0.1.2 プレリリース**では、Linux x64 / herdr / Discord を対象とする
-契約が固定されています。リポジトリ名を変えても、それらのアセットが更新されたり、
-新しいプラットフォームがサポート対象になったりするわけではありません。
-
-[検証済みの特定リリース導入手順](https://github.com/vntrevx/Cataly/blob/v0.1.2/docs/releases.md#prerequisites-and-trust)に従ってください。
+[検証済みの現行リリース導入手順](docs/releases.md#install-a-current-release)に従ってください。
 前提条件、チェックサム、インストール、自分の認証、明示的な起動、任意で有効にする
 Discord モニターを説明しています。特定のリリースを、任意の `main`
 インストーラーで代用しないでください。
@@ -154,7 +142,7 @@ cd "$HOME/src/Cataly" || exit 1
 CATALY_INSTALL_MODE=side CATALY_NO_PULL=1 CATALY_SRC="$PWD" bash scripts/install-source.sh
 ```
 
-ソースインストーラーは、プロジェクト指定の修正版 OMP 19.0.1 と ULW オーバーレイを
+ソースインストーラーは、プロジェクト指定の修正版 OMP 19.0.1 を
 準備します。`PATH` 上にある標準の `omp` は代わりになりません。side モードは
 既定で `~/.omp-cataly` を使い、専用のラッパーと設定を持ち、メインの
 `~/.cataly` インストールには触れません。インストールによってエージェント、

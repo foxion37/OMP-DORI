@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, expect, setSystemTime, test } from "bun:test";
-import { join } from "node:path";
 import type { AsyncJobSnapshot } from "@oh-my-pi/pi-coding-agent";
 
 import { readPaneState } from "../../skills/cataly-mode/scripts/src/lane-state";
@@ -12,7 +11,7 @@ let stateDir: string;
 
 beforeEach(() => {
   for (const key of ["CATALY_CONFIG", "CATALY_STATE_DIR", "TERN_PANE"]) previousEnv.set(key, process.env[key]);
-  stateDir = useConfig(join(import.meta.dir, "fake-ulw.ts"));
+  stateDir = useConfig();
   process.env.TERN_PANE = PANE;
 });
 afterEach(() => {

@@ -29,7 +29,6 @@ test.skipIf(process.platform === "win32")(
       { mode: 0o600 },
     );
     const previousBase = process.env["CATALY_DISCORD_API_BASE"];
-    const previousLegacyBase = process.env["DORI_DISCORD_API_BASE"];
     const callbackTypes: number[] = [];
     const path = `/api/v10/channels/${channel}/messages`;
     const edits: {
@@ -58,8 +57,7 @@ test.skipIf(process.platform === "win32")(
       },
     });
     const apiOverride = `http://127.0.0.1:${server.port}/api/v10`;
-    delete process.env["CATALY_DISCORD_API_BASE"];
-    process.env["DORI_DISCORD_API_BASE"] = apiOverride;
+    process.env["CATALY_DISCORD_API_BASE"] = apiOverride;
     const selected = extensionInstallation();
     // If any ASK call rereads the host environment, it fails against a different loopback path, never Discord.
     process.env["CATALY_DISCORD_API_BASE"] = `http://127.0.0.1:${server.port}/wrong-api`;
@@ -148,8 +146,6 @@ test.skipIf(process.platform === "win32")(
       native.resolve(undefined);
       if (previousBase === undefined) delete process.env["CATALY_DISCORD_API_BASE"];
       else process.env["CATALY_DISCORD_API_BASE"] = previousBase;
-      if (previousLegacyBase === undefined) delete process.env["DORI_DISCORD_API_BASE"];
-      else process.env["DORI_DISCORD_API_BASE"] = previousLegacyBase;
       server.stop(true);
       rmSync(root, { recursive: true, force: true });
     }

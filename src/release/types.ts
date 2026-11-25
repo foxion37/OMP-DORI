@@ -1,8 +1,8 @@
 import type { SourceManifest } from "../update/types.ts";
 
 export type ReleaseManifest = {
-  readonly version: 1;
-  readonly product: "omp-dori";
+  readonly version: 2;
+  readonly product: "cataly";
   readonly releaseVersion: string;
   readonly tag: string;
   readonly commit: string;
@@ -16,15 +16,6 @@ export type ReleaseManifest = {
   };
   readonly source: SourceManifest;
   readonly requirements: {
-    readonly platform: "linux";
-    readonly arch: "x64";
-    readonly bun: "1.4.4";
     readonly omp: string;
-    readonly runtime: "herdr";
-    readonly messenger: "discord";
-  };
-  readonly ompUlw: {
-    readonly repository: "https://github.com/dbc-hbin/omp-ulw.git";
-    readonly commit: string;
   };
 };

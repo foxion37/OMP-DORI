@@ -85,8 +85,6 @@ async function startAdmitted(
   const reservation: Lane = {
     key,
     sessionRef: ref,
-    paneId: ref.id,
-    tabId: ref.container ?? "",
     brief: briefPath,
     cwd,
     status: "working",
@@ -216,7 +214,7 @@ export async function ready(
     lane.final = { text, evidence: [...evidence], at: now };
     lane.lastActivityAt = now;
     lane.progressAt = now;
-    lane.progressEpoch = (lane.progressEpoch ?? 0) + 1;
+    lane.progressEpoch += 1;
     lane.nudges = 0;
     delete lane.escalatedAt;
     lane.log.push({ at: now, kind: "ready", text });

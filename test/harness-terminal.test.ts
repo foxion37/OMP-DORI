@@ -55,12 +55,12 @@ describe("cataly harness up on Tern", () => {
 });
 
 describe("hand-registered Tern roles", () => {
-  test("role registers a Tern ref; legacy and headless refs are refused", async () => {
+  test("role registers a Tern ref; non-refs and headless refs are refused", async () => {
     const { d } = ternHome();
     expect((await captureIo(() => main(["role", "lead", "tern:42"], d))).out).toBe("ROLE lead=tern:42");
     expect(d.store.roles().lead).toEqual({ runtime: "tern", id: "42" });
-    await expect(main(["role", "duty", "hc:t7"], d)).rejects.toThrow("hc:t7 is not a session ref (tern:42)");
-    await expect(main(["role", "duty", "w1:p3"], d)).rejects.toThrow("is not a session ref");
+    await expect(main(["role", "duty", "42"], d)).rejects.toThrow("42 is not a session ref (tern:42)");
+    await expect(main(["role", "duty", "tern:abc"], d)).rejects.toThrow("is not a session ref");
     await expect(main(["role", "duty", "headless:00000000-0000-4000-8000-000000000001"], d)).rejects.toThrow(
       "registered by cataly harness up",
     );

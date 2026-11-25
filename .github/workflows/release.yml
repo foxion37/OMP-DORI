@@ -11,8 +11,47 @@ concurrency:
   group: public-release
   cancel-in-progress: false
 
+env:
+  # Both native producers compile with the same pinned compiler.
+  RUST_TOOLCHAIN: 1.97.1
+
 jobs:
+  native-darwin-arm64:
+    if: github.repository == 'vntrevx/Cataly'
+    runs-on: macos-15
+    timeout-minutes: 30
+    outputs:
+      sha256: ${{ steps.native.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.4
+      - name: Select the pinned native compiler
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          echo "RUSTUP_TOOLCHAIN=$RUST_TOOLCHAIN" >> "$GITHUB_ENV"
+      # Two independent committed-tree builds must be byte-identical before the binary leaves this host.
+      - name: Build the reproducible Darwin arm64 native binary
+        id: native
+        run: |
+          set -euo pipefail
+          test "$(uname -s)/$(uname -m)" = Darwin/arm64
+          bun scripts/release.ts native --out "$RUNNER_TEMP/native"
+          binary="$RUNNER_TEMP/native/darwin-arm64/cataly"
+          "$binary" --version
+          echo "sha256=$(shasum -a 256 "$binary" | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: native-darwin-arm64
+          path: ${{ runner.temp }}/native
+          if-no-files-found: error
+          retention-days: 7
+
   publish:
+    needs: native-darwin-arm64
     if: github.repository == 'vntrevx/Cataly'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -32,12 +71,23 @@ jobs:
           bun-version: 1.4.4
       - name: Select the pinned native compiler
         run: |
-          rustup toolchain install 1.97.1 --profile minimal
-          echo "RUSTUP_TOOLCHAIN=1.97.1" >> "$GITHUB_ENV"
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          echo "RUSTUP_TOOLCHAIN=$RUST_TOOLCHAIN" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: native-darwin-arm64
+          path: ${{ runner.temp }}/native
+      - name: Bind the Darwin arm64 binary to its producing job
+        env:
+          NATIVE_SHA256: ${{ needs.native-darwin-arm64.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          [[ $NATIVE_SHA256 =~ ^[0-9a-f]{64}$ ]]
+          printf '%s  %s\n' "$NATIVE_SHA256" "$RUNNER_TEMP/native/darwin-arm64/cataly" | sha256sum --strict -c -
       - name: Build committed preview assets
-        run: bun scripts/release.ts build --out dist --prerelease
+        run: bun scripts/release.ts build --out dist --prerelease --native "$RUNNER_TEMP/native"
       # ci.yml runs on main/PR pushes, not tags. Its exact main commit must already have all required successes.
       - name: Require own exact-commit CI and canonical main ancestry
-        run: bun scripts/release.ts gate --from dist
+        run: bun scripts/release.ts gate --from dist --native "$RUNNER_TEMP/native"
       - name: Publish verified draft assets
-        run: bun scripts/release.ts publish --from dist
+        run: bun scripts/release.ts publish --from dist --native "$RUNNER_TEMP/native"

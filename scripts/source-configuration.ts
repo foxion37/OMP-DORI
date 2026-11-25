@@ -3,7 +3,6 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { ConfigError, type configPath, type loadConfig } from "../skills/cataly-mode/scripts/src/config.ts";
-import { importLegacyEnvironment } from "../src/legacy-environment.ts";
 import {
   assertSetupFile,
   captureSetupFile,
@@ -14,14 +13,12 @@ import {
 } from "../src/setup-files.ts";
 import { setupOverrideKeys, setupReadback } from "../src/setup-readback.ts";
 import { canonical } from "../src/update/config.ts";
-import { inspectHistoricalSource } from "./source-legacy.ts";
 
 type Snapshot = {
   version: 1;
   base: string;
   source: string;
   mode: "primary" | "side";
-  legacy: boolean;
   files: SetupSnapshot[];
 };
 type Plan = { snapshot: SetupSnapshot; text: string | Buffer; keys: string[] };
@@ -31,8 +28,6 @@ const mapping = (value: unknown): value is Record<string, unknown> =>
 function jsonPlan(snapshot: Snapshot): Plan {
   const file = snapshot.files[0]!;
   const saved = readSetupFile(file);
-  // The runtime adapts historical argv keys and role flags in memory; do not reserialize owner configuration.
-  if (saved !== undefined && snapshot.legacy) return { snapshot: file, text: saved, keys: [] };
   const created = saved === undefined;
   const input = created ? join(snapshot.source, "skills/cataly-mode/references/config.example.json") : file.path;
   let original: Buffer;
@@ -59,10 +54,6 @@ function jsonPlan(snapshot: Snapshot): Plan {
     config["agentCommand"] = [join(dirname(file.path), "bin/omp"), ...rest];
     keys.push("agentCommand");
   }
-  if (config["ompUlwPath"] !== "") {
-    config["ompUlwPath"] = "";
-    keys.push("ompUlwPath");
-  }
   if ((created || keys.length) && !Buffer.from(decoded).equals(original))
     throw new Error(
       `Configuration rewrite would change non-UTF-8 bytes: ${input}; repair the encoding before retrying`,
@@ -86,11 +77,6 @@ function yamlPlan(snapshot: Snapshot): Plan {
   if (!mapping(previous) || !mapping(skills) || !mapping(update))
     throw new Error(`Configuration must be a YAML mapping of mappings: ${file.path}`);
   const ignoredSkills = ["cataly-mode"];
-  const globalSkills = resolve(process.env["SKILLS_DIR"] || join(homedir(), ".agents", "skills"));
-  // Legacy skills can still be on disk; the side overlay must hide them, not remove them.
-  if (lstatSync(join(globalSkills, "dori-mode"), { throwIfNoEntry: false })) ignoredSkills.push("dori-mode");
-  if (lstatSync(join(snapshot.base, "skills", "omp-dori-mode"), { throwIfNoEntry: false }))
-    ignoredSkills.push("omp-dori-mode");
   const merged = {
     ...previous,
     skills: {
@@ -119,7 +105,6 @@ const readerEnvironment = [
   "CATALY_AGENT_CMD",
   "CATALY_AGENT_EXECUTABLE",
   "CATALY_STATE_DIR",
-  "CATALY_OMP_ULW_PATH",
   "CATALY_LEAD_PANE",
   "CATALY_RUNTIME",
 ] as const;
@@ -141,7 +126,6 @@ async function probeReader(snapshot: Snapshot, scope: string): Promise<void> {
 
 function sourceReadback(snapshot: Snapshot, scope: string): void {
   const inherited = { ...process.env };
-  importLegacyEnvironment(inherited);
   const env: Record<string, string> = {
     HOME: homedir(),
     PATH: process.env["PATH"] ?? "/usr/bin:/bin",
@@ -158,12 +142,7 @@ function sourceReadback(snapshot: Snapshot, scope: string): void {
     env["CATALY_CONFIG"] = join(base, "config.json");
     env["CATALY_STATE_DIR"] = join(base, "state");
     env["CATALY_AGENT_ARGV"] = JSON.stringify([join(base, "bin/omp")]);
-    for (const key of ["CATALY_AGENT_CMD", "CATALY_AGENT_EXECUTABLE", "CATALY_OMP_ULW_PATH"]) delete env[key];
-  } else if (snapshot.legacy) {
-    env["CATALY_HOME"] ??= snapshot.base;
-    env["CATALY_CONFIG"] ??= `${env["CATALY_HOME"]}/config.json`;
-    if (env["CATALY_AGENT_CMD"] === undefined)
-      env["CATALY_AGENT_ARGV"] ??= JSON.stringify([join(snapshot.base, "bin/omp")]);
+    for (const key of ["CATALY_AGENT_CMD", "CATALY_AGENT_EXECUTABLE"]) delete env[key];
   }
   const child = Bun.spawnSync(
     [
@@ -232,7 +211,6 @@ function sourceReadback(snapshot: Snapshot, scope: string): void {
 
 async function main(): Promise<void> {
   const [action, baseArg, sourceArg, mode] = process.argv.slice(2);
-  if (action === "historical") return inspectHistoricalSource(process.argv.slice(3));
   if (!baseArg || !sourceArg || (mode !== "primary" && mode !== "side") || process.argv.length !== 6)
     throw new Error("Expected action, absolute installation home, source checkout and primary|side mode");
   if (!["capture", "preview", "publish-json", "publish-yaml", "readback", "probe-readback"].includes(action ?? ""))
@@ -247,7 +225,6 @@ async function main(): Promise<void> {
       base,
       source,
       mode,
-      legacy: process.env["CATALY_SOURCE_LEGACY"] === "1",
       files: [
         captureSetupFile(join(physicalBase, "config.json")),
         ...(mode === "side" ? [captureSetupFile(join(physicalBase, "omp.yml"))] : []),

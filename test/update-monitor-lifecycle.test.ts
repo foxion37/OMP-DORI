@@ -50,8 +50,8 @@ for (const mode of [undefined, "persistent"]) {
 test.skipIf(process.platform !== "win32")(
   "boot reads the Windows manifest without treating it as POSIX-trusted",
   () => {
-    const { root, omp, path } = fixture(2, "once");
-    expect(readMonitorManifests(join(root, "sessions"), [], omp).manifests).toHaveLength(1);
+    const { omp, path } = fixture(2, "once");
+    expect(readMonitorManifests(omp).manifests).toHaveLength(1);
     expect(() => readMonitorSet(path, "session", true)).toThrow(/monitor metadata ownership differs|must be private/);
   },
 );
@@ -61,23 +61,22 @@ test("mode is part of monitor identity while equivalent regex spelling is not", 
   expect(sameMonitorSpecs([spec], [{ ...spec, mode: "once" }])).toBe(false);
 });
 
-test("boot reads lifecycle metadata without treating terminal manifests as the new format", () => {
-  const { root, omp, path } = fixture(2, "once");
-  expect(readMonitorManifests(join(root, "sessions"), [], omp)).toMatchObject({
-    manifests: [{ path, kind: "omp", data: { version: 2, monitors: [{ ...spec, mode: "once" }] } }],
+test("boot reads lifecycle metadata", () => {
+  const { omp, path } = fixture(2, "once");
+  expect(readMonitorManifests(omp)).toMatchObject({
+    manifests: [{ path, data: { version: 2, monitors: [{ ...spec, mode: "once" }] } }],
     errors: [],
   });
-  expect(readMonitorManifests(join(root, "sessions"), [omp])).toEqual({ manifests: [], errors: [path] });
 });
 
 test.each(["future", "daemon"])("unsupported modes are rejected rather than ignored: %s", (mode) => {
-  const { root, omp, path } = fixture(2, mode);
+  const { omp, path } = fixture(2, mode);
   if (process.platform !== "win32")
     expect(() => readMonitorSet(path, "session", true)).toThrow("invalid specification");
-  expect(readMonitorManifests(join(root, "sessions"), [], omp)).toEqual({ manifests: [], errors: [path] });
+  expect(readMonitorManifests(omp)).toEqual({ manifests: [], errors: [path] });
 });
 
 test("a once manifest must carry the version fence even for read-only boot", () => {
-  const { root, omp, path } = fixture(1, "once");
-  expect(readMonitorManifests(join(root, "sessions"), [], omp)).toEqual({ manifests: [], errors: [path] });
+  const { omp, path } = fixture(1, "once");
+  expect(readMonitorManifests(omp)).toEqual({ manifests: [], errors: [path] });
 });

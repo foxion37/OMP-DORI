@@ -15,10 +15,10 @@ afterEach(() => {
 });
 
 posix.each(["0000", "0002", "0077"])("release source admits bound payloads under umask %s", async (mask) => {
-  const directory = realpathSync(mkdtempSync(join(tmpdir(), "dori-release-source-test-")));
+  const directory = realpathSync(mkdtempSync(join(tmpdir(), "cataly-release-source-test-")));
   directories.push(directory);
   const source = join(directory, "source");
-  overlayFixture(source, join(directory, "upstream"), true);
+  overlayFixture(source, join(directory, "upstream"));
   writeFileSync(join(source, "install.sh"), "#!/bin/sh\nexit 0\n", { mode: 0o700 });
   fixtureGit(source, "init", "--quiet");
   fixtureGit(source, "add", ".");
@@ -30,7 +30,7 @@ posix.each(["0000", "0002", "0077"])("release source admits bound payloads under
     import { readSourceBundle } from ${JSON.stringify(resolve(import.meta.dir, "../src/release/source-bundle.ts"))};
     const before = process.umask();
     const manifest = await committedSource(${JSON.stringify(source)}, ${JSON.stringify(commit)}, ${JSON.stringify(destination)});
-    const bundle = readSourceBundle(${JSON.stringify(destination)}, true);
+    const bundle = readSourceBundle(${JSON.stringify(destination)});
     console.log(JSON.stringify({ before, after: process.umask(), hash: manifest.hash, identity: bundle.identity }));
   `;
   const child = Bun.spawn(
@@ -48,7 +48,7 @@ posix.each(["0000", "0002", "0077"])("release source admits bound payloads under
     before: Number.parseInt(mask, 8),
     after: Number.parseInt(mask, 8),
     hash: sourceManifest(source).hash,
-    identity: readSourceBundle(source, true).identity,
+    identity: readSourceBundle(source).identity,
   });
   expect(sourceManifest(destination).files.find((file) => file.path === "install.sh")?.executable).toBe(true);
 });

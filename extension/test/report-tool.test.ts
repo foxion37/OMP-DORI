@@ -6,20 +6,18 @@ import { dirname, join } from "node:path";
 import { evidenceClock } from "../../skills/cataly-mode/scripts/src/evidence.ts";
 import { Registry } from "../../skills/cataly-mode/scripts/src/registry.ts";
 import { Reports } from "../../skills/cataly-mode/scripts/src/reports.ts";
-import { toolEvidence } from "../../skills/cataly-mode/scripts/src/tool-evidence.ts";
 import { type Entry, type FakePi, load, useConfig } from "./fake-pi";
 
 const HEADLESS = "00000000-0000-4000-8000-000000000005";
 const KEY = "evidence-lane";
 let stateDir: string;
 beforeEach(async () => {
-  stateDir = useConfig(join(import.meta.dir, "fake-ulw.ts"));
+  stateDir = useConfig();
   process.env.CATALY_HEADLESS_ID = HEADLESS;
   await new Registry(stateDir).write({
     key: KEY,
     title: "evidence",
     thread: "none",
-    pane: HEADLESS,
     sessionRef: { runtime: "headless", id: HEADLESS },
     brief: "/brief.md",
     done: "file /done.md",
@@ -154,8 +152,7 @@ const settle = (pi: FakePi, id: string, jobId: string, state: string, text: stri
     { toolCallId: id, toolName: "bash", partialResult: frame(state, jobId, text) },
     ctx,
   );
-const receipts = (entries: Entry[]) => entries.filter((entry) => entry.customType === "omp-dori:tool-completion");
-const retainedSource = process.env["CATALY_TEST_V013_SOURCE"];
+const receipts = (entries: Entry[]) => entries.filter((entry) => entry.customType === "omp-cataly:tool-completion");
 
 test("a background call is evidence once its job completes, and a rerun with the same output is not new", async () => {
   const pi = await lane([]);
@@ -165,17 +162,6 @@ test("a background call is evidence once its job completes, and a rerun with the
   await settle(pi, "c1", "j1", "completed", "12 pass");
   await settle(pi, "c1", "j1", "completed", "12 pass");
   expect(receipts(pi.session.entries)).toHaveLength(1);
-  const evidence = toolEvidence(pi.session.entries, "c1", pi.ctx().cwd);
-  const currentDialect = pi.session.entries.map((entry) =>
-    entry.customType === "omp-dori:tool-completion" ? { ...entry, customType: "omp-cataly:tool-completion" } : entry,
-  );
-  expect(toolEvidence(currentDialect, "c1", pi.ctx().cwd)).toEqual(evidence);
-  if (retainedSource) {
-    const retained: { toolEvidence: typeof toolEvidence } = await import(
-      join(retainedSource, "skills/dori-mode/scripts/src/tool-evidence.ts")
-    );
-    expect(retained.toolEvidence(pi.session.entries, "c1", pi.ctx().cwd)).toEqual(evidence);
-  }
   expect(await report(pi, { kind: "milestone", text: "pass", toolCalls: ["c1"] })).toEndWith(
     "1 of 1 evidence items are new; the evidence clock moved",
   );

@@ -54,11 +54,11 @@ test("the cataly command vocabulary is every command the CLI dispatches", () => 
   const config = join(state.dir, "config.json");
   const lanes = join(state.dir, "state", "lanes");
   mkdirSync(lanes, { recursive: true });
-  writeFileSync(config, JSON.stringify({ stateDir: join(state.dir, "state"), ompUlwPath: "" }));
+  writeFileSync(config, JSON.stringify({ stateDir: join(state.dir, "state") }));
   const lane = {
     key: "zzz",
     status: "working",
-    pane: "w1:p1",
+    sessionRef: { runtime: "tern", id: "w1:p1" },
     title: "Vocabulary fixture",
     thread: "none",
     brief: "/b.md",

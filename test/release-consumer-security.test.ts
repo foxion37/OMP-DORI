@@ -14,6 +14,7 @@ import { readArchive } from "../src/release/archive.ts";
 import { acquireBundle } from "../src/release/bundle.ts";
 import { installBundle } from "../src/release/install.ts";
 import { validateReleaseManifest } from "../src/release/manifest.ts";
+import { nativeDirectory } from "../src/release/native.ts";
 import { loadInstalled, releasePath } from "../src/release/state.ts";
 import { digest } from "../src/update/source.ts";
 import { archive, fixture, withArchive } from "./release-consumer-setup.ts";
@@ -90,7 +91,7 @@ posix("an archive with a recomputed checksum still fails when actual bytes or ex
 posix("existing source directories, stable non-link collisions and unsafe ancestors preserve owner bytes", async () => {
   const f = fixture();
   const release = f.release("public\n");
-  const extension = join(f.paths.home, ".omp/agent/extensions/omp-dori");
+  const extension = join(f.paths.home, ".omp/agent/extensions/omp-cataly");
   mkdirSync(extension, { recursive: true, mode: 0o700 });
   writeFileSync(join(extension, "owner.txt"), "keep\n", { mode: 0o600 });
   await expect(installBundle(f.paths, release.bundle, undefined)).rejects.toThrow("Unmanaged source/path");
@@ -111,7 +112,7 @@ posix("existing source directories, stable non-link collisions and unsafe ancest
   expect(readFileSync(join(h.paths.live, "owner.txt"), "utf8")).toBe("checkout work\n");
 });
 
-posix("a modified retained release or dependency holds rollback/update instead of resetting files", async () => {
+posix("a modified retained release or native source holds rollback/update instead of resetting files", async () => {
   const f = fixture();
   const first = f.release("first\n");
   const installed = await installBundle(f.paths, first.bundle, undefined);
@@ -121,10 +122,12 @@ posix("a modified retained release or dependency holds rollback/update instead o
   await expect(installBundle(f.paths, first.bundle, installed)).rejects.toThrow("source bytes");
   expect(readFileSync(join(source, "payload.txt"), "utf8")).toBe("owner modification\n");
   const g = fixture();
-  writeFileSync(join(g.ownedDependency, "index.ts"), "local change\n");
-  await expect(installBundle(g.paths, g.release("first\n").bundle, undefined)).rejects.toThrow("checkout changed");
-  expect(readFileSync(join(g.ownedDependency, "index.ts"), "utf8")).toBe("local change\n");
-  expect(loadInstalled(g.paths)).toBeUndefined();
+  const one = await installBundle(g.paths, g.release("first\n").bundle, undefined);
+  const cached = join(nativeDirectory(releasePath(g.paths, one.current), g.paths.home), "source/index.ts");
+  writeFileSync(cached, "local change\n");
+  await expect(installBundle(g.paths, g.release("second\n").bundle, one)).rejects.toThrow("source checkout differs");
+  expect(readFileSync(cached, "utf8")).toBe("local change\n");
+  expect(loadInstalled(g.paths)).toEqual(one);
 });
 
 posix(
@@ -145,7 +148,6 @@ posix(
     const receipts = readdirSync(f.paths.manifests)
       .sort()
       .map((name) => [name, readFileSync(join(f.paths.manifests, name))]);
-    const dependencies = readdirSync(f.paths.dependencies).sort();
     const staging = readdirSync(f.paths.staging).sort();
     for (const known of [first, second, third]) {
       const original = known.bundle.manifest;
@@ -188,7 +190,6 @@ posix(
             .sort()
             .map((name) => [name, readFileSync(join(f.paths.manifests, name))]),
         ).toEqual(receipts);
-        expect(readdirSync(f.paths.dependencies).sort()).toEqual(dependencies);
         expect(readdirSync(f.paths.staging).sort()).toEqual(staging);
       }
     }

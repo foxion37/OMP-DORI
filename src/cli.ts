@@ -18,9 +18,8 @@ import { runOwner } from "./cli-owner.ts";
 import { refText } from "./refs.ts";
 import { HeadlessRuntime } from "./runtime/headless.ts";
 import { HeadlessError } from "./runtime/headless-record.ts";
-import { LegacyRuntimeError } from "./runtime/registry.ts";
 import { ConfigError as RuntimeConfigError, RuntimeChoiceError } from "./runtime/select.ts";
-import { isLegacyRuntime, parseRef } from "./runtime/types.ts";
+import { parseRef } from "./runtime/types.ts";
 import type { Role } from "./store-types.ts";
 import { resolveTarget } from "./target.ts";
 
@@ -112,8 +111,7 @@ export async function main(argv: readonly string[], d: Deps = defaultDeps()): Pr
       if (!ROLES.includes(role)) throw new Refusal(`role must be one of ${ROLES.join(", ")}`);
       const given = a.pos[2];
       const ref = given === undefined ? d.runtimes.selfAny(process.env) : parseRef(given);
-      if (given !== undefined && (ref === undefined || isLegacyRuntime(ref.runtime)))
-        throw new Refusal(`${given} is not a session ref (tern:42)`);
+      if (given !== undefined && ref === undefined) throw new Refusal(`${given} is not a session ref (tern:42)`);
       if (ref === undefined) throw new Refusal(`missing session ref (not inside tern?)\n\n${USAGE}`);
       await withHarnessLock(d, () => {
         if (ref.runtime === "headless" || nativeInventory(d))
@@ -224,8 +222,7 @@ if (import.meta.main) {
       e instanceof HeadlessError ||
       e instanceof ConfigError ||
       e instanceof RuntimeConfigError ||
-      e instanceof RuntimeChoiceError ||
-      e instanceof LegacyRuntimeError
+      e instanceof RuntimeChoiceError
     ))
       throw e;
     console.error(e.message);

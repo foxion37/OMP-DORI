@@ -5,7 +5,6 @@ import { isAbsolute, join } from "node:path";
 import { RESUME_SESSION_ENV } from "../harness-native-resume.ts";
 import { type HeadlessObservation, HeadlessRuntime } from "../runtime/headless.ts";
 import { readPrivate } from "../runtime/headless-record.ts";
-import { LegacyRuntimeError } from "../runtime/registry.ts";
 import { HEADLESS_ADDRESS, type SessionRef } from "../runtime/types.ts";
 import {
   actorEnv,
@@ -26,25 +25,6 @@ type Inventory = { readonly version: 1; readonly stateDir: string; readonly role
 // `harness up` proves each of its four roles within the headless start deadline.
 const HARNESS_COMMAND_MS = 300_000;
 const executableHashes = new Map<string, string>();
-
-/**
- * A journal written for a herdr/hc pane target: its runtime identities name a pane, not a headless ref, or it carries
- * the pane-only native UI exit receipt. Such a record stays exactly as written and is never resumed, rolled back or
- * replaced by the headless controller.
- */
-export function terminalEraRecord(record: DeploymentRecord): boolean {
-  if ("nativeUiExitRequestedAt" in record) return true;
-  const runtimes: unknown[] = [record.oldRuntime, record.runtime, record.rollbackRuntime];
-  return !runtimes.every(
-    (runtime) =>
-      runtime === undefined ||
-      (typeof runtime === "object" && runtime !== null && "ref" in runtime && typeof runtime.ref === "string"),
-  );
-}
-
-export function assertHeadlessRecord(config: DeploymentConfig, record: DeploymentRecord): void {
-  if (terminalEraRecord(record)) throw new LegacyRuntimeError(config.catalyConfig);
-}
 
 /** The owned inventory, bound to this deployment's state directory. Absent means no harness is registered. */
 export function readInventory(config: DeploymentConfig): Inventory | undefined {

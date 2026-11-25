@@ -2,14 +2,12 @@ import type { ProbedNativeObservation } from "../native-observation.ts";
 
 export type TerminalRuntimeKind = "tern";
 export type RuntimeKind = TerminalRuntimeKind | "headless";
-/** Removed terminal runtimes. Only persisted refs (lanes, roles, inbox names, settings) still carry them. */
-export type LegacyRuntimeKind = "herdr" | "hc";
 /**
  * One session as its runtime addresses it. `group`: the headless group label or the Tern session id. `container`: the
- * Tern tab id (or a legacy herdr tab id read from an old file). A legacy runtime appears only in parsed stored data.
+ * Tern tab id.
  */
 export type SessionRef = {
-  readonly runtime: RuntimeKind | LegacyRuntimeKind;
+  readonly runtime: RuntimeKind;
   readonly id: string;
   readonly group?: string;
   readonly container?: string;
@@ -26,7 +24,7 @@ export type ForegroundProcess = {
   readonly name: string;
   readonly argv: readonly string[];
   readonly pid?: number;
-  /** True when argv contains only legacy partial/name hints, not a complete observation. */
+  /** True when Tern reported only a name or a partial argv, not a complete observation. */
   readonly argvIncomplete?: boolean;
 };
 /** One snapshot: status, identity, foreground and discovery data together (submitTyped compares all of them; deliver re-reads them). `rootPid`: the session's root process (the Tern block's child pid, the headless OMP pid). */
@@ -126,36 +124,20 @@ export interface NativeSessionRuntime extends SessionOperations {
 
 export type SessionRuntime = TerminalRuntime | NativeSessionRuntime;
 
-/** Id shape of a bare ref: only a legacy herdr pane `w<ws>:p<pane>` may appear without its prefix. */
-const BARE_HERDR = /^w[0-9A-Za-z]+:p[0-9A-Za-z]+$/;
-/**
- * Id shape after each prefix: Tern numbers blocks in decimal; a legacy hc terminal address is base 36 (`t7`, `t1b`).
- * Another machine's `<machine>/<address>` is not a ref: the id names the session's inbox file.
- */
-const HC_ADDRESS = /^t[0-9a-z]+$/;
+/** Id shape after each prefix. Another machine's `<machine>/<address>` is not a ref: the id names its inbox file. */
 export const HEADLESS_ADDRESS = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/;
 const TERN_BLOCK = /^[0-9]+$/;
-const ID_SHAPES: Readonly<Record<RuntimeKind | LegacyRuntimeKind, RegExp>> = {
-  herdr: BARE_HERDR,
-  hc: HC_ADDRESS,
-  tern: TERN_BLOCK,
-  headless: HEADLESS_ADDRESS,
-};
-const KINDS = Object.keys(ID_SHAPES) as (RuntimeKind | LegacyRuntimeKind)[];
+const ID_SHAPES: Readonly<Record<RuntimeKind, RegExp>> = { tern: TERN_BLOCK, headless: HEADLESS_ADDRESS };
+const KINDS = Object.keys(ID_SHAPES) as RuntimeKind[];
 
-export const isLegacyRuntime = (kind: string): kind is LegacyRuntimeKind => kind === "herdr" || kind === "hc";
-
-/**
- * "headless:<uuid>", "tern:42", and the legacy "herdr:w1:p3", "hc:t7" and bare "w1:p3" (herdr) so old files still load.
- * A bare "t7" or "42" is NOT a ref (both are legal lane keys); undefined otherwise.
- */
+/** "headless:<uuid>" or "tern:42". A bare "42" is NOT a ref (it is a legal lane key); undefined otherwise. */
 export const parseRef: (text: string) => SessionRef | undefined = (text) => {
   for (const runtime of KINDS) {
     if (!text.startsWith(`${runtime}:`)) continue;
     const id = text.slice(runtime.length + 1);
     return ID_SHAPES[runtime].test(id) ? { runtime, id } : undefined;
   }
-  return BARE_HERDR.test(text) ? { runtime: "herdr", id: text } : undefined;
+  return undefined;
 };
 export const formatRef: (ref: SessionRef) => string = (ref) => `${ref.runtime}:${ref.id}`;
 /**

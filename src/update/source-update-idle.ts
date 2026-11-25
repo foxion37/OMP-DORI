@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { Registry, RESERVED_LANE_KEY, statusOf } from "../../skills/cataly-mode/scripts/src/registry.ts";
+import { Registry, statusOf } from "../../skills/cataly-mode/scripts/src/registry.ts";
 import { captureRuntime, observeLead } from "./deployment-harness.ts";
 import { readMonitorSet } from "./deployment-monitors.ts";
 import { DeploymentHeld, sameProcess, underProcess } from "./deployment-process.ts";
@@ -31,7 +31,7 @@ export async function sourceIdleNow(config: SourceUpdateConfig, runtime: Runtime
   const deployment = config.deployment;
   const scan = new Registry(deployment.stateDir).scanNow(true);
   if (scan.unreadable.length) throw new DeploymentHeld("unreadable lane records prevent an idle decision");
-  const open = scan.lanes.filter((lane) => lane.key !== RESERVED_LANE_KEY && statusOf(lane) !== "closed");
+  const open = scan.lanes.filter((lane) => statusOf(lane) !== "closed");
   if (open.length)
     throw new DeploymentHeld(`open lanes: ${open.map((lane) => `${lane.key}(${statusOf(lane)})`).join(", ")}`);
   const latest = await observeLead(deployment);

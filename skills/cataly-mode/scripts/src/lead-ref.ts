@@ -33,9 +33,7 @@ export function leadAddress(
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") return { reason: "unreadable" };
   }
   const pane = config.leadPane.trim();
-  // The placeholder an old config example shipped is no address.
-  if (!pane || pane === "<your herdr pane id, from: herdr pane current>")
-    return recorded ? { ref: recorded } : { reason: "unconfigured" };
+  if (!pane) return recorded ? { ref: recorded } : { reason: "unconfigured" };
   const explicit = parseRef(pane);
   if (!explicit) return recorded ? { reason: "ambiguous" } : { reason: "invalid", unboundAlias: true };
   if (recorded && (recorded.runtime !== explicit.runtime || recorded.id !== explicit.id))

@@ -124,7 +124,6 @@ export const CATALY_VALUE_OPTIONS: Record<string, true> = {
   lane: true,
   worklog: true,
   "ignore-author": true,
-  "adopt-legacy-threads": true,
   self: true,
   "timeout-seconds": true,
   "every-seconds": true,

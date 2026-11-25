@@ -11,7 +11,7 @@ notices attached to that work.
 - The pre-existing OMP integration and its MIT-covered changes remain under the
   standard MIT terms in [LICENSE.integration](LICENSE.integration). Preserve the YeonGyu
   Kim, betive37, and vntrevx copyright notices.
-- oh-my-pi, omp-ulw, and other third-party components retain their own licenses.
+- oh-my-pi and other third-party components retain their own licenses.
   A dependency pin, patch, project rename, or integration does not relicense them.
 
 [LICENSING.md](LICENSING.md) explains the component boundaries;

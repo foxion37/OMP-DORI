@@ -109,7 +109,6 @@ test("CLI add --global from a registered lane's pane is refused; from the lead's
       brief: "/brief.md",
       done: "/done.md",
       cwd: state.dir,
-      pane: "5093",
       sessionRef: { runtime: "tern", id: "5093" },
       openedAt: new Date(T0).toISOString(),
     });
@@ -163,7 +162,6 @@ test("CLI mark of a global lesson from a registered lane's pane is refused; a re
       brief: "/brief.md",
       done: "/done.md",
       cwd: state.dir,
-      pane: "5093",
       sessionRef: { runtime: "tern", id: "5093" },
       openedAt: new Date(T0).toISOString(),
     });

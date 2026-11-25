@@ -20,13 +20,12 @@ Compose's build context is the candidate root (`../..` relative to the compose f
 | gh | `2.100.0` | Retained upstream version and per-architecture sha256 values |
 | agent-messenger | `2.40.0` | [Published npm metadata](https://registry.npmjs.org/agent-messenger/2.40.0), Node >=22.13.0 |
 | OMP | f40f3358 / 19.0.1 + `native-omp.patch` | Exact `native-omp.lock` upstream/result identity; frozen official `@oh-my-pi/pi-natives@19.0.1` addon, no Cargo |
-| omp-ulw | `omp-ulw.lock` + `omp-ulw.patch` | Exact base plus `omp-ulw.overlay.lock` result; upstream Git tree/gitlinks retained |
 
 Bun's new asset sha256 values are `bf8ccbfb2b0b80159e0f9a6d15c55317add8077534dbc6130a3edb52fccb395c` for `bun-linux-x64.zip` and `baa6bb36f51d6e58561e02bbea825038a9df454f673d6d776e8bbf86f8c7850e` for `bun-linux-aarch64.zip`. These were read from the release metadata, not guessed or calculated from a substituted package. The other binary hashes are retained from upstream `97d807b`'s recipe; this port has not downloaded those assets or revalidated their bytes.
 
-The current recipe does not install a stock OMP package globally. It prepares both source bundles as the non-root `cataly` user under `/home/cataly/.cache/omp-cataly` and links `omp` to the guarded source wrapper. The role-gated ULW import uses `/home/cataly/.cataly/omp-ulw`, which points to the bound cache. Rebuilding an image does not silently repair a custom or stale persistent-volume link; preserve that state and explicitly prepare/select the intended dependency. These are source contracts, not an observed image build or runtime pass.
+The current recipe does not install a stock OMP package globally. It prepares the bound native source bundle as the non-root `cataly` user under `/home/cataly/.cache/omp-cataly` and links `omp` to the guarded source wrapper. These are source contracts, not an observed image build or runtime pass.
 
-The native source and official addon use their frozen dependency locks; agent-messenger still has an exact top-level npm version with transitive ranges. The Ubuntu tag and apt packages are not a complete reproducibility lock, so this is not a bit-for-bit reproducible-image claim. ULW remains separately fetched source with its own upstream notices, verified against the exact base and reviewed overlay identities rather than a clean-stock checkout alone.
+The native source and official addon use their frozen dependency locks; agent-messenger still has an exact top-level npm version with transitive ranges. The Ubuntu tag and apt packages are not a complete reproducibility lock, so this is not a bit-for-bit reproducible-image claim.
 
 ## Build
 
@@ -64,9 +63,7 @@ For fresh configuration, copy the example only when config is missing:
 test -e ~/.cataly/config.json || cp /opt/omp-cataly/skills/cataly-mode/references/config.example.json ~/.cataly/config.json
 ```
 
-Edit `defaultCwd`, model settings and hooks for this container. Set messenger hooks only to the isolated QA destination when that QA stage starts. The image links the skill at `~/.agents/skills/cataly-mode`, the extension at `~/.omp/agent/extensions/omp-cataly`, and pinned omp-ulw at `~/.cataly/omp-ulw`. The extension's default `ompUlwPath` resolves through that link; an explicit config override remains the operator's choice.
-
-This source-container layout keeps configured dependency paths unchanged. Verified consumer releases resolve their managed `~/.cataly/releases/consumer-dependencies/omp-ulw-<commit>` paths against the loaded source's own lock; explicit external paths remain user-owned. See [consumer installation layout](releases.md#installation-layout-and-preserved-data).
+Edit `defaultCwd`, model settings and hooks for this container. Set messenger hooks only to the isolated QA destination when that QA stage starts. The image links the skill at `~/.agents/skills/cataly-mode` and the extension at `~/.omp/agent/extensions/omp-cataly`.
 
 Clone work repositories into `~/projects`. From the desired project
 directory, explicitly start the harness and check its runtime:
@@ -86,13 +83,13 @@ Expected source behavior: headless starts the lead, duty and loops without a ter
 
 Named volumes are prefixed by the compose project, so a second `-p` value gets separate state. The former `.omo`/`omo-state` layout is replaced by OMP's own `.omp` volume; no old volume is removed or imported.
 
-- `~/.cataly` (`cataly-state`): config, harness lanes/inbox/receipts/backlog/loops, skill state, process-bound session records, monitor mirrors and the link to immutable omp-ulw.
+- `~/.cataly` (`cataly-state`): config, harness lanes/inbox/receipts/backlog/loops, skill state, process-bound session records and monitor mirrors.
 - `~/.omp` (`omp-state`): OMP config, provider auth, sessions and the extension link.
 - `~/.config/gh` (`gh-auth`): GitHub auth.
 - `~/.config/agent-messenger` (`messenger-auth`): messenger auth.
 - `~/projects` (`projects`): repository checkouts and build artifacts.
 
-The source, global packages and `.agents` skill link live in the image. Fresh named volumes inherit the prepared `cataly` ownership and extension/omp-ulw links; existing volumes keep their content on rebuild. Runtime processes and live approvals are not durable evidence of resumed work. After a restart run `cataly harness status` and `cataly boot`; only recreate missing harness sessions with `cataly harness up`. Saved OMP sessions can be restored deliberately, retaining roles and recorded monitors. For a native goal restored paused, wait until the user explicitly directs resumption before using `/goal resume`, and confirm the resulting state.
+The source, global packages and `.agents` skill link live in the image. Fresh named volumes inherit the prepared `cataly` ownership and extension link; existing volumes keep their content on rebuild. Runtime processes and live approvals are not durable evidence of resumed work. After a restart run `cataly harness status` and `cataly boot`; only recreate missing harness sessions with `cataly harness up`. Saved OMP sessions can be restored deliberately, retaining roles and recorded monitors. For a native goal restored paused, wait until the user explicitly directs resumption before using `/goal resume`, and confirm the resulting state.
 
 `docker compose restart`, or `down` followed by `up -d` without volume removal, retains named data. Backup and recovery must include all five volumes and the exact candidate/image input. This source port has not exercised recovery or modified the existing source archives.
 
@@ -116,7 +113,7 @@ Build the image:
 docker build --platform linux/amd64 -f examples/container/Dockerfile -t omp-cataly-candidate:headless .
 ```
 
-Use `--platform linux/arm64` and distinct image tags on an arm64-capable builder to exercise that architecture. A successful build must show verified binary checksums, frozen source-lock installs and the locked omp-ulw checkout. Build success alone does not prove OMP/runtime interaction.
+Use `--platform linux/arm64` and distinct image tags on an arm64-capable builder to exercise that architecture. A successful build must show verified binary checksums and frozen source-lock installs. Build success alone does not prove OMP/runtime interaction.
 
 For a network-disabled source/CLI smoke, run the following against the default
 image. It starts no runtime server and leaves the stopped container available
@@ -133,11 +130,10 @@ docker run --name omp-cataly-source-smoke-headless --network none omp-cataly-can
   bun src/cli.ts --help
   test -L /home/cataly/.omp/agent/extensions/omp-cataly
   test -L /home/cataly/.agents/skills/cataly-mode
-  test "$(git -C /home/cataly/.cataly/omp-ulw rev-parse HEAD)" = "$(cat omp-ulw.lock)"
 '
 ```
 
-Expected for the current recipe: Bun 1.4.4+, OMP 19.0.1 from the bound source launcher, skill help including `harness`, complete root help through all three root entrypoints, existing extension/skill links and the lock-matching ULW base with its exact staged overlay. No assertion here is an observed pass or a binary-equivalence claim.
+Expected for the current recipe: Bun 1.4.4+, OMP 19.0.1 from the bound source launcher, skill help including `harness`, complete root help through all three root entrypoints, and existing extension/skill links. No assertion here is an observed pass or a binary-equivalence claim.
 
 Session QA follows first-run setup with synthetic work, an isolated provider
 identity and a separate messenger thread/session: inspect role/session records,

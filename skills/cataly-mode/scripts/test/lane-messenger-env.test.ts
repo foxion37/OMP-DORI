@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { laneLaunchEnv } from "../src/slack-token.ts";
-import { withState } from "./fakes.ts";
+import { refusedOnWindows, withState } from "./fakes.ts";
 
 for (const ambientInLauncher of [false, true]) {
   test(`lane overrides terminal-server messenger tokens even when launcher has them: ${ambientInLauncher}`, async () => {
@@ -17,8 +17,6 @@ for (const ambientInLauncher of [false, true]) {
         OPENAI_API_KEY: "fixture-provider-auth",
         CATALY_DISCORD_TOKEN: "fixture-discord",
         CATALY_TELEGRAM_TOKEN: "fixture-telegram",
-        DORI_DISCORD_TOKEN: "fixture-old-discord",
-        DORI_TELEGRAM_TOKEN: "fixture-old-telegram",
         CATALY_SLACK_TOKEN: "fixture-wrong-slack",
       };
       const env = laneLaunchEnv(ambientInLauncher ? ambient : { HOME: state.dir }, join(state.dir, "config.json"));
@@ -30,7 +28,6 @@ for (const ambientInLauncher of [false, true]) {
           `import { slackToken } from ${JSON.stringify(new URL("../src/slack-token.ts", import.meta.url).href)};
            console.log(JSON.stringify({
              discord: process.env.CATALY_DISCORD_TOKEN, telegram: process.env.CATALY_TELEGRAM_TOKEN,
-             oldDiscord: process.env.DORI_DISCORD_TOKEN, oldTelegram: process.env.DORI_TELEGRAM_TOKEN,
              provider: process.env.OPENAI_API_KEY, agent: process.env.PI_CODING_AGENT_DIR,
              home: process.env.HOME, slack: slackToken(),
            }));`,
@@ -47,8 +44,6 @@ for (const ambientInLauncher of [false, true]) {
       expect(JSON.parse(out)).toEqual({
         discord: "",
         telegram: "",
-        oldDiscord: "",
-        oldTelegram: "",
         provider: ambient.OPENAI_API_KEY,
         agent: ambient.PI_CODING_AGENT_DIR,
         home: state.dir,
@@ -86,8 +81,6 @@ for (const [platform, args] of [
             CATALY_CONFIG: join(state.dir, "config.json"),
             CATALY_DISCORD_TOKEN: "",
             CATALY_TELEGRAM_TOKEN: "",
-            DORI_DISCORD_TOKEN: "fixture-old-discord",
-            DORI_TELEGRAM_TOKEN: "fixture-old-telegram",
             CATALY_TELEGRAM_OWNER_ID: "1",
           },
           stdout: "pipe",
@@ -97,7 +90,9 @@ for (const [platform, args] of [
       );
       expect(child.exitCode).toBe(1);
       expect(child.stdout.toString()).toBe("");
-      expect(child.stderr.toString().trim()).toBe(`CATALY_${platform.toUpperCase()}_TOKEN is not set`);
+      expect(child.stderr.toString().trim()).toBe(
+        refusedOnWindows(args, `CATALY_${platform.toUpperCase()}_TOKEN is not set`),
+      );
     } finally {
       state.done();
     }

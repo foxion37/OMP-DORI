@@ -70,10 +70,9 @@ export const monitorFilterFindings = (
 ): DoctorFinding[] => {
   const findings: DoctorFinding[] = [];
   for (const manifest of manifests) {
-    if (manifest.kind !== "omp") continue;
     const severity = manifest.data.sessionId === liveSession ? "WARN" : "INFO";
     for (const monitor of manifest.data.monitors) {
-      const preset = monitorPresetFor(monitor.argv ?? []);
+      const preset = monitorPresetFor(monitor.argv);
       if (!preset) continue;
       const label = `${JSON.stringify(monitor.name)}${severity === "INFO" ? ` (recorded session ${JSON.stringify(manifest.data.sessionId)}; liveness unverified)` : ""}`;
       try {
@@ -118,7 +117,7 @@ export const monitorRuntimeFindings = (
   lead: PaneState | null,
   now: number,
 ): DoctorFinding[] => {
-  const wanted = manifests.filter((manifest) => manifest.kind === "omp" && manifest.data.monitors.length);
+  const wanted = manifests.filter((manifest) => manifest.data.monitors.length);
   const findings: DoctorFinding[] = [];
   for (const manifest of wanted) {
     if (!lead || manifest.data.sessionId !== lead.sessionId) {

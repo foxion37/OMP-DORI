@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { headlessArgv } from "../../../../src/runtime/headless.ts";
 import { mayRunOmpArgv } from "../../../../src/runtime/omp-argv.ts";
-import { isLegacyRuntime } from "../../../../src/runtime/types.ts";
 import { configPath } from "./config.ts";
 import { renderTemplate } from "./launch-template.ts";
 import { type LaunchInput, runtimeForLaunch, validateLaunch } from "./launch-input.ts";
@@ -45,11 +44,10 @@ export const adoptLane = async (
     cwd: input.cwd ?? deps.config.defaultCwd,
     openedAt: iso(deps.clock),
   };
-  // `tern:42` or a bare Tern block id; a headless lane is launched, and herdr/hc were removed.
+  // `tern:42` or a bare Tern block id; a headless lane is launched.
   const ref = parseOwnershipRef(input.pane);
   if (!ref) throw new LaunchError(`--pane must be a Tern block (tern:<id> or <id>), got ${input.pane}`);
   if (ref.runtime === "headless") throw new LaunchError("headless lanes must be launched, not adopted");
-  if (isLegacyRuntime(ref.runtime)) throw new LaunchError("herdr and hc panes can no longer be adopted; use Tern");
   const lane = { ...base, ...sessionFields(ref) };
   const registered = await withTerminalAdoptionLock(deps, ref, () => deps.registry.create(lane));
   if (!registered.ok)

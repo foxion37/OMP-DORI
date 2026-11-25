@@ -11,8 +11,6 @@ const PRIVATE_NAMES: Readonly<Record<string, true>> = {
   node_modules: true,
   ".cataly": true,
   ".omp-cataly": true,
-  ".dori": true,
-  ".omp-dori": true,
   ".omp": true,
   ".omo": true,
   auth: true,
@@ -69,7 +67,7 @@ export function applicationInput(ctx: UpdateContext, job: UpdateJob, input: stri
     );
   }
   if (!contains(root, source)) {
-    for (const name of [".cataly", ".omp-cataly", ".dori", ".omp-dori", ".omp", ".agents"]) {
+    for (const name of [".cataly", ".omp-cataly", ".omp", ".agents"]) {
       const personal = canonical(join(homedir(), name));
       if (contains(personal, source) || contains(source, personal)) {
         throw new UpdateError(

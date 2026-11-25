@@ -58,7 +58,7 @@ test("status joins live identity, journals, decisions and monitor metadata witho
     JSON.stringify({
       version: 1,
       sessionId: "lead",
-      monitors: [{ name: "watch", argv: ["cataly", "watch"], cwd: "/repo", suspended: true }],
+      monitors: [{ name: "watch", argv: ["cataly", "watch"], cwd: "/repo" }],
     }),
   );
   const before = contents();
@@ -67,7 +67,7 @@ test("status joins live identity, journals, decisions and monitor metadata witho
   expect(snapshot.lanes[0]?.progress?.state).toBe("blocked");
   expect(snapshot.lanes[0]?.checkpoint?.step).toBe("first");
   expect(snapshot.decisions).toBe(1);
-  expect(snapshot.monitors).toEqual({ recorded: 1, suspended: 1, expired: 0 });
+  expect(snapshot.monitors).toEqual({ recorded: 1 });
   expect(renderStatus(snapshot)).toContain("agent=working goal=active approval=false decisions=1");
   expect(renderStatus(snapshot)).toContain("question: Which option?");
   expect(contents()).toEqual(before);

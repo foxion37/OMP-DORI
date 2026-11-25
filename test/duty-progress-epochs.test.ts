@@ -10,7 +10,7 @@ const MIN = 60_000;
 async function quietLane() {
   const s = setup();
   const lane = await startLane(s.d, "epoch", s.brief, { group: "w1" });
-  const pane = s.w.panes.get(lane.paneId)!;
+  const pane = s.w.panes.get(lane.sessionRef.id)!;
   pane.status = "idle";
   const at = (min: number) => {
     s.w.clock = lane.createdAt + min * MIN;
@@ -100,24 +100,4 @@ describe("progress epochs", () => {
     expect(repeated.progress[0]).toStartWith("PROGRESS unchanged since");
     expect(d.store.lane("epoch")!.progressAt).toBe(lane.createdAt + 41 * MIN);
   });
-
-  test.each([40, 50])(
-    "an existing marker at minute %i does not suppress the epoch that progressed at minute 50",
-    async (markerMin) => {
-      const { d, lane, lead, at } = await quietLane();
-      d.store.saveLane({
-        ...d.store.lane("epoch")!,
-        progressAt: lane.createdAt + 50 * MIN,
-        lastActivityAt: lane.createdAt + 50 * MIN,
-        escalatedAt: lane.createdAt + markerMin * MIN,
-      });
-      expect(await at(60)).toContainEqual({ lane: "epoch", action: "nudge-1" });
-      expect(await at(70)).toContainEqual({ lane: "epoch", action: "nudge-2" });
-      expect(await at(89)).toEqual([]);
-      expect(await at(90)).toContainEqual({ lane: "epoch", action: "escalated" });
-      expect(d.store.lane("epoch")!.escalatedAt).toBe(lane.createdAt + 90 * MIN);
-      expect(await at(91)).toEqual([]);
-      expect(lead.received.filter((text) => text.startsWith("[ESCALATE epoch]"))).toHaveLength(1);
-    },
-  );
 });

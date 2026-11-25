@@ -42,7 +42,7 @@ test("a queued sourced launch keeps its request and a damaged request is refused
   const queue = new LaunchQueue(state.dir);
   const entry = {
     id: "00000000-0000-4000-8000-0000000000aa",
-    input: { key: "queued-request", title: "t", brief: "/brief", done: "closed acme/app#3", requestId },
+    input: { key: "queued-request", title: "t", brief: "/brief", done: "closed acme/app#3", cwd: "/work", requestId },
     briefText: "# brief",
     after: ["first-lane"],
     queuedAt: new Date(T0).toISOString(),

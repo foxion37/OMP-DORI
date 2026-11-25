@@ -57,10 +57,7 @@ export const isNativeReference = (value: unknown): value is NativeReference => {
     "id" in ref &&
     typeof ref.id === "string" &&
     ref.id.length > 0 &&
-    (ref.runtime === "herdr" ||
-      ref.runtime === "hc" ||
-      ref.runtime === "tern" ||
-      (ref.runtime === "headless" && HEADLESS_ADDRESS.test(ref.id)))
+    (ref.runtime === "tern" || (ref.runtime === "headless" && HEADLESS_ADDRESS.test(ref.id)))
   );
 };
 

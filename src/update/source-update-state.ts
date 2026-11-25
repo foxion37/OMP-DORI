@@ -3,7 +3,6 @@ import { isAbsolute, join } from "node:path";
 import { owned } from "../release/files.ts";
 import { object } from "./config.ts";
 import { saveDeploymentJson } from "./deployment-files.ts";
-import { terminalEraRecord } from "./deployment-harness.ts";
 import { DeploymentHeld } from "./deployment-process.ts";
 import { forwardStopStarted } from "./deployment-stop.ts";
 import type { DeploymentInput, DeploymentRecord } from "./deployment-types.ts";
@@ -59,8 +58,6 @@ export function sourceRecoveryPending(job: SourceJob): boolean {
   }
   if (deployment.status === "healthy" || deployment.status === "rolled-back")
     return deployment.status !== job.deployment?.status;
-  // An in-flight terminal-era journal stays pending: only the previous Cataly version can finish or retire it.
-  if (terminalEraRecord(deployment)) return true;
   return !(
     deployment.status === "held" &&
     !forwardStopStarted(deployment) &&

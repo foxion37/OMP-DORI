@@ -5,11 +5,7 @@
 !tsconfig*.json
 !knip.json
 !install.sh
-!release-capabilities.json
 !release-headless.json
-!omp-ulw.lock
-!omp-ulw.overlay.lock
-!omp-ulw.patch
 !native-omp.lock
 !native-omp.patch
 !native-addon/
@@ -49,8 +45,6 @@ native-addon/**
 **/.npmrc
 **/.netrc
 **/.cataly
-**/.dori
-**/.omp-dori
 **/.omp-cataly
 **/.omp
 **/.omo

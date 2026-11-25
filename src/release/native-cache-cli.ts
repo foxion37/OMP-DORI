@@ -38,8 +38,6 @@ export function runCacheCommand(paths: ConsumerPaths, options: CacheOptions, ins
       [
         join(paths.home, ".cataly"),
         join(paths.home, ".omp-cataly"),
-        join(paths.home, ".dori"),
-        join(paths.home, ".omp-dori"),
         paths.cataly,
         installedHome,
         process.env["CATALY_HOME"],

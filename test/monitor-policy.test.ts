@@ -96,7 +96,7 @@ posix.each([1, 2, 3])("new monitor policies require metadata version three, not 
       }),
       { mode: 0o600 },
     );
-    const boot = readMonitorManifests(join(root, "sessions"), [], root);
+    const boot = readMonitorManifests(root);
     if (version === 3) {
       expect(readMonitorSet(path, "owner", true)).toMatchObject({ version: 3, monitors: [spec] });
       expect(boot.errors).toEqual([]);

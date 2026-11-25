@@ -1,14 +1,14 @@
-import { chmodSync, copyFileSync, lstatSync, mkdirSync, readFileSync } from "node:fs";
+import { chmodSync, lstatSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { command, DeploymentHeld } from "./deployment-process.ts";
 import type { DeploymentConfig, DeploymentInput, DeploymentRecord } from "./deployment-types.ts";
 import { assertSourceAdmission, digest, sameManifest, sourceManifest } from "./source.ts";
 
 import { hasControl } from "./config.ts";
+import { prepareNativeHost } from "./deployment-native.ts";
 import { prepareRuntimeToolchain } from "./deployment-toolchain.ts";
 
 const SHA = /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/;
-const PUBLIC = (path: string): boolean => path !== "ref/omp-ulw" && !path.startsWith("ref/omp-ulw/");
 const SAFE_GIT = ["git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "gc.auto=0"];
 
 export function validateDeploymentInput(input: DeploymentInput): void {
@@ -24,11 +24,9 @@ export function validateDeploymentInput(input: DeploymentInput): void {
   const manifest = input.publicManifest;
   if (
     manifest.version !== 1 ||
-    manifest.ulwPresent === true ||
     !manifest.files.length ||
     manifest.files.some(
       (file) =>
-        !PUBLIC(file.path) ||
         file.path.startsWith("/") ||
         hasControl(file.path) ||
         file.path.split("/").some((part) => !part || part === "." || part === "..") ||
@@ -36,14 +34,11 @@ export function validateDeploymentInput(input: DeploymentInput): void {
     )
   )
     throw new DeploymentHeld("published source manifest is invalid");
-  if (digest(JSON.stringify({ files: manifest.files, ulwPresent: manifest.ulwPresent })) !== manifest.hash)
+  if (digest(JSON.stringify({ files: manifest.files })) !== manifest.hash)
     throw new DeploymentHeld("published source manifest digest differs");
   const candidate = sourceManifest(input.candidate);
   assertSourceAdmission(candidate, "candidate");
-  if (
-    candidate.hash !== input.sourceHash ||
-    JSON.stringify(candidate.files.filter((file) => PUBLIC(file.path))) !== JSON.stringify(manifest.files)
-  )
+  if (candidate.hash !== input.sourceHash || JSON.stringify(candidate.files) !== JSON.stringify(manifest.files))
     throw new DeploymentHeld("candidate no longer matches the reviewed published source");
 }
 
@@ -95,31 +90,13 @@ export async function prepareRelease(
   )
     throw new DeploymentHeld("published tree contains source outside its admitted manifest");
   const observed = sourceManifest(record.releasePath);
-  if (JSON.stringify(observed.files.filter((file) => PUBLIC(file.path))) !== JSON.stringify(input.publicManifest.files))
+  if (JSON.stringify(observed.files) !== JSON.stringify(input.publicManifest.files))
     throw new DeploymentHeld("published release bytes or executable modes differ");
   const candidate = sourceManifest(input.candidate);
-  for (const file of candidate.files.filter((entry) => !PUBLIC(entry.path))) {
-    const destination = join(record.releasePath, file.path);
-    if (lstatSync(destination, { throwIfNoEntry: false })) {
-      const stat = lstatSync(destination);
-      if (
-        !stat.isFile() ||
-        digest(readFileSync(destination)) !== file.sha256 ||
-        ((stat.mode & 0o111) !== 0) !== file.executable
-      )
-        throw new DeploymentHeld("interrupted opaque pin differs");
-      continue;
-    }
-    mkdirSync(dirname(destination), { recursive: true, mode: 0o700 });
-    copyFileSync(join(input.candidate, file.path), destination);
-    chmodSync(destination, file.executable ? 0o755 : 0o644);
-  }
-  if (candidate.ulwPresent) mkdirSync(join(record.releasePath, "ref/omp-ulw"), { recursive: true, mode: 0o700 });
-  if (!sameManifest(sourceManifest(record.releasePath), candidate))
-    throw new DeploymentHeld("release lost the frozen opaque pin");
+  if (!sameManifest(observed, candidate)) throw new DeploymentHeld("release differs from the reviewed candidate");
+  await prepareNativeHost(config, record, signal);
   if (record.preparedAt) {
-    if (lstatSync(join(record.releasePath, "native-omp.lock"), { throwIfNoEntry: false }))
-      await prepareRuntimeToolchain(config, record);
+    await prepareRuntimeToolchain(config, record);
     return;
   }
   const version = await command([config.bun, "--version"], home, env, 10_000, signal);
@@ -156,8 +133,7 @@ export async function prepareRelease(
       signal,
     );
   }
-  if (lstatSync(join(record.releasePath, "native-omp.lock"), { throwIfNoEntry: false }))
-    await prepareRuntimeToolchain(config, record);
+  await prepareRuntimeToolchain(config, record);
   validateDeploymentInput(input);
   if (!sameManifest(sourceManifest(record.releasePath), candidate))
     throw new DeploymentHeld("provisioning changed reviewed source");

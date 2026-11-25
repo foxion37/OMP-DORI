@@ -1,6 +1,5 @@
 import { accessSync, constants, readFileSync, statSync } from "node:fs";
 import { delimiter, join } from "node:path";
-import { LegacyRuntimeError } from "./registry.ts";
 import type { RuntimeKind } from "./types.ts";
 
 export type RuntimeSource = "default" | "env" | "config" | "detect:TERN_PANE" | "detect:path";
@@ -13,8 +12,6 @@ export class RuntimeChoiceError extends Error {}
 export class ConfigError extends Error {}
 
 export const isSessionRuntime = (value: unknown): value is RuntimeKind => value === "headless" || value === "tern";
-/** The removed terminal runtimes: a setting that still names one stops with the upgrade instructions. */
-const LEGACY_NAMES: readonly unknown[] = ["herdr", "hc"];
 
 const isExecutableFile = (path: string): boolean => {
   try {
@@ -57,9 +54,7 @@ const ternOnPath = (pathVar: string | undefined, exists: (path: string) => boole
 /**
  * Sessions run on headless OMP by default on macOS and Linux. Tern is consulted only when terminal execution was
  * requested (`terminalOnly`), named by `CATALY_RUNTIME` or `sessionRuntime`, or on Windows where the native socket host
- * is unavailable: config `runtime: "tern"`, then an enclosing Tern block (`TERN_PANE`), then `tern` on PATH. A setting
- * that still names the removed herdr/hc runtime (`CATALY_RUNTIME`, config `runtime` or `sessionRuntime`) throws
- * LegacyRuntimeError.
+ * is unavailable: config `runtime: "tern"`, then an enclosing Tern block (`TERN_PANE`), then `tern` on PATH.
  */
 export function readRuntimeChoice(options: {
   readonly env: Readonly<Record<string, string | undefined>>;
@@ -70,12 +65,9 @@ export function readRuntimeChoice(options: {
 }): RuntimeChoice {
   const { env, configPath } = options;
   const fromEnv = nonEmpty(env["CATALY_RUNTIME"]);
-  if (fromEnv !== undefined && LEGACY_NAMES.includes(fromEnv)) throw new LegacyRuntimeError(configPath);
   if (fromEnv !== undefined && !isSessionRuntime(fromEnv))
     throw new ConfigError(`invalid CATALY_RUNTIME: ${JSON.stringify(fromEnv)}`);
   const config = options.config ?? configSettings(configPath);
-  if (LEGACY_NAMES.includes(config.runtime) || LEGACY_NAMES.includes(config.sessionRuntime))
-    throw new LegacyRuntimeError(configPath);
   if (config.runtime !== undefined && config.runtime !== "tern")
     throw new ConfigError(`${configPath}: "runtime" must be "tern", got ${JSON.stringify(config.runtime)}`);
   const sessionRuntime = config.sessionRuntime;

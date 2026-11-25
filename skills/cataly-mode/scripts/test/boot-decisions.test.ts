@@ -21,7 +21,7 @@ afterEach(() => state.done());
 
 const bootDeps = () => {
   const sessionsDir = join(state.dir, "sessions");
-  const deps = depsFor(newWorld(), fakeClock(T0), state.dir, { sessionsDir, leadPane: "w2:p1" });
+  const deps = depsFor(newWorld(), fakeClock(T0), state.dir, { sessionsDir, leadPane: "tern:5001" });
   return {
     ...deps,
     reports: new Reports(state.dir),

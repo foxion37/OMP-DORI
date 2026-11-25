@@ -61,7 +61,8 @@ function discordMonitorArgv(
   return argv;
 }
 
-/** Everything a woken lane needs that only the TS config knows; Rust refuses `--wake-lanes` without it. */
+/** Everything a woken lane needs that only the TS config knows; Rust refuses `--wake-lanes` without it. The detached
+ * headless host is the Rust binary itself (`headless-host`), so the record names no host program. */
 function discordLaneLaunch(config: FlowDeps["config"], env: Readonly<Record<string, string | undefined>>) {
   return JSON.stringify({
     agentCommand: config.agentCommand,
@@ -69,7 +70,6 @@ function discordLaneLaunch(config: FlowDeps["config"], env: Readonly<Record<stri
     guard: config.guard,
     env: laneLaunchEnv(env, env["CATALY_CONFIG"] ?? configPath(), config),
     wakeConfig: fileURLToPath(new URL("./discord-lane-wake.yml", import.meta.url)),
-    broker: [process.execPath, repo("src/runtime/headless-broker.ts")],
   });
 }
 

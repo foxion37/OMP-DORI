@@ -1,18 +1,17 @@
 import { describe, expect, mock, spyOn, test } from "bun:test";
 import * as fs from "node:fs";
-import { readdirSync, renameSync, writeFileSync } from "node:fs";
+import { readdirSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { dutyTick } from "../src/duty.ts";
 import { readQueue } from "../src/inbox-files.ts";
 import type { Deps } from "../src/harness.ts";
 import { send } from "../src/inbox.ts";
 import type { SessionRef } from "../src/runtime/types.ts";
-import { href, sid } from "./fake.ts";
+import { href } from "./fake.ts";
 import { PANE, setup } from "./inbox-setup.ts";
 
 const OLD = href(PANE);
 const TARGET = `headless:${PANE}`;
-const NEW = href(sid(4));
 const REAL_RENAME = fs.renameSync;
 
 /**
@@ -93,26 +92,6 @@ describe("a message queued while another process rewrites the same inbox", () =>
     release();
     s.d.store.lockInbox(OLD, s.d.now())!();
     expect(texts(s.d, OLD)).toEqual(["again", "again", "again", "again"]);
-  });
-
-  test("a message spooled for an inbox an older binary forwarded meanwhile is moved to the new inbox by its lock holder, once", async () => {
-    const s = setup();
-    s.pane.status = "working";
-    const release = s.d.store.lockInbox(OLD, s.d.now())!;
-    expect(await send(s.d, TARGET, "moving", "cli")).toBe("QUEUED");
-    const old = s.d.store.inboxPath(OLD);
-    writeFileSync(`${old}.forward`, `headless:${NEW.id}\n`);
-    release();
-    // Forwarded: the old inbox's next lock holder leaves its spool to the holder of the new inbox's lock.
-    s.d.store.lockInbox(OLD, s.d.now())!();
-    expect(readdirSync(`${old}.spool`)).toHaveLength(1);
-    expect(s.d.store.mergePending(NEW)).toBe(true);
-    const into = s.d.store.lockInbox(NEW, s.d.now())!;
-    s.d.store.mergeForwarded(NEW);
-    s.d.store.mergeForwarded(NEW);
-    into();
-    expect(texts(s.d, NEW)).toEqual(["moving"]);
-    expect(s.d.store.mergePending(NEW)).toBe(false);
   });
 
   test("a message spooled while a flush holds the lock is in the queue once the flush lets go", async () => {

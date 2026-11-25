@@ -88,18 +88,15 @@ export async function tellLead(d: Deps, text: string, from: string): Promise<"DE
  * Delivers a session's queued messages as one batch. `held`: only messages held after an ambiguous delivery are left;
  * they wait for a person or the lead (#89). `queued` also when another flush of this session holds its inbox lock: one
  * flush per session at a time, across processes (#108). Throws DeliveryUncertain, having recorded the attempt on the
- * queued messages, when the batch may already have reached the session, and Refusal when the session is gone. A
- * session whose inbox was forwarded (a legacy migration) is flushed at its new ref, old entries merged in first.
+ * queued messages, when the batch may already have reached the session, and Refusal when the session is gone.
  */
-export async function flushInbox(d: Deps, from: SessionRef): Promise<"delivered" | "queued" | "no-agent" | "held"> {
-  const ref = d.store.destination(from);
+export async function flushInbox(d: Deps, ref: SessionRef): Promise<"delivered" | "queued" | "no-agent" | "held"> {
   // Unlocked, so the queue is not parsed here: a holder may be part way through appending to it.
   if (!nonEmpty(d.store.inboxPath(ref)) && !d.store.mergePending(ref)) return "delivered";
   const release = d.store.lockInbox(ref, d.now());
   if (!release) return "queued";
   try {
     if (inboxSealed(d.store.root, ref)) return "held";
-    d.store.mergeForwarded(ref);
     return await flushLocked(d, ref);
   } finally {
     release();
@@ -231,7 +228,7 @@ async function holdTyped(d: Deps, ref: SessionRef, typed: readonly QueuedMessage
 }
 
 async function noticeHeld(d: Deps, ref: SessionRef, batch: readonly QueuedMessage[], why: string): Promise<void> {
-  if (batch.every((m) => m.from === NOTICE_FROM || m.from === "dori-delivery")) return;
+  if (batch.every((m) => m.from === NOTICE_FROM)) return;
   const paneId = refText(ref);
   const which = batch.map((m) => `from ${m.from} queued ${new Date(m.at).toISOString()}`).join(", ");
   const text =

@@ -38,7 +38,6 @@ const lane = (key: string, n: number, at: string): Lane => ({
   title: key,
   thread: `thread-${key}`,
   sessionRef: href(sid(n)),
-  pane: sid(n),
   brief: "brief",
   done: "pr:o/r#1",
   openedAt: at,

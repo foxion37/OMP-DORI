@@ -39,8 +39,8 @@ spyOn(fs, "unlinkSync").mockImplementation((path) => {
   unlink(path);
 });
 if (${JSON.stringify(mode)} !== "automatic")
-  process.exit(await runConsumerUpdate(["install", "--from", ${JSON.stringify(candidate.dist)}, "--home", ${JSON.stringify(f.paths.dori)}]));
-console.log(await automaticUpdate(consumerPaths(${JSON.stringify(f.paths.home)}, ${JSON.stringify(f.paths.dori)}), {
+  process.exit(await runConsumerUpdate(["install", "--from", ${JSON.stringify(candidate.dist)}, "--home", ${JSON.stringify(f.paths.cataly)}]));
+console.log(await automaticUpdate(consumerPaths(${JSON.stringify(f.paths.home)}, ${JSON.stringify(f.paths.cataly)}), {
   acquire: () => acquireBundle({ from: ${JSON.stringify(candidate.dist)} }),
 }));
 `,

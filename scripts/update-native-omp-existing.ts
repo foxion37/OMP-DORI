@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { NATIVE_UPDATE_FILES } from "../src/release/native-update-dependencies.ts";
 import type { NativeCandidate } from "../src/release/native-update.ts";
 import { RELEASE_REPOSITORY } from "./release-gate.ts";
-import { canonicalUlwPull, type UlwApi } from "./update-ulw-existing.ts";
 
 const object = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value);
@@ -15,7 +14,31 @@ const blob = (path: string) => {
   return createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex");
 };
 
-async function entries(tree: string, api: UlwApi) {
+export type GitHubApi = (path: string, method?: string, body?: unknown) => Promise<unknown>;
+
+/** A matching list result is not enough: bind both sides of the PR to this repository and exact branch/head. */
+export function canonicalPull(value: unknown, branch: string, commit: string) {
+  if (
+    !object(value) ||
+    !Number.isSafeInteger(value["number"]) ||
+    Number(value["number"]) <= 0 ||
+    value["html_url"] !== `https://github.com/${RELEASE_REPOSITORY}/pull/${value["number"]}` ||
+    !["open", "closed"].includes(String(value["state"])) ||
+    !object(value["head"]) ||
+    value["head"]["ref"] !== branch ||
+    value["head"]["sha"] !== commit ||
+    !object(value["head"]["repo"]) ||
+    value["head"]["repo"]["full_name"] !== RELEASE_REPOSITORY ||
+    !object(value["base"]) ||
+    value["base"]["ref"] !== "main" ||
+    !object(value["base"]["repo"]) ||
+    value["base"]["repo"]["full_name"] !== RELEASE_REPOSITORY
+  )
+    throw new Error("Existing pull request differs from its canonical branch and head");
+  return { url: String(value["html_url"]), state: String(value["state"]) };
+}
+
+async function entries(tree: string, api: GitHubApi) {
   const result = await api(`${root}/git/trees/${tree}?recursive=1`);
   if (!object(result) || result["sha"] !== tree || result["truncated"] !== false || !Array.isArray(result["tree"]))
     throw new Error("Incomplete native candidate tree");
@@ -44,7 +67,7 @@ export async function existingNativeCommit(
   directory: string,
   candidate: NativeCandidate,
   commit: string,
-  api: UlwApi,
+  api: GitHubApi,
 ): Promise<void> {
   const head = await api(`${root}/git/commits/${commit}`);
   const base = await api(`${root}/git/commits/${candidate.sourceCommit}`);
@@ -83,10 +106,10 @@ export async function existingNativeCommit(
   }
 }
 
-export async function existingNativePull(branch: string, commit: string | undefined, api: UlwApi) {
+export async function existingNativePull(branch: string, commit: string | undefined, api: GitHubApi) {
   const pulls = await api(`${root}/pulls?state=all&head=${RELEASE_REPOSITORY.split("/")[0]}:${branch}&base=main`);
   if (!Array.isArray(pulls) || pulls.length > 1) throw new Error("Ambiguous native pull request lookup");
   if (!pulls.length) return undefined;
   if (!commit) throw new Error("Existing native pull has no exact branch; no branch was recreated");
-  return canonicalUlwPull(pulls[0], branch, commit);
+  return canonicalPull(pulls[0], branch, commit);
 }

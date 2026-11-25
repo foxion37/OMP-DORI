@@ -4,7 +4,7 @@ import { classifyOmpArgv, nonPidPreservingPrefix } from "./omp-argv.ts";
 import { NATIVE_VALUE_FLAGS } from "./omp-options.ts";
 
 const FORBIDDEN_FLAGS =
-  /^(?:--(?:cwd|mode|no-ui|no-session|session-dir|session|resume|continue|restore|fork|from-claude|from-codex|provider-session-id|goal|plan|plan-yolo|plan-yolo-into|approval-mode|auto-approve|yolo|print|(?:cataly|dori)-(?:launch-model|monitor-bootstrap|lane-receiver))|-[crp].*|--)(?:=|$)/;
+  /^(?:--(?:cwd|mode|no-ui|no-session|session-dir|session|resume|continue|restore|fork|from-claude|from-codex|provider-session-id|goal|plan|plan-yolo|plan-yolo-into|approval-mode|auto-approve|yolo|print|cataly-(?:launch-model|monitor-bootstrap|lane-receiver))|-[crp].*|--)(?:=|$)/;
 
 /** Headless uses exact native argv, but never accepts a caller-supplied mode or transcript selector. */
 export const headlessArgv = (template: readonly string[], model: string, harnessRole?: NativeHarnessRole): string[] => {
@@ -22,7 +22,7 @@ export const headlessArgv = (template: readonly string[], model: string, harness
     const [flag, attached] = arg.split(/=(.*)/s, 2);
     if (!arg.startsWith("-") || FORBIDDEN_FLAGS.test(arg))
       throw new Error("headless agentCommand cannot add initial text or override mode, session, goal or approval");
-    if (flag === "--cataly-role" || flag === "--dori-role") {
+    if (flag === "--cataly-role") {
       const explicit = parseCatalyRole(attached ?? argv[++at]);
       // The shared agentCommand is a lane template. Only a harness role may reinterpret its lane selector.
       if (roleSeen || (explicit !== role && !(harnessRole && explicit === "lane")))

@@ -7,14 +7,14 @@ type EndpointOptions = {
   readonly pane?: string;
   readonly cwd?: string;
   readonly pid?: number;
-  readonly legacyLead?: boolean;
+  readonly role?: "cataly" | "lane";
 };
 
 /** An OMP session's same-host remote endpoint, as the Cataly extension publishes it. */
 export async function startTestEndpoint(
   state: string,
   cleanup: Array<() => void | Promise<void>>,
-  { session = "native-001", pane, cwd = "/project", pid, legacyLead = false }: EndpointOptions = {},
+  { session = "native-001", pane, cwd = "/project", pid, role = "lane" }: EndpointOptions = {},
 ) {
   const dir = remoteSocketDir(state);
   mkdirSync(dir, { mode: 0o700, recursive: true });
@@ -23,7 +23,7 @@ export async function startTestEndpoint(
   const target = {
     session,
     generation: "original",
-    role: "lane",
+    role,
     status: "idle",
     cwd,
     ...(pane === undefined ? {} : { pane }),
@@ -39,7 +39,7 @@ export async function startTestEndpoint(
       if (!pending.includes("\n")) return;
       const request = JSON.parse(pending) as { op: string; generation?: string; text?: string };
       if (request.op === "info")
-        connection.end(`${JSON.stringify({ ok: true, data: legacyLead ? { ...target, role: "dori" } : target })}\n`);
+        connection.end(`${JSON.stringify({ ok: true, data: target })}\n`);
       else if (request.generation !== target.generation) connection.end('{"ok":false,"error":"wrong generation"}\n');
       else if (request.op === "read")
         connection.end('{"ok":true,"data":{"messages":[{"role":"assistant","text":"status"}]}}\n');

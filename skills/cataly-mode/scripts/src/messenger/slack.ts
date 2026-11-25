@@ -56,7 +56,7 @@ export class Slack {
     let scope: SlackScope | undefined;
     if (this.ledger && method === "chat.postMessage") {
       scope = await this.identity();
-      this.ledger.assertScoped();
+      this.ledger.assertReadable();
     }
     const readOnly = [
       "auth.test",

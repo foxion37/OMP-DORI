@@ -34,9 +34,9 @@ export function nativeUpdateFixture(roots: string[]) {
   roots.push(root);
   const source = join(root, "source");
   const remote = join(root, "upstream");
-  const old = overlayFixture(source, remote, true);
+  const old = overlayFixture(source, remote, "reviewed-overlay", "19.0.0");
   fixtureGit(remote, "branch", "-M", "main");
-  fixtureGit(remote, "tag", "v18.20.0", old.commit);
+  fixtureGit(remote, "tag", "v19.0.0", old.commit);
   for (const [directory, section, name] of NATIVE_PINS) {
     mkdirSync(join(source, directory), { recursive: true, mode: 0o700 });
     writeFileSync(
@@ -45,11 +45,11 @@ export function nativeUpdateFixture(roots: string[]) {
         name: `fixture-${directory.replaceAll("/", "-")}`,
         private: true,
         scripts: { test: "echo trusted-source-test" },
-        [section]: { [name]: "18.20.0" },
+        [section]: { [name]: "19.0.0" },
       }),
     );
   }
-  fixtureDependencyFiles(source, source, "18.20.0", "18.20.0");
+  fixtureDependencyFiles(source, source, "19.0.0", "19.0.0");
   fixtureGit(source, "init", "--quiet");
   fixtureGit(source, "add", ".");
   fixtureGit(source, "commit", "--quiet", "-m", "Pinned native source and package fixture");

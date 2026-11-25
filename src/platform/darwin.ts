@@ -25,8 +25,19 @@ const SZOMB = 5;
 const CTL_KERN = 1;
 const KERN_PROCARGS2 = 49;
 
+/**
+ * `/usr/sbin/sysctl -n kern.memorystatus_level`: XNU's `memorystatus_level`, the global `memory_pressure` prints as
+ * "System-wide memory free percentage". Run by absolute path under a cleared environment with `LC_ALL=C`, within 2 s
+ * and 16 bytes, exactly as native/src/discord/darwin.rs reads it for the Rust launch guard.
+ */
 const sysctlMemoryLevel = (): string =>
-  execFileSync("sysctl", ["-n", "kern.memorystatus_level"], { encoding: "utf8", timeout: 2000 });
+  execFileSync("/usr/sbin/sysctl", ["-n", "kern.memorystatus_level"], {
+    encoding: "utf8",
+    env: { LC_ALL: "C" },
+    maxBuffer: 16,
+    stdio: ["ignore", "pipe", "ignore"],
+    timeout: 2000,
+  });
 
 let lib: Darwin | undefined;
 function libproc(): Darwin {
@@ -92,20 +103,24 @@ const executablePath = (pid: number): string => {
 };
 
 /**
- * The kernel's available-memory level when it answers a sane percentage, otherwise the free-pages fallback. The two
- * readers are parameters so their policy can be pinned without a real sysctl or real free memory.
+ * The one macOS "memory free %": the kernel's level when it answers a whole percentage, otherwise the free-pages share
+ * of physical memory (os.freemem()/os.totalmem(), which macOS answers from free plus speculative pages and hw.memsize),
+ * otherwise 0. With neither readable the guard fails closed: both are kernel interfaces every macOS host has, so their
+ * absence is a fault to hold launches on, never a reason to admit them. native/src/discord/lanes/guard.rs applies the
+ * same policy. The two readers are parameters so it can be pinned without a real sysctl or real free memory.
  */
 export const darwinMemFreePct = (
   readLevel: () => string = sysctlMemoryLevel,
   freePct: () => number = memoryFreePct,
 ): number => {
   try {
-    const level = Number(readLevel().trim());
-    if (Number.isFinite(level) && level >= 0 && level <= 100) return Math.round(level);
+    const level = readLevel().trim();
+    if (/^\d{1,3}$/.test(level) && Number(level) <= 100) return Number(level);
   } catch {
-    // fall through to freemem(): a missing sysctl must not stop the loop from reading memory at all
+    // fall through to free pages: a missing sysctl must not stop the guard from reading memory at all
   }
-  return freePct();
+  const fallback = freePct();
+  return Number.isFinite(fallback) && fallback >= 0 && fallback <= 100 ? fallback : 0;
 };
 
 export const darwin: PlatformAdapter = {

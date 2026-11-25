@@ -69,7 +69,7 @@ function prefixEnd(argv: readonly string[]): {
     while (ASSIGNMENT.test(argv[at] ?? "")) at++;
     const word = platform.programName(argv[at] ?? "");
     const subcommand = argv[at + 1];
-    const sideWrapper = word === "omp-cataly" || word === "omp-dori";
+    const sideWrapper = word === "omp-cataly";
     // Bun's command word can be `x`; an `x` after a script is that script's data, not a package runner.
     const bunCommand = word === "bun" ? argv.slice(at + 1).find((arg) => !arg.startsWith("-")) : undefined;
     if (LAUNCHERS[word]?.forks || RUNNERS.includes(word) || bunCommand === "x") forking ??= word;

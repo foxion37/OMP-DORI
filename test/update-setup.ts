@@ -81,7 +81,7 @@ export function fixture() {
     write(root, "package.json", '{"name":"cataly","type":"module"}\n');
     write(root, "skills/cataly-mode/scripts/src/cli.ts", "export const cli = 1;\n");
     write(root, "src/behavior.ts", "export const behavior = 1;\n");
-    write(root, "omp-ulw.lock", `${"a".repeat(40)}\n`);
+    write(root, "native-addon/pin.txt", `${"a".repeat(40)}\n`);
   }
   git(remote, "init", "-b", "main");
   git(remote, "config", "user.name", "Cataly updater fixture");
@@ -134,7 +134,6 @@ export async function publicationFixture(
   options: (paths: { readonly directory: string; readonly localSource: string }) => Partial<UpdateConfig> = () => ({}),
 ): Promise<PublicationFixture> {
   const f = fixture();
-  f.write(f.localSource, "ref/omp-ulw/library.ts", "export const pinned = true;\n");
   f.write(f.localSource, ".env", "PRIVATE_FIXTURE=never-exported\n");
   f.write(f.localSource, "config.json", '{"privateFixture":"never-exported"}\n');
   f.write(f.remote, "src/behavior.ts", "export const behavior = 2;\n");
@@ -154,7 +153,12 @@ export async function publicationFixture(
   f.write(seed, "package.json", '{"name":"independent-owner-history","type":"module"}\n');
   git(seed, "add", ".");
   git(seed, "commit", "-m", "Independent owner history");
-  for (const path of ["package.json", "skills/cataly-mode/scripts/src/cli.ts", "src/behavior.ts", "omp-ulw.lock"]) {
+  for (const path of [
+    "package.json",
+    "skills/cataly-mode/scripts/src/cli.ts",
+    "src/behavior.ts",
+    "native-addon/pin.txt",
+  ]) {
     f.write(seed, path, readFileSync(join(f.localSource, path), "utf8"));
   }
   git(seed, "add", ".");

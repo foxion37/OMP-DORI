@@ -4,14 +4,11 @@ import type { Wait } from "./wait.ts";
 export type LaneStatus = "working" | "waiting" | "ready" | "done" | "lost";
 
 /**
- * One lane record. `sessionRef` is the session it runs in, on whichever runtime opened it; `paneId`/`tabId` are written
- * beside it (the ref's id and container) so an older binary still reads the file. `migratedFrom` and `migration` were
- * written by the removed `cataly migrate` and are only read: `migration` marks a handover an older binary left in
- * progress, and the duty loop leaves that record alone. `sessionPath`: the native session file the lane started with.
+ * One lane record. `sessionRef` is the session it runs in, on whichever runtime opened it. `sessionPath`: the native
+ * session file the lane started with.
  * `policyBinding`: the root registration's exact headless policy snapshot binding, not a lookup by lane key.
  * `progressAt`: the last time the lane made progress (start, a report with new evidence, READY); the duty loop nudges and
- * escalates on it, and a record from before it existed falls back to its last start, report or READY. `lastEvidence`:
- * the evidence that last moved it. `evidenceSeen`: links that already counted once. `evidenceMtimes`: each file that
+ * escalates on it. `lastEvidence`: the evidence that last moved it. `evidenceSeen`: links that already counted once. `evidenceMtimes`: each file that
  * counted, by absolute path, with the modification time it counted with. `escalatedAt`: when the lead was last told the
  * lane made no progress; one escalation per stall. `lastActivityAt`: the last sign of life (any report, a working pane).
  * `waitingFor`/`waitingSince`: what a waiting lane said it waits on (`report --status waiting --for`) and when it started
@@ -23,20 +20,16 @@ export type LaneStatus = "working" | "waiting" | "ready" | "done" | "lost";
 export type Lane = {
   key: string;
   sessionRef: SessionRef;
-  migratedFrom?: SessionRef[];
-  migration?: true;
   sessionPath?: string;
   policyBinding?: string;
-  paneId: string;
-  tabId: string;
   brief: string;
   cwd: string;
   status: LaneStatus;
   createdAt: number;
   lastActivityAt: number;
-  progressAt?: number;
-  noticeId?: string;
-  progressEpoch?: number;
+  progressAt: number;
+  noticeId: string;
+  progressEpoch: number;
   lastEvidence?: { ref: string; at: number };
   evidenceSeen?: string[];
   evidenceMtimes?: Record<string, number>;
@@ -51,7 +44,7 @@ export type Lane = {
   log: { at: number; kind: "start" | "report" | "ready" | "nudge" | "escalate" | "done" | "lost"; text: string }[];
 };
 
-/** The sessions `cataly up` opens; roles.json maps each to a ref string (a bare herdr pane id, or `hc:t7`). */
+/** The sessions `cataly up` opens; roles.json maps each to a ref string (`tern:42`). */
 export type Role = "lead" | "duty" | "duty-loop" | "hourly-loop";
 
 /**

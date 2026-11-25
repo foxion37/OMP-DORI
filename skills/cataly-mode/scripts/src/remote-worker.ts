@@ -32,15 +32,11 @@ const OPERATIONS = new Set([
   "wake",
 ]);
 
-// Stored lanes may still name a legacy herdr/hc session; that is a parseable owner, not an unreadable row.
 const validRef = (raw: unknown): boolean => {
   if (raw === undefined) return true;
   const ref = object(raw);
   return (
-    (ref?.["runtime"] === "headless" ||
-      ref?.["runtime"] === "hc" ||
-      ref?.["runtime"] === "herdr" ||
-      ref?.["runtime"] === "tern") &&
+    (ref?.["runtime"] === "headless" || ref?.["runtime"] === "tern") &&
     typeof ref["id"] === "string" &&
     ref["id"].length > 0
   );
@@ -53,7 +49,6 @@ const belongsToLane = (lane: Lane, target: Session, ref: SessionRef | undefined)
   (ref !== undefined &&
     (sessionOf(lane)?.id === ref.id ||
       lane.nativeCloseIntent?.ref?.id === ref.id ||
-      lane.pane === ref.id ||
       (ref.runtime === "headless" && lane.lifecycleEpoch === ref.id))) ||
   (ref === undefined && !lane.session);
 
@@ -74,7 +69,7 @@ async function requireStandaloneClose(deps: FlowDeps, target: Session, ref: Sess
     const intent = lane.nativeCloseIntent;
     if (
       !LANE_KEY.test(lane.key) ||
-      [lane.session, lane.sessionFile, lane.pane, lane.lifecycleEpoch].some(
+      [lane.session, lane.sessionFile, lane.lifecycleEpoch].some(
         (field) => field !== undefined && (typeof field !== "string" || field.length === 0),
       ) ||
       !validRef(lane.sessionRef) ||

@@ -21,7 +21,7 @@ export async function startNativeLane(
   const { key, sessionRef: ref, cwd } = reservation;
   const bindCurrent = (patch: Pick<Lane, "policyBinding" | "sessionPath">): Lane =>
     d.store.updateLane(key, (current) => {
-      if (!current || !sameLaneRegistration(reservation, current) || current.migration)
+      if (!current || !sameLaneRegistration(reservation, current))
         throw new Refusal(`lane ${key} registration changed during native startup`);
       if (current.status === "done" || current.status === "lost") throw new Refusal(`lane ${key} is ${current.status}`);
       return { ...current, ...patch };

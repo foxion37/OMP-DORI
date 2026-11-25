@@ -49,7 +49,9 @@ export const USAGE = `cataly harness - a proactive multi-session harness using n
 --text may be omitted to read the message from stdin.
 send, report and ready exit 3 and print HELD <target> when the delivery may or may not have reached the pane:
 it is held and never resent, so do not send it again: check the pane, then cataly harness inbox ack or cataly harness inbox resend it.
-QUEUED (exit 0) means it waits in the pane's inbox.`;
+QUEUED (exit 0) means it waits in the pane's inbox.
+A headless ref may be shortened, as status shows it, to a unique prefix of 8 or more characters (headless:3f2a9c1d);
+an ambiguous or unknown prefix is refused.`;
 
 /** `rest`: every argument after a bare `--` in flag position, verbatim (the command `lock` runs). */
 export type Args = { pos: string[]; flags: Map<string, string[]>; rest: string[] };

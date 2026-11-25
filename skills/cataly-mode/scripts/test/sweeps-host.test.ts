@@ -61,7 +61,7 @@ test("on Linux the host guard reads load and available memory directly", async (
   expect(s.diskFreeGb).toBe(0.5);
 });
 
-test("the host guard keeps memory at 100% when neither memory_pressure nor /proc/meminfo works", async () => {
+test("on Linux the host guard keeps memory at 100% when /proc/meminfo is unreadable or incomplete", async () => {
   expect((await linuxHost(null)).memFreePct).toBe(100);
   expect((await linuxHost("MemTotal:       16000000 kB\n")).memFreePct).toBe(100);
 });

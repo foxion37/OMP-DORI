@@ -184,7 +184,7 @@ posix(
   },
 );
 
-posix("a running Dori writer for this cache or an older writer's preparation keeps every identity", () => {
+posix("a running Cataly writer for this cache or an older writer's preparation keeps every identity", () => {
   const c = pruneFixture();
   const x = c.native("x");
   const uid = process.getuid?.() ?? 0;

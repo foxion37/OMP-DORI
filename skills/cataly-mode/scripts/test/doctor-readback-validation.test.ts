@@ -17,14 +17,14 @@ const readback = {
 };
 const cases = [
   {
-    name: "legacy lane without a readback",
+    name: "lane without a readback",
     value: undefined,
     request: "openai-codex/fixture-model",
     severity: "INFO",
     detail: "status=unknown",
   },
   {
-    name: "legacy alias is not an exact comparison",
+    name: "custom-agent alias is not an exact comparison",
     value: readback,
     request: "fixture-model",
     severity: "INFO",

@@ -25,10 +25,7 @@ function writerHome(args: string): string | undefined {
     if (base[at] === "source-dependencies.ts" && SOURCE_ACTION.test(next)) return words[at + 3] ?? "";
     if (base[at] === "install-source.sh") return "env";
     if (base[at] === "cli.ts" && /^(?:install|rollback)$/.test(next)) return "env";
-    if (
-      ["cli.ts", "cataly", "cataly-harness", "dori", "dori-harness"].includes(base[at]!) &&
-      /^(?:update|upstream)$/.test(next)
-    )
+    if (["cli.ts", "cataly", "cataly-harness"].includes(base[at]!) && /^(?:update|upstream)$/.test(next))
       if (SUBCOMMAND.test(base[at + 2] ?? "")) return "env";
   }
   return undefined;
@@ -117,7 +114,7 @@ export type UseHoldOptions = {
 /**
  * What keeps identities besides what the report reads (see `protections`, which judges this user's processes): a live
  * lease keeps its identity, and so does a process of this user that runs, maps or holds open a file in it (the entry
- * itself open as a directory included); a lease that cannot be read, a preparation of an older writer, a running Dori
+ * itself open as a directory included); a lease that cannot be read, a preparation of an older writer, a running Cataly
  * writer for this cache and a privileged process whose working directory cannot be read keep every identity. Keys may
  * also be quarantined names (`<identity>.pruning`), which a lease on that identity keeps too.
  */

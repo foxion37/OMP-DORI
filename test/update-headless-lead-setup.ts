@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { HeadlessRuntime } from "../src/runtime/headless.ts";
 import { writePrivate } from "../src/runtime/headless-record.ts";
@@ -7,7 +7,10 @@ import type { DeploymentConfig } from "../src/update/deployment-types.ts";
 const fakeHost = resolve(import.meta.dir, "fixtures/headless-rpc.ts");
 export const repoCli = resolve(import.meta.dir, "../src/cli.ts");
 
-/** A release whose `src/cli.ts` runs this checkout's CLI, so `cataly up|stop` behave exactly as shipped. */
+/**
+ * A release whose `src/cli.ts` runs this checkout's CLI, so `cataly up|stop` behave exactly as shipped. It carries this
+ * checkout's own native source bundle, whose locked version the fake OMP reports.
+ */
 export function release(dir: string, generation: string): void {
   mkdirSync(join(dir, "src"), { recursive: true });
   mkdirSync(join(dir, "extension"), { recursive: true });
@@ -20,6 +23,8 @@ process.exit(await child.exited);
 `,
   );
   writeFileSync(join(dir, "extension/index.ts"), `export const generation = ${JSON.stringify(generation)};\n`);
+  for (const name of ["native-omp.lock", "native-omp.patch"])
+    copyFileSync(resolve(import.meta.dir, "..", name), join(dir, name));
 }
 
 /** Poll a native observation until it yields a value; observation errors count as not yet. */

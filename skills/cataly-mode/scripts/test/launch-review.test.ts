@@ -44,24 +44,19 @@ test.each(["start", "cancel"])("queue %s rejects --dry-run without live checks o
   expect(await f.deps.registry.read(f.input.key)).toBeNull();
 });
 
-test.each(["default", "explicit", "legacy"])("queued %s cwd controls disk admission and launch", async (kind) => {
+test.each(["default", "explicit"])("queued %s cwd controls disk admission and launch", async (kind) => {
   const enqueuedDefault = join(f.state.dir, "original");
   const explicit = join(f.state.dir, "override");
   const startDefault = join(f.state.dir, "new-default");
   for (const dir of [enqueuedDefault, explicit, startDefault]) mkdirSync(dir);
   const enqueued = kind === "explicit" ? explicit : enqueuedDefault;
-  const expected = kind === "legacy" ? startDefault : realpathSync.native(enqueued);
-  const entry = await enqueueLaunch(
+  const expected = realpathSync.native(enqueued);
+  await enqueueLaunch(
     { ...f.deps, config: { ...f.deps.config, defaultCwd: relative(process.cwd(), enqueuedDefault) } },
     kind === "explicit" ? { ...f.input, cwd: relative(process.cwd(), explicit) } : f.input,
     [f.prior.key],
   );
-  if (kind === "legacy") {
-    const { cwd: _cwd, ...input } = entry.input;
-    store().write({ ...entry, input });
-  } else {
-    expect(store().read(f.input.key)?.input.cwd).toBe(expected);
-  }
+  expect(store().read(f.input.key)?.input.cwd).toBe(expected);
   const created: string[] = [];
   f.world.onCreate = (spec) => {
     created.push(spec.cwd);

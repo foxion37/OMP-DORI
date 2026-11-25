@@ -11,7 +11,7 @@ afterEach(() => {
 });
 
 function fixture() {
-  const directory = mkdtempSync(join(tmpdir(), "dori-publication-test-"));
+  const directory = mkdtempSync(join(tmpdir(), "cataly-publication-test-"));
   directories.push(directory);
   return { directory, manifest: releaseFixture() };
 }

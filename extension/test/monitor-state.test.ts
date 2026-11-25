@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { type FakePi, load, useConfig } from "./fake-pi";
 
 test("boot metadata survives shutdown and restoration, then forgets an explicitly stopped monitor", async () => {
-  const stateDir = useConfig(join(import.meta.dir, "fake-ulw.ts"));
+  const stateDir = useConfig();
   const previousHeadless = process.env.CATALY_HEADLESS_ID;
   delete process.env.CATALY_HEADLESS_ID;
   const session = { id: "monitor-owner", file: "/sessions/monitor-owner.jsonl", entries: [] };

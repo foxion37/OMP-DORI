@@ -15,9 +15,10 @@ export interface PlatformAdapter {
   readonly os: HostOs;
 
   /**
-   * Percent of memory available to start new work, as src/harness.ts reports it: macOS returns the kernel's own
-   * available-memory level (kern.memorystatus_level, the figure behind Activity Monitor) and falls back to
-   * freemem/totalmem when sysctl fails; every other host rounds os.freemem()/os.totalmem().
+   * Percent of memory available to start new work, as src/harness.ts and the cataly-mode host guard report it: macOS
+   * returns the kernel's own level (kern.memorystatus_level, what `memory_pressure` prints as "System-wide memory free
+   * percentage"), falls back to freemem/totalmem when sysctl fails and answers 0 when neither is readable; every other
+   * host rounds os.freemem()/os.totalmem().
    */
   memFreePct(): number;
 

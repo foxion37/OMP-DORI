@@ -17,7 +17,7 @@ import { processIdentity, sameProcess } from "../update/deployment-process.ts";
 import type { ProcessIdentity } from "../update/deployment-types.ts";
 import { saveDeploymentJson } from "../update/deployment-files.ts";
 import { processExists } from "../update/proc.ts";
-import { consumerLayout, isPrimaryConsumer } from "./layout.ts";
+import { assertConsumerHome, isPrimaryConsumer } from "./layout.ts";
 
 export { fileDigest } from "./file-digest.ts";
 export { isPrimaryConsumer } from "./layout.ts";
@@ -25,9 +25,6 @@ export { isPrimaryConsumer } from "./layout.ts";
 export type ConsumerPaths = {
   readonly home: string;
   readonly cataly: string;
-  /** Historical renderer ABI: archived v1 references import this property. */
-  readonly dori: string;
-  readonly layout: "legacy" | "cataly";
   readonly root: string;
   readonly live: string;
   readonly state: string;
@@ -35,7 +32,6 @@ export type ConsumerPaths = {
   readonly config: string;
   readonly releases: string;
   readonly manifests: string;
-  readonly dependencies: string;
   readonly staging: string;
   readonly links: readonly (readonly [string, string])[];
 };
@@ -43,16 +39,11 @@ export const consumerPaths = (home = homedir(), selectedHome = join(home, ".cata
   home = resolve(home);
   const cataly = resolve(selectedHome);
   const primary = isPrimaryConsumer({ home, cataly });
-  const layout = consumerLayout(home, cataly, readOptionalJson);
-  const skill = layout === "legacy" ? "dori-mode" : "cataly-mode";
-  const command = layout === "legacy" ? "dori" : "cataly";
-  const extension = layout === "legacy" ? "omp-dori" : "omp-cataly";
+  assertConsumerHome(home, cataly, readOptionalJson);
   const root = join(cataly, "releases");
   return {
     home,
     cataly,
-    dori: cataly,
-    layout,
     root,
     live: join(cataly, "src"),
     state: join(root, "consumer-installed.json"),
@@ -60,15 +51,14 @@ export const consumerPaths = (home = homedir(), selectedHome = join(home, ".cata
     config: join(cataly, "config.json"),
     releases: join(root, "releases"),
     manifests: join(root, "consumer-manifests"),
-    dependencies: join(root, "consumer-dependencies"),
     staging: join(root, "consumer-staging"),
     links: !primary
       ? []
       : ([
-          [join(home, ".agents/skills", skill), join(cataly, "src/skills", skill)],
-          [join(home, ".omp/agent/extensions", extension), join(cataly, "src/extension")],
-          [join(cataly, "bin", command), join(cataly, "src/skills", skill, "scripts/src/cli.ts")],
-          [join(cataly, "bin", `${command}-harness`), join(cataly, "src/src/cli.ts")],
+          [join(home, ".agents/skills/cataly-mode"), join(cataly, "src/skills/cataly-mode")],
+          [join(home, ".omp/agent/extensions/omp-cataly"), join(cataly, "src/extension")],
+          [join(cataly, "bin/cataly"), join(cataly, "src/skills/cataly-mode/scripts/src/cli.ts")],
+          [join(cataly, "bin/cataly-harness"), join(cataly, "src/src/cli.ts")],
         ] as const),
   };
 };
@@ -151,15 +141,7 @@ export function replacePointer(path: string, expected: string | undefined, targe
 }
 
 export function initialize(paths: ConsumerPaths): void {
-  for (const dir of [
-    paths.home,
-    paths.cataly,
-    paths.root,
-    paths.releases,
-    paths.manifests,
-    paths.dependencies,
-    paths.staging,
-  ]) {
+  for (const dir of [paths.home, paths.cataly, paths.root, paths.releases, paths.manifests, paths.staging]) {
     realDirectory(dir, true);
     owned(dir);
   }

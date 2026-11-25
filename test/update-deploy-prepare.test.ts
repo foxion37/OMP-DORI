@@ -13,7 +13,7 @@ const posix = test.skipIf(process.platform !== "linux" && process.platform !== "
 // POSIX-only: release preparation runs Git and installs through `/bin/sh -c 'umask 077; exec "$@"'`.
 const it = test.skipIf(process.platform === "win32");
 
-it("published clone provisions frozen dependencies privately and carries only the admitted opaque pin", async () => {
+it("published clone provisions frozen dependencies privately and matches the reviewed candidate", async () => {
   const f = preparationFixture();
   const candidateBefore = sourceManifest(f.candidate);
   await prepareRelease(f.config, f.input, f.record);
@@ -21,7 +21,6 @@ it("published clone provisions frozen dependencies privately and carries only th
   expect(git(f.record.releasePath, "rev-parse", "HEAD^{tree}")).toBe(f.input.tree);
   expect(sourceManifest(f.record.releasePath).hash).toBe(candidateBefore.hash);
   expect(sourceManifest(f.candidate)).toEqual(candidateBefore);
-  expect(readFileSync(join(f.record.releasePath, "ref/omp-ulw/index.ts"), "utf8")).toContain("preserved");
   expect(lstatSync(join(f.record.releasePath, "skills/cataly-mode/scripts/src/cli.ts")).mode & 0o111).toBe(0o111);
   expect(readFileSync(join(f.home, ".cataly/config.json"), "utf8")).toBe('{"owner":"unchanged"}\n');
   expect(readFileSync(join(f.home, ".cataly/state/owner.json"), "utf8")).toBe('{"cursor":17}\n');
@@ -56,10 +55,10 @@ it("a Git tree containing excluded runtime data is rejected even when its admitt
   expect(lstatSync(f.config.liveSource, { throwIfNoEntry: false })).toBeUndefined();
 });
 
-test("changed opaque candidate pin invalidates preparation without rewriting the candidate", () => {
+test("changed candidate source invalidates preparation without rewriting the candidate", () => {
   const f = preparationFixture();
-  const path = join(f.candidate, "ref/omp-ulw/index.ts");
-  writeFileSync(path, "export const opaquePin = 'changed';\n");
+  const path = join(f.candidate, "src/app.ts");
+  writeFileSync(path, "export const release = 'changed';\n");
   expect(() => validateDeploymentInput(f.input)).toThrow("candidate no longer matches");
   expect(readFileSync(path, "utf8")).toContain("changed");
 });

@@ -1,6 +1,5 @@
 import { realpathSync } from "node:fs";
 import { isAbsolute } from "node:path";
-import { readSourceBundle } from "../release/source-bundle.ts";
 import type { ActiveDeployment } from "./deployment-active.ts";
 import { DeploymentHeld, managedOmpCommand, sameProcess } from "./deployment-process.ts";
 import { assertRuntimeToolchain, prepareRuntimeToolchain } from "./deployment-toolchain.ts";
@@ -21,18 +20,11 @@ export function runtimeUsesToolchain(runtime: RuntimeIdentity, receipt: Toolchai
   });
 }
 
-/** The new release's prepared overlay can serve rollback only when the prior source pins the same overlay identity. */
+/** Rollback relaunches the prior source with its own pinned extension. */
 function priorSourceToolchain(toolchain: ToolchainReceipt, source: string | undefined): ToolchainReceipt {
-  if (!toolchain.ompUlw || source === toolchain.ompUlw.source) return toolchain;
-  let identity: string | undefined;
-  try {
-    identity = source === undefined ? undefined : readSourceBundle(source).identity;
-  } catch {
-    identity = undefined;
-  }
-  if (source === undefined || identity !== toolchain.ompUlw.identity)
-    throw new DeploymentHeld("prior source cannot be relaunched with the prepared extension overlay");
-  return { ...toolchain, ompUlw: { ...toolchain.ompUlw, source } };
+  if (source === toolchain.extensionSource) return toolchain;
+  if (source === undefined) throw new DeploymentHeld("prior source cannot be relaunched with the pinned extension");
+  return { ...toolchain, extensionSource: source };
 }
 
 /** A prior managed receipt outranks the prepared one; without it the running lead must already use the prepared image. */

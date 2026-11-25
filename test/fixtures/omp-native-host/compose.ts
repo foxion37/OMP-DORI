@@ -204,7 +204,7 @@ export const nativeComposition = async (
       promptBase = [...rendered.systemPrompt, ...base];
     }
     const originalBase = [...promptBase];
-    const prompt = options.prompt ?? "ulw fix the fixture";
+    const prompt = options.prompt ?? "fix the fixture";
     const first = await runner.emitBeforeAgentStart(prompt, undefined, promptBase);
     const second = await runner.emitBeforeAgentStart(prompt, undefined, promptBase);
     let postCompaction;

@@ -62,7 +62,7 @@ posix("source preview never probes the owner-selected OMP executable", () => {
   const s = setup();
   const executable = join(s.root, "owner-omp");
   const calls = join(s.root, "owner-omp.calls");
-  writeFileSync(executable, '#!/bin/sh\nprintf "%s\\n" "$*" >> "$INSTALL_TEST_OMP_CALLS"\nprintf "18.20.0\\n"\n', {
+  writeFileSync(executable, '#!/bin/sh\nprintf "%s\\n" "$*" >> "$INSTALL_TEST_OMP_CALLS"\nprintf "19.0.1\\n"\n', {
     mode: 0o700,
   });
   const result = s.install({ CATALY_INSTALL_MODE: "primary", CATALY_OMP: executable, INSTALL_TEST_OMP_CALLS: calls }, [
@@ -75,16 +75,16 @@ posix("source preview never probes the owner-selected OMP executable", () => {
   expect(existsSync(join(s.home, ".cataly"))).toBe(false);
 });
 
-posix("source preview neither discloses nor validates an owner ULW checkout value", () => {
+posix("source preview neither discloses nor validates an owner path value", () => {
   const s = setup();
   const base = join(s.home, ".omp-cataly");
   mkdirSync(base, { mode: 0o700 });
   const path = join(base, "config.json");
-  const sentinel = "private-owner-ulw-checkout";
-  const original = JSON.stringify({ ompUlwPath: join(s.home, sentinel, "index.ts") });
+  const sentinel = "private-owner-checkout";
+  const original = JSON.stringify({ ownerPath: join(s.home, sentinel, "index.ts") });
   writeFileSync(path, original, { mode: 0o600 });
 
-  const result = s.install({ CATALY_INSTALL_MODE: "side", OMP_ULW_SRC: "" }, ["--preview"]);
+  const result = s.install({ CATALY_INSTALL_MODE: "side" }, ["--preview"]);
   expect(result.code, result.err).toBe(0);
   expect(result.out).toContain("SETUP_PREVIEW_ONLY");
   expect(result.out + result.err).not.toContain(sentinel);
@@ -105,14 +105,13 @@ posix("source setup preserves custom argv, model, hooks and unknown keys without
     defaultModel: "owner/model",
     hooks: { transcribe: ["owner-transcribe", "owner-secret"] },
     unknown: { keep: [1, { nested: true }] },
-    ompUlwPath: "/previous/managed/ulw.ts",
   };
   const path = join(base, "config.json");
   writeFileSync(path, JSON.stringify(config));
   chmodSync(path, 0o640);
   const result = s.install({ CATALY_INSTALL_MODE: "primary", CATALY_NO_PULL: "1" });
   expect(result.code).toBe(0);
-  expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({ ...config, ompUlwPath: "" });
+  expect(JSON.parse(readFileSync(path, "utf8"))).toEqual(config);
   expect(statSync(path).mode & 0o777).toBe(0o640);
   expect(result.out + result.err).not.toContain("owner-secret");
   expect(result.out + result.err).not.toContain("owner/model");

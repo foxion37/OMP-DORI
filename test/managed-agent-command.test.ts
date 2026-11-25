@@ -24,7 +24,7 @@ const runConfig = async (path: string, home: string, root: string, env: Record<s
   return config.agentCommand;
 };
 
-posix("managed argv overrides literal omp atomically before the legacy command", async () => {
+posix("managed argv overrides literal omp atomically before the shell command", async () => {
   const f = managedCommand();
   environment({ CATALY_AGENT_CMD: "false; touch override-ran" });
   const argv = await runConfig(f.config.catalyConfig, f.config.home, f.root, f.env);
@@ -48,23 +48,16 @@ posix.each(["primary", "side"])("%s source defaults follow the complete managed 
   expect(selected).toEqual([...f.argv, ...stored.agentCommand.slice(1)]);
   if (mode === "side") {
     const result = shell(
-      `. ${shq(join(base, "env.sh"))}; printf '%s\\0' "$CATALY_AGENT_ARGV" "\${CATALY_AGENT_CMD-unset}" "\${CATALY_OMP_ULW_PATH-unset}" "\${CATALY_AGENT_EXECUTABLE-unset}" "$OMP_ULW_SCOPE_FILE"`,
+      `. ${shq(join(base, "env.sh"))}; printf '%s\\0' "$CATALY_AGENT_ARGV" "\${CATALY_AGENT_CMD-unset}" "\${CATALY_AGENT_EXECUTABLE-unset}"`,
       f.root,
       {
         ...f.env,
         CATALY_AGENT_CMD: "stale",
         CATALY_AGENT_EXECUTABLE: "stale",
-        OMP_ULW_SCOPE_FILE: "process-local scope",
       },
     );
     expect(result.exitCode).toBe(0);
-    expect(argvOutput(result.stdout)).toEqual([
-      JSON.stringify([join(base, "bin/omp")]),
-      "unset",
-      "unset",
-      "unset",
-      "process-local scope",
-    ]);
+    expect(argvOutput(result.stdout)).toEqual([JSON.stringify([join(base, "bin/omp")]), "unset", "unset"]);
   }
 });
 
@@ -114,7 +107,7 @@ posix.each([false, true])("a selected pathname present=%s never executes shell s
   expect(existsSync(join(f.root, "fallback-ran"))).toBe(false);
 });
 
-posix("legacy shell fragments and literal-default argv overrides retain their distinct contracts", async () => {
+posix("shell command fragments and literal-default argv overrides retain their distinct contracts", async () => {
   const f = managedCommand();
   environment({ CATALY_AGENT_ARGV: undefined, CATALY_AGENT_CMD: f.omp });
   expect((await runConfig(f.config.catalyConfig, f.config.home, f.root, f.env))[0]).toBe(f.omp);

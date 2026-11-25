@@ -1,19 +1,19 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { shq } from "./delivery.ts";
-import { agentCommand, harnessConfigPath, harnessLaunchEnv, rolePrompt, type Deps } from "./harness.ts";
+import { agentCommand, harnessLaunchEnv, rolePrompt, type Deps } from "./harness.ts";
 import { nativeHarnessStatus, nativeInventory, startNativeHarness, withHarnessLock } from "./harness-native.ts";
 import { leadResume } from "./harness-native-resume.ts";
 import { lockEnv } from "./lock.ts";
 import { lockLines } from "./lock-list.ts";
 import { refText } from "./refs.ts";
 import { Refusal } from "./refusal.ts";
-import { assertNoLegacyRuntime } from "./release/legacy-runtime.ts";
 import { groupId } from "./runtime/group.ts";
 import { HeadlessRuntime } from "./runtime/headless.ts";
 import { openSession, type SessionRef, type TerminalRuntime } from "./runtime/types.ts";
 import { RuntimeChoiceError } from "./runtime/select.ts";
 import { laneBoard } from "./status-view.ts";
+import { knownRefs } from "./target.ts";
 
 function renderPrompt(d: Deps, name: "lead.md" | "duty.md"): string {
   const dir = join(d.store.root, "prompts");
@@ -24,8 +24,7 @@ function renderPrompt(d: Deps, name: "lead.md" | "duty.md"): string {
 }
 
 /**
- * Opens lead, duty, the duty loop and the hourly loop on the selected runtime and registers all four roles. A home that
- * still uses the removed herdr/hc runtime stops first with the upgrade instructions. Headless: the lead resumes the
+ * Opens lead, duty, the duty loop and the hourly loop on the selected runtime and registers all four roles. Headless: the lead resumes the
  * session the last harness stop closed cleanly, unless `fresh`. Tern: the lead is a new session's first block, duty a
  * tab in it, the loops splits below duty.
  */
@@ -33,7 +32,6 @@ export async function up(d: Deps, cwd: string, fresh = false): Promise<void> {
   await withHarnessLock(d, async () => {
     if (nativeInventory(d))
       throw new Refusal("a native harness is already registered or held; inspect status and use cataly harness stop");
-    assertNoLegacyRuntime({ stateDir: d.store.root, configPath: harnessConfigPath(d.store.root) });
     if (Object.keys(d.store.roles()).length)
       throw new Refusal(
         "this home already has registered roles. Close their Tern sessions and run cataly harness stop to retire the registrations before up",
@@ -106,6 +104,6 @@ export async function status(d: Deps): Promise<void> {
   for (const line of [runtimeLine(d), `lead=${show(roles.lead)} duty=${show(roles.duty)}`, `home=${d.store.root}`])
     console.log(line);
   for (const line of await nativeHarnessStatus(d)) console.log(line);
-  for (const line of laneBoard(d.store.lanes(), d.now())) console.log(line);
+  for (const line of laneBoard(d.store.lanes(), d.now(), knownRefs(d.store))) console.log(line);
   for (const line of lockLines({ ...lockEnv(d.store.root), now: d.now })) console.log(line);
 }

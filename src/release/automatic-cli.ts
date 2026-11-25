@@ -1,4 +1,3 @@
-import { importLegacyEnvironment } from "../legacy-environment.ts";
 import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
@@ -9,7 +8,6 @@ import { consumerReleaseHome } from "./runtime.ts";
 import { assertInstalledPointer, hasConsumerState, loadInstalled, verifyRelease } from "./state.ts";
 
 export async function runAutomaticCommand(argv: string[]): Promise<number> {
-  importLegacyEnvironment();
   let unlock: (() => void) | undefined;
   try {
     const args = parseArgs({ args: argv, allowPositionals: true, strict: true, options: { home: { type: "string" } } });

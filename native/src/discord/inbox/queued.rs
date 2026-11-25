@@ -13,7 +13,7 @@ pub(in crate::discord) struct Queued {
     pub(in crate::discord) row: i64,
     pub(in crate::discord) id: Snowflake,
     pub(in crate::discord) payload: Value,
-    /// `None` is SQL NULL: a legacy row or a channel without an admission cursor. The `"0"` cursor is `FLOOR`.
+    /// `None` is SQL NULL: a channel without an admission cursor. The `"0"` cursor is `FLOOR`.
     pub(in crate::discord) admitted_after: Option<Snowflake>,
     pub(in crate::discord) parent: Option<Snowflake>,
 }

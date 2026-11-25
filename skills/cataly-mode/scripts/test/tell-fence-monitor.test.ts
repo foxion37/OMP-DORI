@@ -75,7 +75,6 @@ test.each([
   expect(filter(name === "watch" ? "done flow" : name).test(event)).toBe(true);
   const manifest: Manifest = {
     path: join(state.dir, "monitor.json"),
-    kind: "omp",
     data: {
       version: 1,
       sessionId: "owner",

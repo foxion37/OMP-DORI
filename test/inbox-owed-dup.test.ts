@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import { join } from "node:path";
 import { flushInbox } from "../src/inbox.ts";
 import { owedFile } from "../src/inbox-files.ts";
-import { payLead } from "../src/inbox-forward.ts";
+import { payLead } from "../src/inbox-merge.ts";
 import { LEAD_REF as LEAD, setup } from "./inbox-setup.ts";
 
 // payLead renames each spooled notice aside (`.moving`), appends it, then removes the file. A run cut short between the

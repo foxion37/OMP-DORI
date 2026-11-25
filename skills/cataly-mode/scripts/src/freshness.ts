@@ -1,11 +1,10 @@
 import { existsSync } from "node:fs";
 import { type HeadlessObservation, HeadlessRuntime } from "../../../../src/runtime/headless.ts";
-import { isLegacyRuntime } from "../../../../src/runtime/types.ts";
 
 import { withDeliveryLock } from "./delivery-lock.ts";
 import type { FlowDeps } from "./done-flow.ts";
 import { checkWaiting } from "./freshness-wait.ts";
-import { notifyFreshness, rememberFreshness, sampleLegacyReport } from "./freshness-notify.ts";
+import { notifyFreshness, rememberFreshness, sampleScreenReport } from "./freshness-notify.ts";
 import { checkPausedLane } from "./pause.ts";
 import { type Lane, sameLaneGeneration, sessionOf, statusOf } from "./registry.ts";
 import { ReportError } from "./report-events.ts";
@@ -74,13 +73,12 @@ export const freshnessTick = async (deps: FlowDeps, home: string): Promise<Sweep
       continue;
     }
     const ref = sessionOf(lane);
-    // A lane still recorded on the removed herdr/hc runtime has no runtime to ask.
-    if (statusOf(lane) !== "working" || !ref || isLegacyRuntime(ref.runtime)) continue;
+    if (statusOf(lane) !== "working" || !ref) continue;
     // Only launched lanes report through the journal; an adopted lane keeps the screen path even if a record exists.
     let previous: Progress | null = null;
     let screen: string | null = null;
     let native: HeadlessObservation | undefined;
-    let legacyReport: string | null | undefined;
+    let screenReport: string | null | undefined;
     let supervised: SupervisionResult | null = null;
     let supervisionError: string | undefined;
     let incompleteSample = false;
@@ -133,7 +131,7 @@ export const freshnessTick = async (deps: FlowDeps, home: string): Promise<Sweep
         supervisionError = error instanceof Error ? error.message : String(error);
       }
     } else if (ref.runtime !== "headless") {
-      legacyReport = await sampleLegacyReport(deps, lane, ref, now);
+      screenReport = await sampleScreenReport(deps, lane, ref, now);
     }
     await withDeliveryLock(deps, lane.key, async () => {
       // The screen and usage hook can outlive park/reopen; never apply them to the replacement lane.
@@ -219,7 +217,7 @@ export const freshnessTick = async (deps: FlowDeps, home: string): Promise<Sweep
       // An idle host without a goal may be a registered launch whose kickoff never landed.
       const nudgeObservation =
         nativeStatus !== undefined && native?.goal && native.goal.status !== "none" ? native : undefined;
-      await notifyFreshness(deps, current, ref, progress, legacyReport, now, home, acts, nudgeObservation);
+      await notifyFreshness(deps, current, ref, progress, screenReport, now, home, acts, nudgeObservation);
     });
   }
   return acts;

@@ -140,14 +140,14 @@ posix("monitor receipts bind a real descendant of the lead and reject the actor 
   const path = join(f.root, "monitors.json");
   const child = Bun.spawn(["sleep", "60"], { stdout: "ignore", stderr: "ignore" });
   try {
-    // A historical trusted bootstrap receipt still parses for the extension's bootstrap reader.
+    // A trusted bootstrap receipt parses for the extension's bootstrap reader.
     const metadata = {
       version: 1,
       sessionId: f.runtime.sessionId,
       monitors: [{ name: "intake", argv: ["sleep", "60"], filter: ".", cwd: f.root }],
       running: [{ name: "intake", pid: child.pid }],
       intake: { path: join(f.root, "heartbeat"), monitor: "intake", maxAgeMs: 120_000 },
-      runtime: { ...f.runtime, pane: "w1:p1", role: "dori" },
+      runtime: { ...f.runtime, pane: "w1:p1", role: "cataly" },
     };
     writeFileSync(path, JSON.stringify(metadata), { mode: 0o600 });
     const wanted = readMonitorSet(path, f.runtime.sessionId, true);
@@ -160,7 +160,7 @@ posix("monitor receipts bind a real descendant of the lead and reject the actor 
       pid: f.runtime.pid,
       sessionId: f.runtime.sessionId,
       role: "cataly",
-      presetLoaded: true,
+      configLoaded: true,
       startedAt: f.runtime.startedAt,
       updatedAt: new Date().toISOString(),
       source: f.root,

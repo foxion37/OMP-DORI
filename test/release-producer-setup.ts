@@ -4,42 +4,37 @@ import { releaseVersion } from "../src/release/version.ts";
 import { digest } from "../src/update/source.ts";
 import type { SourceEntry } from "../src/update/types.ts";
 
+/** The smallest valid v2 release: every required native, headless and launcher file plus one source file. */
 export function releaseFixture(
   files: SourceEntry[] = [
     { path: "install.sh", sha256: digest("#!/bin/sh\n"), executable: true },
+    { path: "native-addon/bun.lock", sha256: digest("addon lock\n"), executable: false },
+    { path: "native-addon/package.json", sha256: digest("{}\n"), executable: false },
+    { path: "native-omp.lock", sha256: digest("{}\n"), executable: false },
+    { path: "native-omp.patch", sha256: digest("\n"), executable: false },
+    { path: "release-headless.json", sha256: digest("{}\n"), executable: false },
+    { path: "scripts/consumer/omp", sha256: digest("#!/bin/sh\n"), executable: true },
+    { path: "scripts/previous-install/cli.ts", sha256: digest("export {};\n"), executable: false },
+    { path: "scripts/source-dependencies.ts", sha256: digest("export {};\n"), executable: false },
     { path: "src/cli.ts", sha256: digest("export {};\n"), executable: false },
   ],
 ): ReleaseManifest {
   return {
-    version: 1,
-    product: "omp-dori",
+    version: 2,
+    product: "cataly",
     releaseVersion,
     tag: `v${releaseVersion}`,
     commit: "1".repeat(40),
     tree: "2".repeat(40),
     prerelease: true,
     archive: {
-      name: `omp-dori-v${releaseVersion}.tar.gz`,
-      root: `omp-dori-${releaseVersion}`,
+      name: `cataly-v${releaseVersion}.tar.gz`,
+      root: `cataly-${releaseVersion}`,
       sha256: digest("fixture archive"),
       bytes: 123,
     },
-    source: {
-      version: 1,
-      hash: digest(JSON.stringify({ files, ulwPresent: false })),
-      files,
-      excluded: [],
-      ulwPresent: false,
-    },
-    requirements: {
-      platform: "linux",
-      arch: "x64",
-      bun: "1.4.4",
-      omp: "18.18.8",
-      runtime: "herdr",
-      messenger: "discord",
-    },
-    ompUlw: { repository: "https://github.com/dbc-hbin/omp-ulw.git", commit: "3".repeat(40) },
+    source: { version: 1, hash: digest(JSON.stringify({ files })), files, excluded: [] },
+    requirements: { omp: "19.0.1" },
   };
 }
 

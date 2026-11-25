@@ -1,8 +1,8 @@
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Refusal } from "./refusal.ts";
-import { refFromText, refText, sameSession } from "./refs.ts";
-import type { SessionRef } from "./runtime/types.ts";
+import { refText, sameSession } from "./refs.ts";
+import { parseRef, type SessionRef } from "./runtime/types.ts";
 import type { Role } from "./store-types.ts";
 
 type StoredRoles = Partial<Record<Role, string>>;
@@ -25,9 +25,14 @@ function write(root: string, roles: StoredRoles): void {
   renameSync(tmp, path);
 }
 
-/** Keep ref strings readable by older binaries; bare values are herdr panes. */
+/** A stored value no runtime parses is not a registration. */
 export const readRoles = (root: string): Roles =>
-  Object.fromEntries(Object.entries(read(root) ?? {}).map(([role, text]) => [role, refFromText(text)]));
+  Object.fromEntries(
+    Object.entries(read(root) ?? {}).flatMap(([role, text]) => {
+      const ref = text === undefined ? undefined : parseRef(text);
+      return ref ? [[role, ref]] : [];
+    }),
+  );
 
 export const registerRole = (root: string, role: Role, ref: SessionRef): void =>
   write(root, { ...read(root), [role]: refText(ref) });
@@ -38,7 +43,8 @@ export function removeRoles(root: string, expected: readonly [Role, SessionRef][
   if (!raw || !expected.length) return;
   for (const [role, ref] of expected) {
     const current = raw[role];
-    if (current !== undefined && !sameSession(ref, refFromText(current)))
+    const stored = current === undefined ? undefined : parseRef(current);
+    if (current !== undefined && (stored === undefined || !sameSession(ref, stored)))
       throw new Refusal(`role ${role} registration changed`);
     delete raw[role];
   }

@@ -88,15 +88,14 @@ type Env = Readonly<Record<string, string | undefined>>;
 
 /**
  * The runtimes of one process plus the choice that picked the default kind (printed by `cataly boot`). A choice that
- * failed (no runtime detected, a legacy runtime setting, a bad CATALY_RUNTIME) is thrown only where a new session
- * would open, `default`: stored lanes (`for`) and the caller's own session (`selfAny`) still resolve. `for` on a legacy
- * herdr/hc ref throws the upgrade guidance naming `configFile`.
+ * failed (no runtime detected, a bad runtime setting or CATALY_RUNTIME) is thrown only where a new session
+ * would open, `default`: stored lanes (`for`) and the caller's own session (`selfAny`) still resolve.
  */
 export class ChosenRuntimes extends Runtimes {
   readonly choice: RuntimeChoice | undefined;
   readonly failure: Error | undefined;
 
-  constructor(pick: () => RuntimeChoice, make: (kind: RuntimeKind) => SessionRuntime, configFile?: string) {
+  constructor(pick: () => RuntimeChoice, make: (kind: RuntimeKind) => SessionRuntime) {
     let choice: RuntimeChoice | undefined;
     let failure: Error | undefined;
     try {
@@ -104,14 +103,10 @@ export class ChosenRuntimes extends Runtimes {
     } catch (e) {
       failure = e instanceof Error ? e : new Error(String(e));
     }
-    super(
-      () => {
-        if (!choice) throw failure;
-        return choice.kind;
-      },
-      make,
-      configFile,
-    );
+    super(() => {
+      if (!choice) throw failure;
+      return choice.kind;
+    }, make);
     this.choice = choice;
     this.failure = failure;
   }
@@ -122,7 +117,6 @@ class ScopedRuntimes extends ChosenRuntimes {
   constructor(
     private readonly original: ChosenRuntimes,
     make: (kind: RuntimeKind) => SessionRuntime,
-    configFile: string,
   ) {
     super(
       () => {
@@ -133,7 +127,6 @@ class ScopedRuntimes extends ChosenRuntimes {
         original.for({ runtime: kind, id: "" });
         return make(kind);
       },
-      configFile,
     );
   }
 
@@ -171,8 +164,7 @@ export const runtimesFor = (
   env: Env,
   runner: Runner = run,
   clock: Clock = realClock,
-): ChosenRuntimes =>
-  new ChosenRuntimes(() => runtimeChoice(config, env), runtimeFactory(config, env, runner, clock), configFileOf(env));
+): ChosenRuntimes => new ChosenRuntimes(() => runtimeChoice(config, env), runtimeFactory(config, env, runner, clock));
 
 const built = new WeakMap<object, ChosenRuntimes>();
 
@@ -194,7 +186,5 @@ export const runtimesOf = (
     rts = runtimesFor(deps.config, env, deps.run, deps.clock);
     built.set(deps, rts);
   }
-  return scopedRun
-    ? new ScopedRuntimes(rts, runtimeFactory(deps.config, env, scopedRun, deps.clock), configFileOf(env))
-    : rts;
+  return scopedRun ? new ScopedRuntimes(rts, runtimeFactory(deps.config, env, scopedRun, deps.clock)) : rts;
 };

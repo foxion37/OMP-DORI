@@ -45,7 +45,7 @@ test("holds an incomplete or duplicate required job instead of accepting partial
   }
 });
 
-test.each(["vntrevx/omp-dori", "other/Cataly", "vntrevx/Cataly-extra"])(
+test.each(["vntrevx/omp-cataly", "other/Cataly", "vntrevx/Cataly-extra"])(
   "holds successful-looking checks linked to a non-canonical repository: %s",
   async (repository) => {
     const f = githubFixture();

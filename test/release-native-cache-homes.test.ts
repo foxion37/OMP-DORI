@@ -15,14 +15,14 @@ const posix = test.skipIf(process.platform === "win32");
 posix.each(["explicit", "environment", "loaded", "loaded-override"] as const)(
   "cache reports references across known homes with %s selection",
   async (selection) => {
-    const root = realpathSync(mkdtempSync(join(tmpdir(), "dori-cache-homes-")));
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "cataly-cache-homes-")));
     roots.push(root);
     const home = join(root, "home");
-    const f = overlayFixture(join(root, "source"), join(root, "upstream"), true, "homes");
+    const f = overlayFixture(join(root, "source"), join(root, "upstream"), "homes");
     const receipt = nativeCacheFixture(f.source, home, f.checkout);
     renameSync(f.source, join(root, "moved-source"));
-    const primary = join(home, ".dori");
-    const defaultSide = join(home, ".omp-dori");
+    const primary = join(home, ".cataly");
+    const defaultSide = join(home, ".omp-cataly");
     const environment = join(root, "environment-home");
     const configuredSide = join(root, "configured-side");
     const explicit = join(root, "explicit-home");

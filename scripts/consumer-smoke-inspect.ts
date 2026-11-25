@@ -44,7 +44,7 @@ if (import.meta.main) {
   );
   const { prepareConsumerDiscovery } = await import(join(source, "src/release/discovery.ts"));
   const { assertNativeSource } = await import(join(source, "src/release/native.ts"));
-  const { assertSourceBundle, readSourceBundle } = await import(join(source, "src/release/source-bundle.ts"));
+  const { readSourceBundle } = await import(join(source, "src/release/source-bundle.ts"));
   const { loadConfig } = await import(join(source, "skills/cataly-mode/scripts/src/config.ts"));
   const { runtimesFor } = await import(join(source, "skills/cataly-mode/scripts/src/run.ts"));
   const paths = consumerPaths(home, side);
@@ -54,7 +54,7 @@ if (import.meta.main) {
   assert.equal(verifyRelease(paths, expected), source);
   assert.equal(source, releasePath(paths, expected));
   if (state?.previous) verifyRelease(paths, state.previous);
-  assert.equal(expected.requirements.omp, readSourceBundle(source, true).lock.nativeVersion);
+  assert.equal(expected.requirements.omp, readSourceBundle(source).lock.nativeVersion);
   const native: NativeReceipt = assertNativeSource(source, home);
   process.env["PI_NATIVES_DIR"] = join(native.directory, "natives");
   const loader = await import(join(native.directory, "source/packages/natives/native/loader-state.js"));
@@ -75,10 +75,6 @@ if (import.meta.main) {
   prepareConsumerDiscovery(paths, source);
   const skill = readFileSync(join(dirname(overlay), "skills/omp-cataly-mode/SKILL.md"), "utf8");
   assert.match(skill, /^name: omp-cataly-mode$/m);
-  const ulw = readSourceBundle(source);
-  const dependency = join(paths.dependencies, `omp-ulw-${expected.ompUlw.commit}-${ulw.identity}`);
-  assert.equal(config.ompUlwPath, join(dependency, "index.ts"));
-  assertSourceBundle(dependency, ulw, home);
   assert.equal(process.env["CATALY_RUNTIME"], undefined);
   const runtimes = runtimesFor(config, process.env);
   assert.deepEqual(runtimes.choice, { kind: "headless", source: "default" });
@@ -118,7 +114,6 @@ if (import.meta.main) {
         addon,
         runtime: runtimes.choice,
         agentCommand: config.agentCommand,
-        ompUlwPath: config.ompUlwPath,
       },
       null,
       2,

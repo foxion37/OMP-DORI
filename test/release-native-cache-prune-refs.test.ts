@@ -68,12 +68,7 @@ const CASES: Record<string, Case> = {
   },
   "B1/P2 a linked directory with a valid lock of another identity holding a wrapper": {
     arrange: (c, x) => {
-      const other = overlayFixture(
-        join(c.root, "other"),
-        join(c.root, "other-upstream"),
-        true,
-        `other-identity ${c.root}`,
-      );
+      const other = overlayFixture(join(c.root, "other"), join(c.root, "other-upstream"), `other-identity ${c.root}`);
       writeFileSync(join(other.source, "omp"), c.wrapper(x.omp));
       symlinkSync(other.source, join(c.refs, "release"));
       return { reason: `link to an unscanned directory ${join(c.refs, "release")}` };

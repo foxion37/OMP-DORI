@@ -225,12 +225,12 @@ describe("list, close, self", () => {
     ]);
   });
 
-  test("self is TERN_PANE; registry selfAny reaches it unless a native lane ID is set, ignoring old herdr/hc ids", () => {
+  test("self is TERN_PANE; registry selfAny reaches it unless a native lane ID is set", () => {
     expect(rig({}, { env: { TERN_PANE: "5001" } }).rt.self()).toEqual(B1);
     expect(rig({}, { env: { TERN_PANE: "x1" } }).rt.self() ?? rig().rt.self()).toBeUndefined();
     const rts = new Runtimes("tern", () => rig().rt);
-    expect(rts.selfAny({ TERN_PANE: "5001", HC_TERMINAL_ID: "t3", HERDR_PANE_ID: "w1:p3" })).toEqual(B1);
-    expect(rts.selfAny({ HC_TERMINAL_ID: "t3", HERDR_PANE_ID: "w1:p3" })).toBeUndefined();
+    expect(rts.selfAny({ TERN_PANE: "5001" })).toEqual(B1);
+    expect(rts.selfAny({})).toBeUndefined();
     const native = "00000000-0000-4000-8000-000000000001";
     expect(rts.selfAny({ TERN_PANE: "5001", CATALY_HEADLESS_ID: native })).toEqual({ runtime: "headless", id: native });
   });
@@ -243,7 +243,7 @@ describe("list, close, self", () => {
     expect(refText(B1)).toBe("tern:5001");
   });
 
-  test("a tern inbox file reads back as the tern block, not as a herdr pane", () => {
+  test("a tern inbox file reads back as the tern block", () => {
     expect(inboxFile("/state", B1)).toBe(join("/state", "inbox", "tern--5001.jsonl"));
     expect(refOfInbox("tern--5001.jsonl")).toEqual(B1);
   });

@@ -27,7 +27,6 @@ const snapshot = (path: string) =>
     .sort((a, b) => (a[0] ?? "").localeCompare(b[0] ?? ""));
 const desired = (filter: string): Manifest => ({
   path: "/unused.json",
-  kind: "omp",
   data: {
     version: 1,
     sessionId: "owner",

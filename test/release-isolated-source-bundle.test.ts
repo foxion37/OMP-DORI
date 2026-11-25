@@ -1,16 +1,13 @@
 import { expect, test } from "bun:test";
-import { lstatSync, mkdirSync, readFileSync, readlinkSync, symlinkSync } from "node:fs";
+import { mkdirSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
-import { installBundle, rollbackRelease } from "../src/release/install.ts";
-import { recoverInstalled, releasePath } from "../src/release/state.ts";
 import { fixture } from "./release-consumer-setup.ts";
-import { boundRelease } from "./release-native-recovery-setup.ts";
 
 // POSIX-only: release installation refuses non-private directories by POSIX mode bits.
 const posix = test.skipIf(process.platform === "win32");
 
 posix(
-  "isolated source releases need no stock OMP and bind both native and ULW defaults to the loaded release",
+  "isolated source releases need no stock OMP and bind the native source to the loaded release",
   async () => {
     const f = fixture(true);
     const tools = join(f.root, "bound-tools");
@@ -40,22 +37,4 @@ posix(
     expect(stdout.split("\n")).toContain("ISOLATED_RELEASE_OK");
   },
   15_000,
-);
-
-posix(
-  "isolated rollback retains the independent-native protocol without replacing its owned wrapper with a symlink",
-  async () => {
-    const f = fixture(true);
-    const legacy = await installBundle(f.paths, f.release("independent").bundle, undefined);
-    const config = readFileSync(f.paths.config);
-    const bound = boundRelease(f, "bound");
-    const current = await installBundle(f.paths, bound.bundle, legacy);
-    expect(lstatSync(join(f.paths.dori, "bin/omp")).isSymbolicLink()).toBe(false);
-    const rolled = await rollbackRelease(f.paths, current);
-    expect(rolled.current).toEqual(legacy.current);
-    expect(readlinkSync(f.paths.live)).toBe(releasePath(f.paths, legacy.current));
-    expect(lstatSync(join(f.paths.dori, "bin/omp")).isSymbolicLink()).toBe(false);
-    expect(recoverInstalled(f.paths)).toEqual(rolled);
-    expect(readFileSync(f.paths.config)).toEqual(config);
-  },
 );

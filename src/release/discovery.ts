@@ -15,24 +15,20 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename, join } from "node:path";
-import { type ConsumerPaths, isPrimaryConsumer, owned, realDirectory, regularFile, syncDirectory } from "./files.ts";
+import { type ConsumerPaths, isPrimaryConsumer, owned, realDirectory, syncDirectory } from "./files.ts";
 
 const parts = ["references", "scripts", "assets"] as const;
 
 export function prepareConsumerDiscovery(paths: ConsumerPaths, source: string): void {
   if (isPrimaryConsumer(paths)) return;
   // The retained target release always renders its own discovery overlay, including after rollback.
-  const skillName = regularFile(join(source, "skills/cataly-mode/SKILL.md")) ? "cataly-mode" : "dori-mode";
-  const isolatedName = `omp-${skillName}`;
-  const sourceSkill = join(source, "skills", skillName);
+  const isolatedName = "omp-cataly-mode";
+  const sourceSkill = join(source, "skills/cataly-mode");
   const parent = join(paths.root, "consumer-discovery");
   const destination = join(parent, basename(source));
   const skill = readFileSync(join(sourceSkill, "SKILL.md"), "utf8")
-    .replace(/^name: (?:cataly|dori)-mode$/m, `name: ${isolatedName}`)
-    .replace(
-      /^description: /m,
-      `description: For this isolated ${skillName === "cataly-mode" ? "Cataly" : "OMP-Dori"} consumer installation. `,
-    );
+    .replace(/^name: cataly-mode$/m, `name: ${isolatedName}`)
+    .replace(/^description: /m, "description: For this isolated Cataly consumer installation. ");
   const overlay = `skills:\n  customDirectories:\n    - ${JSON.stringify(join(destination, "skills"))}\n`;
   realDirectory(parent, true);
   owned(parent);

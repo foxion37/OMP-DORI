@@ -1,9 +1,11 @@
 import { readFileSync } from "node:fs";
 import { Refusal } from "../../../../src/refusal.ts";
+import { resolveShortRef } from "../../../../src/refs.ts";
 import { parseRef } from "../../../../src/runtime/types.ts";
 import { readRootLane, rootStoreHome } from "../../../../src/store-lanes.ts";
 import type { Lane as RootLane } from "../../../../src/store-types.ts";
 import { Store } from "../../../../src/store.ts";
+import { knownRefs } from "../../../../src/target.ts";
 import { type Command, die } from "./cli-context.ts";
 import { allowPolicyOnce } from "./lane-policy-actions.ts";
 import { verifiedPolicyContinuation } from "./lane-policy-continuity.ts";
@@ -42,7 +44,7 @@ export const policyCommand: Command = async ({ positionals, strings, values, dep
   const [action, key, rule, ...extra] = positionals;
   if (action !== "allow-once" || !key || !LANE_KEY.test(key) || !rule || extra.length)
     return die(
-      "usage: cataly policy allow-once <key> <denyBash[index]> [--root <headless:UUID> | --skill] --reason TEXT",
+      "usage: cataly policy allow-once <key> <denyBash[index]> [--root <headless:UUID|prefix> | --skill] --reason TEXT",
     );
   const [reason, ...otherReasons] = strings("reason");
   if (!reason?.trim() || otherReasons.length) return die("allow-once requires exactly one nonempty --reason");
@@ -55,10 +57,14 @@ export const policyCommand: Command = async ({ positionals, strings, values, dep
   const home = rootStoreHome();
   let grant: ReturnType<typeof allowPolicyOnce>;
   if (root !== undefined) {
-    const ref = parseRef(root);
-    if (ref?.runtime !== "headless") throw new PolicyError("--root needs an exact headless:UUID ref");
     try {
-      grant = new Store(home).withCurrentLane(key, (target) => {
+      const store = new Store(home);
+      const ref = parseRef(root) ?? resolveShortRef(root, knownRefs(store));
+      if (ref?.runtime !== "headless")
+        throw new PolicyError(
+          "--root needs a headless ref: headless:<UUID> or the unique prefix cataly harness status shows",
+        );
+      grant = store.withCurrentLane(key, (target) => {
         if (!rootOpen(target, key) || target.sessionRef.runtime !== ref.runtime || target.sessionRef.id !== ref.id)
           throw new PolicyError(`no matching open root registration for ${key} at ${root}`);
         if (!target.policyBinding) throw new PolicyError(`root lane ${key} has no bound policy snapshot`);

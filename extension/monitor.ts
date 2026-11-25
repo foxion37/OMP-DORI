@@ -5,7 +5,7 @@
  */
 import type { Subprocess } from "bun";
 import { resolve } from "node:path";
-import { discordNativeBinary } from "../skills/cataly-mode/scripts/src/cli-discord-binary.ts";
+import { discordNativeBinary } from "../src/native-binary.ts";
 import {
   ASK_RELAY_PROTOCOL,
   ASK_RELAY_STATE,
@@ -15,7 +15,6 @@ import {
   HEAD_ADMISSION_PROTOCOL,
   isHeadAdmissionProtocol,
 } from "../skills/cataly-mode/scripts/src/messenger/head-admission-protocol.ts";
-import { legacyRecipeEnv, recipePaths, type RecipeContext } from "../src/runtime/recipe-env.ts";
 import { monitorPolicy } from "../src/update/monitor-policy.ts";
 import type { MonitorSpec } from "../src/update/deployment-types.ts";
 import type { HeadAdmissions } from "./head-admission.ts";
@@ -114,14 +113,14 @@ export class Monitors {
   readonly #currentSession: () => string | undefined;
   readonly #batchMs: number;
   readonly #restartMs: number;
-  readonly #recipeContext: RecipeContext | undefined;
+  readonly #env: NodeJS.ProcessEnv;
 
   constructor(
     deliver: Deliver,
     currentSession: () => string | undefined,
     batchMs = BATCH_MS,
     restart: number | HeadAdmissions = 5_000,
-    recipeContext?: RecipeContext,
+    env: NodeJS.ProcessEnv = process.env,
     private readonly routingState?: () => string | undefined,
   ) {
     this.#deliver = deliver;
@@ -129,10 +128,7 @@ export class Monitors {
     this.#batchMs = batchMs;
     this.#restartMs = typeof restart === "number" ? restart : 5_000;
     this.#admissions = typeof restart === "number" ? undefined : restart;
-    this.#recipeContext = recipeContext && {
-      ...recipePaths(recipeContext.configFile, recipeContext.installationHome),
-      env: recipeContext.env,
-    };
+    this.#env = env;
   }
 
   start(
@@ -175,9 +171,7 @@ export class Monitors {
     )
       throw new Error("invalid daemon restart attempt");
     const pattern = new RegExp(filter);
-    const env = this.#recipeContext
-      ? (legacyRecipeEnv(argv, this.#recipeContext) ?? this.#recipeContext.env)
-      : process.env;
+    const env = this.#env;
     const state = this.routingState?.();
     const askState = this.#admissions && state && discordNativeBinary() ? resolve(state) : undefined;
     let entry: Running;
@@ -192,7 +186,6 @@ export class Monitors {
               ...env,
               CATALY_MONITOR_ADMISSION: "1",
               CATALY_MONITOR_ADMISSION_PROTOCOL: HEAD_ADMISSION_PROTOCOL,
-              DORI_MONITOR_ADMISSION: "1",
               [ASK_RELAY_STATE]: askState ?? "",
             },
             serialization: "json" as const,

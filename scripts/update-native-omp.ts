@@ -13,7 +13,7 @@ export async function captureNativeUpdate(source: string, checkout: string, comm
     throw new Error("Native capture requires an exact commit and stable semantic version");
   source = realpathSync(source);
   checkout = realpathSync(checkout);
-  const previous = readSourceBundle(source, true).lock;
+  const previous = readSourceBundle(source).lock;
   const launcher = previous.launcher;
   if (
     typeof launcher !== "string" ||
@@ -24,7 +24,7 @@ export async function captureNativeUpdate(source: string, checkout: string, comm
   const manifest = join(checkout, "packages/coding-agent/package.json");
   if (!regularFile(manifest) || JSON.parse(readFileSync(manifest, "utf8")).version !== version)
     throw new Error("Native package version differs from the requested release");
-  const home = realpathSync(mkdtempSync(join(tmpdir(), "dori-native-metadata-")));
+  const home = realpathSync(mkdtempSync(join(tmpdir(), "cataly-native-metadata-")));
   try {
     if ((await bundleGit(["rev-parse", "--verify", "HEAD^{commit}"], checkout, home)) !== commit)
       throw new Error("Native checkout differs from the exact requested commit");
@@ -33,7 +33,7 @@ export async function captureNativeUpdate(source: string, checkout: string, comm
     const lock: SourceBundle = { ...captured, nativeVersion: version, launcher };
     const text = `${JSON.stringify(lock, null, 2)}\n`;
     writeFileSync(join(home, "native-omp.lock"), text, { mode: 0o600 });
-    assertSourceBundle(checkout, readSourceBundle(home, true), home);
+    assertSourceBundle(checkout, readSourceBundle(home), home);
     writeFileSync(join(source, "native-omp.patch"), readFileSync(patchPath));
     writeFileSync(join(source, "native-omp.lock"), text);
     return { commit, version, resultTree: lock.resultTree, files: lock.files.length };
@@ -64,7 +64,7 @@ if (import.meta.main) {
       );
     } else {
       throw new Error(
-        "Usage: bun scripts/update-native-omp.ts --out DIRECTORY [--source DORI] | --checkout CHECKOUT --commit EXACT_SHA --version VERSION [--source DORI]",
+        "Usage: bun scripts/update-native-omp.ts --out DIRECTORY [--source SOURCE] | --checkout CHECKOUT --commit EXACT_SHA --version VERSION [--source SOURCE]",
       );
     }
   } catch (error) {

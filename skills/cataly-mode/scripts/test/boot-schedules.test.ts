@@ -125,7 +125,7 @@ test("boot includes cron next/last/missed state without starting or recovering a
   const world = newWorld();
   const deps = depsFor(world, fakeClock(now), state.dir, {
     sessionsDir: join(state.dir, "sessions"),
-    leadPane: "w2:p1",
+    leadPane: "tern:5001",
   });
   const store = new ScheduleStore(state.dir);
   await store.add(

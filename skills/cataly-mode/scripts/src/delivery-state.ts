@@ -46,7 +46,7 @@ export class DeliveryState {
       !value.session.id ||
       (value.session.runtime === "headless"
         ? !HEADLESS_ADDRESS.test(value.session.id)
-        : value.session.runtime !== "hc" && value.session.runtime !== "herdr" && value.session.runtime !== "tern") ||
+        : value.session.runtime !== "tern") ||
       !["uncertain", "confirmed", "failed", "released"].includes(value.status ?? "") ||
       (value.settledAt !== undefined &&
         (typeof value.settledAt !== "string" || !Number.isFinite(Date.parse(value.settledAt)))) ||

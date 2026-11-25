@@ -7,11 +7,9 @@ import { processIdentity, sameProcess } from "../update/deployment-process.ts";
 import { processExists } from "../update/proc.ts";
 import { type ConsumerPaths, readJson, readOptionalJson, realDirectory, regularFile } from "./files.ts";
 import { registeredNativeStates } from "./launch-leases.ts";
-import { assertNoLegacyRuntime } from "./legacy-runtime.ts";
 
 function live(value: unknown): number | undefined {
-  if (!object(value) || (value["role"] !== "cataly" && value["role"] !== "dori") || !Number.isSafeInteger(value["pid"]))
-    return undefined;
+  if (!object(value) || value["role"] !== "cataly" || !Number.isSafeInteger(value["pid"])) return undefined;
   const pid = value["pid"] as number;
   if (pid <= 0) throw new Error("Cataly runtime PID metadata is invalid");
   const observed = processIdentity(pid);
@@ -91,11 +89,6 @@ function assertNoControllerLocks(paths: ConsumerPaths): void {
 
 /** Read only lifecycle receipts and process identity. Native session contents are never opened. */
 export function assertNoLiveCataly(paths: ConsumerPaths): void {
-  assertStoppedRuntime(paths);
-  assertNoLegacyRuntime({ stateDir: join(paths.cataly, "state"), configPath: paths.config, home: paths.home });
-}
-
-function assertStoppedRuntime(paths: ConsumerPaths): void {
   assertNoNativeHarnessRoles(paths);
   assertNoControllerLocks(paths);
   const states = new Set<string>([join(paths.cataly, "state"), ...registeredNativeStates(paths)]);
@@ -109,10 +102,8 @@ function assertStoppedRuntime(paths: ConsumerPaths): void {
       states.add(resolve(expanded));
     }
   }
-  for (const configured of [process.env["CATALY_STATE_DIR"], process.env["DORI_STATE_DIR"]]) {
-    if (configured)
-      states.add(configured.startsWith("~/") ? join(paths.home, configured.slice(2)) : resolve(configured));
-  }
+  const configured = process.env["CATALY_STATE_DIR"];
+  if (configured) states.add(configured.startsWith("~/") ? join(paths.home, configured.slice(2)) : resolve(configured));
   const inspect = (path: string): void => {
     if (!regularFile(path)) return;
     const record = readJson(path);

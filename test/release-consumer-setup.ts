@@ -1,12 +1,12 @@
 import { afterEach, test } from "bun:test";
 import {
   chmodSync,
+  copyFileSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
   realpathSync,
-  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -15,14 +15,18 @@ import { dirname, join, resolve } from "node:path";
 import { gzipSync } from "node:zlib";
 import type { VerifiedBundle } from "../src/release/bundle.ts";
 import { readArchive } from "../src/release/archive.ts";
-import { type ConsumerPaths, consumerPaths, initialize, saveJson } from "../src/release/files.ts";
+import { type ConsumerPaths, consumerPaths, initialize } from "../src/release/files.ts";
 import { validateReleaseManifest } from "../src/release/manifest.ts";
+import { nativeDirectory } from "../src/release/native.ts";
+import { readSourceBundle } from "../src/release/source-bundle.ts";
 import type { ReleaseManifest } from "../src/release/types.ts";
 import { digest, sourceManifest } from "../src/update/source.ts";
+import { nativeCacheFixture, overlayFixture } from "./source-bundle-setup.ts";
 
 // POSIX-only: release installation refuses non-private directories by POSIX mode bits.
 export const posix = test.skipIf(process.platform === "win32");
 
+const DEPENDENCIES = resolve(import.meta.dir, "../scripts/source-dependencies.ts");
 const roots: string[] = [];
 const environmentKeys = [
   "HOME",
@@ -32,7 +36,6 @@ const environmentKeys = [
   "CATALY_STATE_DIR",
   "CATALY_AGENT_CMD",
   "CATALY_AGENT_ARGV",
-  "CATALY_OMP_ULW_PATH",
 ];
 const environment = new Map<string, string | undefined>();
 afterEach(() => {
@@ -91,101 +94,90 @@ export function withArchive(manifest: ReleaseManifest, bytes: Buffer): ReleaseMa
   });
 }
 
-function git(cwd: string, ...args: string[]): string {
-  const result = Bun.spawnSync(["git", "-c", "core.hooksPath=/dev/null", ...args], {
-    cwd,
-    env: {
-      PATH: process.env["PATH"],
-      GIT_CONFIG_GLOBAL: "/dev/null",
-      GIT_CONFIG_NOSYSTEM: "1",
-      GIT_AUTHOR_NAME: "Consumer fixture",
-      GIT_AUTHOR_EMAIL: "fixture@example.test",
-      GIT_COMMITTER_NAME: "Consumer fixture",
-      GIT_COMMITTER_EMAIL: "fixture@example.test",
-    },
-  });
-  if (result.exitCode !== 0) throw new Error(result.stderr.toString());
-  return result.stdout.toString().trim();
-}
-
 export type ConsumerFixture = {
   readonly root: string;
   readonly paths: ConsumerPaths;
-  readonly pin: string;
-  readonly ownedDependency: string;
-  readonly release: (payload: string) => { bundle: VerifiedBundle; bytes: Buffer; entries: TarEntry[]; dist: string };
+  /** `launcher` replaces the release's own `scripts/consumer/omp`, which the isolated `bin/omp` wrapper execs. */
+  /** Rebuild the shared native cache fixture for another Bun executable; the receipt binds exactly one. */
+  readonly rebindNative: (bun: string) => void;
+  readonly release: (
+    payload: string,
+    launcher?: string,
+  ) => { bundle: VerifiedBundle; bytes: Buffer; entries: TarEntry[]; dist: string };
 };
 
-/** Match source release metadata independently of the selected installation home. */
-export function portableFixture(side = false): ConsumerFixture {
-  return fixture(side, true);
-}
+/** Every release carries these exact bound native payload files, taken from one shared native fixture per home. */
+const NATIVE_FILES = [
+  "native-omp.lock",
+  "native-omp.patch",
+  "native-addon/package.json",
+  "native-addon/bun.lock",
+  "scripts/source-dependencies.ts",
+] as const;
 
-export function fixture(side = false, portable = side): ConsumerFixture {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "dori-consumer-")));
+/** A primary consumer, or with `side` a custom home beside it; both install real native-bound v2 releases. */
+export function fixture(side = false): ConsumerFixture {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "cataly-consumer-")));
   roots.push(root);
   const home = join(root, "home");
-  const paths = consumerPaths(home, join(home, side ? ".omp-dori" : ".dori"));
+  const paths = consumerPaths(home, join(home, side ? ".cataly-side" : ".cataly"));
   for (const key of environmentKeys) {
     if (!environment.has(key)) environment.set(key, process.env[key]);
   }
-  if (side) {
-    const native = join(root, "native-bin");
-    mkdirSync(native, { mode: 0o700 });
-    writeFileSync(join(native, "omp"), "#!/bin/sh\nprintf '18.18.8\\n'\n", { mode: 0o755 });
-    process.env["PATH"] = `${native}:${process.env["PATH"] ?? ""}`;
-  }
   process.env["HOME"] = paths.home;
-  process.env["CATALY_HOME"] = paths.dori;
+  process.env["CATALY_HOME"] = paths.cataly;
   process.env["CATALY_CONFIG"] = paths.config;
-  process.env["CATALY_STATE_DIR"] = join(paths.dori, "state");
+  process.env["CATALY_STATE_DIR"] = join(paths.cataly, "state");
   delete process.env["CATALY_AGENT_CMD"];
   delete process.env["CATALY_AGENT_ARGV"];
-  delete process.env["CATALY_OMP_ULW_PATH"];
   initialize(paths);
-  const dependency = join(root, "public-dependency-fixture");
-  mkdirSync(dependency, { mode: 0o700 });
-  writeFileSync(join(dependency, "index.ts"), "export default {};\n", { mode: 0o600 });
-  git(dependency, "init", "--quiet");
-  git(dependency, "add", "index.ts");
-  git(dependency, "commit", "--quiet", "-m", "Isolated public dependency fixture");
-  const pin = git(dependency, "rev-parse", "HEAD");
-  const ownedDependency = join(paths.dependencies, `omp-ulw-${pin}`);
-  renameSync(dependency, ownedDependency);
-  saveJson(`${ownedDependency}.json`, {
-    version: 1,
-    repository: "https://github.com/dbc-hbin/omp-ulw.git",
-    commit: pin,
-  });
+  const template = join(root, "native-template");
+  const upstream = join(root, "native-upstream");
+  let native: string | undefined;
+  const nativeTemplate = (): string => {
+    if (native) return native;
+    overlayFixture(template, upstream);
+    mkdirSync(join(template, "scripts"), { mode: 0o700 });
+    copyFileSync(DEPENDENCIES, join(template, "scripts/source-dependencies.ts"));
+    nativeCacheFixture(template, paths.home, upstream);
+    return (native = template);
+  };
+  const rebindNative = (bun: string): void => {
+    const directory = nativeDirectory(nativeTemplate(), paths.home);
+    rmSync(directory, { recursive: true, force: true });
+    nativeCacheFixture(template, paths.home, upstream, directory, bun);
+  };
   let serial = 0;
-  const release = (payload: string): { bundle: VerifiedBundle; bytes: Buffer; entries: TarEntry[]; dist: string } => {
+  const release = (
+    payload: string,
+    launcher?: string,
+  ): { bundle: VerifiedBundle; bytes: Buffer; entries: TarEntry[]; dist: string } => {
     serial++;
     const releaseVersion = `1.2.${serial}`;
     const source = join(root, `source-${serial}`);
     mkdirSync(source, { mode: 0o700 });
-    const contents: Record<string, string> = {
-      "omp-ulw.lock": `${pin}\n`,
+    const contents: Record<string, string | Buffer> = {
       "payload.txt": payload,
-      "skills/dori-mode/SKILL.md": `---\nname: dori-mode\ndescription: Dori commands\n---\nRelease skill\n${payload}`,
+      "skills/cataly-mode/SKILL.md": `---\nname: cataly-mode\ndescription: Cataly commands\n---\nRelease skill\n${payload}`,
       "bin-entry.sh": "#!/bin/sh\nprintf 'release fixture\\n'\n",
+      // The isolated bin/omp wrapper asks the loaded release which source to launch; fixtures keep their own.
+      "src/release/automatic.ts": "console.log(process.argv[2]);\n",
       "src/release/references.ts": `export { installIsolatedReferences } from ${JSON.stringify(resolve(import.meta.dir, "../src/release/references.ts"))};\n`,
-      "skills/dori-mode/references/config.example.json": '{"runtime":"herdr","stateDir":"~/.dori/state"}\n',
+      "skills/cataly-mode/references/config.example.json": '{"stateDir":"~/.cataly/state"}\n',
+      "release-headless.json": readFileSync(resolve(import.meta.dir, "../release-headless.json")),
+      "scripts/consumer/omp": launcher ?? readFileSync(resolve(import.meta.dir, "../scripts/consumer/omp")),
+      // A release carries the installer's one-way bridge from previous installations.
+      "scripts/previous-install/cli.ts": "export {};\n",
     };
-    if (portable)
-      contents["release-capabilities.json"] = JSON.stringify({
-        version: 1,
-        profiles: [
-          { platform: "linux", arch: "x64", runtime: "herdr" },
-          { platform: "darwin", arch: "arm64", runtime: "hc" },
-        ],
-      });
+    for (const path of NATIVE_FILES) contents[path] = readFileSync(join(nativeTemplate(), path));
     for (const [path, bytes] of Object.entries(contents)) {
       mkdirSync(dirname(join(source, path)), { recursive: true, mode: 0o700 });
       writeFileSync(join(source, path), bytes, { mode: 0o600 });
     }
     chmodSync(join(source, "bin-entry.sh"), 0o755);
+    chmodSync(join(source, "scripts/consumer/omp"), 0o755);
     const manifestSource = sourceManifest(source);
-    const archiveRoot = `omp-dori-${releaseVersion}`;
+    const archiveRoot = `cataly-${releaseVersion}`;
     const entries = manifestSource.files.map((file) => ({
       name: `${archiveRoot}/${file.path}`,
       bytes: readFileSync(join(source, file.path)),
@@ -193,29 +185,21 @@ export function fixture(side = false, portable = side): ConsumerFixture {
     }));
     const bytes = archive(entries);
     const manifest = validateReleaseManifest({
-      version: 1,
-      product: "omp-dori",
+      version: 2,
+      product: "cataly",
       releaseVersion,
       tag: `v${releaseVersion}`,
       commit: serial.toString(16).padStart(40, "0"),
       tree: "a".repeat(40),
       prerelease: true,
       archive: {
-        name: `omp-dori-v${releaseVersion}.tar.gz`,
+        name: `cataly-v${releaseVersion}.tar.gz`,
         root: archiveRoot,
         sha256: digest(bytes),
         bytes: bytes.length,
       },
       source: manifestSource,
-      requirements: {
-        platform: "linux",
-        arch: "x64",
-        bun: "1.4.4",
-        omp: "18.18.8",
-        runtime: "herdr",
-        messenger: "discord",
-      },
-      ompUlw: { repository: "https://github.com/dbc-hbin/omp-ulw.git", commit: pin },
+      requirements: { omp: readSourceBundle(source).lock.nativeVersion },
     });
     const dist = join(root, `dist-${serial}`);
     mkdirSync(dist, { mode: 0o700 });
@@ -229,5 +213,5 @@ export function fixture(side = false, portable = side): ConsumerFixture {
     );
     return { bundle: { manifest, files: readArchive(bytes, manifest) }, bytes, entries, dist };
   };
-  return { root, paths, pin, ownedDependency, release };
+  return { root, paths, rebindNative, release };
 }

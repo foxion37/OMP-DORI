@@ -4,15 +4,6 @@ import { bindCliEnvironment } from "../../../../src/cli-environment.ts";
 import { releaseVersion } from "../../../../src/release/version.ts";
 import type { Command } from "./cli-context.ts";
 import type { FlowDeps } from "./done-flow.ts";
-import { LEGACY_HEAD_ADMISSION_PROTOCOL } from "./messenger/head-admission-protocol.ts";
-
-// A v0.1.3 parent only understands its own wire tag. Keep that fact before binding drops legacy env keys.
-if (
-  process.connected &&
-  process.env["CATALY_MONITOR_ADMISSION"] === undefined &&
-  process.env["DORI_MONITOR_ADMISSION"] === "1"
-)
-  process.env["CATALY_MONITOR_ADMISSION_PROTOCOL"] = LEGACY_HEAD_ADMISSION_PROTOCOL;
 const [command = "", ...rest] = process.argv.slice(2);
 bindCliEnvironment();
 const renderTablesUsage = "--render-tables requires cataly send discord (with or without --edit)";
@@ -26,17 +17,15 @@ if (
   process.exit(1);
 }
 const qualifiedRoutesUsage = "--qualified-routes is supported for inbound slack only";
-const adoptThreadsUsage = "--adopt-legacy-threads is supported for inbound slack only";
-const slackInboundOption = /^(qualified-routes|adopt-legacy-threads)(?:=|$)/;
+const slackInboundOption = /^qualified-routes(?:=|$)/;
 // Command-selected imports keep unrelated graphs out of short-lived CLI processes.
 if (command === "harness") {
   if (rest.some((arg) => arg.startsWith("--") && slackInboundOption.test(arg.slice(2)))) {
     // Use the harness parser before it initializes state, preserving flag-like values and `--` forwarding.
     const { parse } = await import("../../../../src/cli-args.ts");
     const { flags } = parse([...rest, ""]); // Let the parser classify a trailing unknown option.
-    const rejected = [...flags.keys()].find((name) => slackInboundOption.test(name));
-    if (rejected) {
-      console.error(rejected.startsWith("adopt-legacy-threads") ? adoptThreadsUsage : qualifiedRoutesUsage);
+    if ([...flags.keys()].some((name) => slackInboundOption.test(name))) {
+      console.error(qualifiedRoutesUsage);
       process.exit(1);
     }
   }
@@ -48,7 +37,7 @@ if (command === "--version") {
     .slice(0, end === -1 ? rest.length : end)
     .find((arg) => arg.startsWith("--") && slackInboundOption.test(arg.slice(2)));
   if (rejected) {
-    console.error(rejected.startsWith("--adopt-legacy-threads") ? adoptThreadsUsage : qualifiedRoutesUsage);
+    console.error(qualifiedRoutesUsage);
     process.exit(1);
   }
   console.log(releaseVersion);
@@ -69,12 +58,11 @@ if (command === "quota") process.exit(await (await import("./cli-usage-report.ts
 const { die, makeCli } = await import("./cli-context.ts");
 const { invokeCommand, validateScheduleOptions } = await import("./cli-invoke.ts");
 const { ConfigError, loadConfig } = await import("./config.ts");
-const { LegacyRuntimeError } = await import("../../../../src/runtime/registry.ts");
 const { Registry } = await import("./registry.ts");
 const { realClock, run } = await import("./run.ts");
 // Preserve config/native admission before argument parsing or any command execution.
 const config = await loadConfig().catch((e: unknown) =>
-  e instanceof ConfigError || e instanceof LegacyRuntimeError ? die(e.message) : Promise.reject(e),
+  e instanceof ConfigError ? die(e.message) : Promise.reject(e),
 );
 const flags = parseSkillFlags(rest);
 if (flags.values["activity-file"] !== undefined && command !== "inbound")
@@ -85,8 +73,6 @@ if (flags.values["render-tables"] !== undefined && (command !== "send" || flags.
     die("--render-tables is supported for discord only");
   die(renderTablesUsage);
 }
-if (flags.values["adopt-legacy-threads"] !== undefined && (command !== "inbound" || flags.positionals[0] !== "slack"))
-  die(adoptThreadsUsage);
 if (flags.values["qualified-routes"] !== undefined) {
   if (command !== "inbound" || flags.positionals[0] !== "slack") die(qualifiedRoutesUsage);
   if (flags.tokens.some((token) => token.kind === "option" && token.name === "qualified-routes" && token.inlineValue))

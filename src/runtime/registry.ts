@@ -1,32 +1,11 @@
 import { selfRef as ternSelf } from "./tern/sessions.ts";
 import {
   HEADLESS_ADDRESS,
-  isLegacyRuntime,
   type RuntimeKind,
   type SessionRef,
   type SessionRuntime,
   type TerminalRuntime,
 } from "./types.ts";
-
-/** The upgrade-guard text for a home that still uses the removed herdr/hc runtime; one line per step. */
-const legacyRuntimeMessage = (configPath: string, options: { readonly rolesJson?: boolean } = {}): string =>
-  [
-    "This Cataly home still uses the herdr/hc terminal runtime, which this version removed.",
-    "1. Close every herdr/hc lane (`cataly status` lists them) with your previous Cataly version.",
-    `2. Remove "runtime" (if it names herdr or hc) and "sessionRuntime" from ${configPath}.`,
-    "3. Run this command again. Cataly state and OMP sessions are kept; lanes reopen on headless.",
-    ...(options.rolesJson
-      ? ["Retire the historical roles with your previous Cataly version (cataly update --retire-legacy-roles)."]
-      : []),
-  ].join("\n");
-
-/** A stored session, setting or home still names the removed herdr/hc runtime. */
-export class LegacyRuntimeError extends Error {
-  override readonly name = "LegacyRuntimeError";
-  constructor(configPath: string, options: { readonly rolesJson?: boolean } = {}) {
-    super(legacyRuntimeMessage(configPath, options));
-  }
-}
 
 class TerminalRuntimeError extends Error {}
 
@@ -39,8 +18,7 @@ export const selfSession = (env: Readonly<Record<string, string | undefined>>): 
 
 /**
  * The runtimes one process talks to: `default` is the selected session runtime, and `for(ref)` is the runtime that
- * owns a stored session. Each kind is built on first use and then reused. A legacy herdr/hc ref has no runtime: `for`
- * and `terminal` throw LegacyRuntimeError naming `configPath`.
+ * owns a stored session. Each kind is built on first use and then reused.
  */
 export class Runtimes {
   private readonly built = new Map<RuntimeKind, SessionRuntime>();
@@ -49,7 +27,6 @@ export class Runtimes {
   constructor(
     private readonly selected: RuntimeKind | (() => RuntimeKind),
     private readonly make: (kind: RuntimeKind) => SessionRuntime,
-    private readonly configPath = "your Cataly config.json",
   ) {}
 
   get default(): SessionRuntime {
@@ -57,13 +34,11 @@ export class Runtimes {
   }
 
   for(ref: SessionRef): SessionRuntime {
-    if (isLegacyRuntime(ref.runtime)) throw new LegacyRuntimeError(this.configPath);
     return this.of(ref.runtime);
   }
 
   /** Resolve a terminal-only operation without consulting the default or constructing a native adapter. */
   terminal(kind: SessionRef["runtime"]): TerminalRuntime {
-    if (isLegacyRuntime(kind)) throw new LegacyRuntimeError(this.configPath);
     if (kind === "headless") throw new TerminalRuntimeError("headless OMP lanes have no terminal");
     const runtime = this.of(kind);
     if (runtime.kind === "headless" || runtime.kind !== kind)

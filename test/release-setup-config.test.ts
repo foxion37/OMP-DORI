@@ -7,7 +7,7 @@ import { loadInstalled, releasePath } from "../src/release/state.ts";
 import { captureSetupFile } from "../src/setup-files.ts";
 import { setupReadback } from "../src/setup-readback.ts";
 import { digest } from "../src/update/source.ts";
-import { portableFixture as fixture, posix } from "./release-consumer-setup.ts";
+import { fixture, posix } from "./release-consumer-setup.ts";
 import { boundRelease, releaseDist } from "./release-native-recovery-setup.ts";
 
 const { existsSync, mkdirSync, readFileSync, readdirSync, readlinkSync, writeFileSync } = fs;
@@ -19,11 +19,9 @@ posix.each([false, true])(
     const f = fixture(side);
     const release = f.release("preview");
     const before = captureSetupFile(f.paths.config);
-    const dependencies = readdirSync(f.paths.dependencies);
     const preview = previewConsumerSetup(f.paths, release.bundle, before);
     expect(preview.action).toBe("create");
     expect(captureSetupFile(f.paths.config)).toEqual(before);
-    expect(readdirSync(f.paths.dependencies)).toEqual(dependencies);
     expect(readdirSync(f.paths.releases)).toEqual([]);
     expect(readdirSync(f.paths.manifests)).toEqual([]);
     expect(loadInstalled(f.paths)).toBeUndefined();
@@ -36,7 +34,7 @@ posix.each([false, true])(
 posix("consumer install preview uses the real CLI without creating its selected home", () => {
   const f = fixture();
   const release = { dist: releaseDist(join(f.root, "cli-preview"), boundRelease(f, "cli-preview").bundle) };
-  const selected = join(f.paths.home, ".omp-dori");
+  const selected = join(f.paths.home, ".omp-cataly");
   const temporary = join(f.root, "preview-tmp");
   mkdirSync(temporary, { mode: 0o700 });
   const result = Bun.spawnSync(
@@ -136,7 +134,7 @@ posix("consumer activation rechecks configuration after the launch gate and sour
   const pointer = readlinkSync(f.paths.live);
   const text = `${readFileSync(f.paths.config, "utf8")}\n`;
   const payload = join(pointer, "payload.txt");
-  const staged = join(f.paths.dori, "owner-save.json");
+  const staged = join(f.paths.cataly, "owner-save.json");
   writeFileSync(staged, text, { mode: 0o600 });
   const gate = join(f.paths.root, "consumer-launch.lock");
   const read = spyOn(fs, "readFileSync").mockImplementation(
@@ -160,7 +158,7 @@ posix("consumer activation rechecks configuration after the launch gate and sour
   expect(loadInstalled(f.paths)).toEqual(before);
 });
 
-posix("rollback holds a config edit made while retained dependencies are verified", async () => {
+posix("rollback holds a config edit made while the retained release is verified", async () => {
   const f = fixture();
   const one = await installBundle(f.paths, f.release("one").bundle, undefined);
   const two = await installBundle(f.paths, f.release("two").bundle, one);
@@ -177,9 +175,6 @@ posix("a consumer plan cannot publish another home's snapshot", () => {
   const f = fixture();
   const foreign = join(f.paths.home, "foreign.json");
   writeFileSync(foreign, "{}\n", { mode: 0o600 });
-  const release = f.release("foreign snapshot");
-  expect(() =>
-    consumerConfigPlan(f.paths, captureSetupFile(foreign), f.root, f.ownedDependency, release.bundle.manifest),
-  ).toThrow("another installation");
+  expect(() => consumerConfigPlan(f.paths, captureSetupFile(foreign), f.root)).toThrow("another installation");
   expect(readFileSync(foreign, "utf8")).toBe("{}\n");
 });

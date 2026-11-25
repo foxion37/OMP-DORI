@@ -12,7 +12,7 @@ type State = {
   readonly sessionId: string;
   readonly startedAt: string;
   readonly wanted: ReadonlyMap<string, MonitorSpec>;
-  readonly presetLoaded: boolean;
+  readonly configLoaded: boolean;
 };
 const source = dirname(realpathSync(import.meta.dir));
 const extensionHash = createHash("sha256")
@@ -67,7 +67,7 @@ export class RuntimeHealthWriter {
       pid: process.pid,
       sessionId: state.sessionId,
       role: state.role,
-      presetLoaded: state.presetLoaded,
+      configLoaded: state.configLoaded,
       startedAt: state.startedAt,
       updatedAt: new Date().toISOString(),
       source,

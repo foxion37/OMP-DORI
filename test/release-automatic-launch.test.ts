@@ -9,7 +9,7 @@ import { installBundle } from "../src/release/install.ts";
 import { nativeDirectory } from "../src/release/native.ts";
 import { loadInstalled, releasePath } from "../src/release/state.ts";
 import { digest } from "../src/update/source.ts";
-import { archive, portableFixture as fixture, withArchive } from "./release-consumer-setup.ts";
+import { archive, fixture, withArchive } from "./release-consumer-setup.ts";
 import { boundRelease } from "./release-native-recovery-setup.ts";
 
 // POSIX-only: release installation refuses non-private directories by POSIX mode bits.
@@ -21,12 +21,17 @@ posix("ordinary source directories are never enrolled or checked by the consumer
   expect(readAutomaticState(f.paths).nextCheck).toBe(0);
 });
 
-posix("a historical terminal-only candidate is never activated", async () => {
+posix("a candidate without this host's headless profile is never activated", async () => {
   const f = fixture();
   const one = await installBundle(f.paths, f.release("one").bundle, undefined);
   const settings = readFileSync(f.paths.config);
   const pointer = readlinkSync(f.paths.live);
-  const next = f.release("two").bundle;
+  const other =
+    process.platform === "linux" ? { platform: "darwin", arch: "arm64" } : { platform: "linux", arch: "x64" };
+  const profiles = JSON.stringify({ version: 1, profiles: [{ ...other, runtime: "headless" }] });
+  const next = boundRelease(f, "two", undefined, {
+    populateSource: (source) => writeFileSync(join(source, "release-headless.json"), profiles),
+  }).bundle;
   const candidate = { ...next, manifest: { ...next.manifest, prerelease: false } };
   expect(await automaticUpdate(f.paths, { now: 42, acquire: async () => candidate, checkTools: () => {} })).toBe(
     releasePath(f.paths, one.current),
@@ -40,17 +45,17 @@ posix("a historical terminal-only candidate is never activated", async () => {
   });
 });
 
-posix("bound automatic activation admits native and ULW bundles without mutating the old release", async () => {
+posix("bound automatic activation admits a native bundle without mutating the old release", async () => {
   const f = fixture();
   const first = boundRelease(f, "first");
   const before = await installBundle(f.paths, first.bundle, undefined);
   const second = boundRelease(f, "second", first.source);
   const candidate = { ...second.bundle, manifest: { ...second.bundle.manifest, prerelease: false } };
   const old = releasePath(f.paths, before.current);
-  const lock = readFileSync(join(old, "omp-ulw.overlay.lock"));
+  const lock = readFileSync(join(old, "native-omp.lock"));
   const selected = await automaticUpdate(f.paths, { now: 50, acquire: async () => candidate, checkTools: () => {} });
   expect(selected).toBe(releasePath(f.paths, candidate.manifest));
-  expect(readFileSync(join(old, "omp-ulw.overlay.lock"))).toEqual(lock);
+  expect(readFileSync(join(old, "native-omp.lock"))).toEqual(lock);
   expect(readAutomaticState(f.paths).outcome).toBe("installed");
   expect(JSON.parse(readFileSync(join(nativeDirectory(selected, f.paths.home), "native-config.json"), "utf8"))).toEqual(
     { update: { auto: false } },
@@ -61,7 +66,7 @@ posix("the primary OMP link keeps its physical home across source selection from
   const f = fixture();
   const current = join(f.paths.releases, `${"1".repeat(40)}-${"a".repeat(16)}`);
   const next = join(f.paths.releases, `${"2".repeat(40)}-${"b".repeat(16)}`);
-  writeFileSync(f.paths.config, '{"selected":"historical"}\n');
+  writeFileSync(f.paths.config, '{"selected":"consumer"}\n');
   for (const source of [current, next]) {
     mkdirSync(join(source, "scripts/consumer"), { recursive: true });
     mkdirSync(join(source, "src/release"), { recursive: true });
@@ -69,20 +74,18 @@ posix("the primary OMP link keeps its physical home across source selection from
     chmodSync(join(source, "scripts/consumer/omp"), 0o755);
     writeFileSync(
       join(source, "src/release/automatic.ts"),
-      `import { importLegacyEnvironment } from ${JSON.stringify(resolve(import.meta.dir, "../src/legacy-environment.ts"))};
-importLegacyEnvironment();
-console.log(process.env.CATALY_MANAGED_STARTUP ? process.argv[2] : ${JSON.stringify(next)});\n`,
+      `console.log(process.env.CATALY_MANAGED_STARTUP ? process.argv[2] : ${JSON.stringify(next)});\n`,
     );
     const native = join(source, "native");
     writeFileSync(
       native,
-      `#!/bin/sh\nprintf "%s\\n" ${basename(source)} "$CATALY_HOME" "$CATALY_CONFIG" "$DORI_HOME" "$DORI_CONFIG" "\${CATALY_STATE_DIR-state unset}" "\${DORI_STATE_DIR-state unset}" "$PWD" "$@"\n`,
+      `#!/bin/sh\nprintf "%s\\n" ${basename(source)} "$CATALY_HOME" "$CATALY_CONFIG" "\${CATALY_STATE_DIR-state unset}" "$PWD" "$@"\n`,
       { mode: 0o755 },
     );
     writeFileSync(
       join(source, "scripts/source-dependencies.ts"),
       `const config = await Bun.file(process.env.CATALY_CONFIG).json();
-if (config.selected !== "historical") throw new Error("Wrong consumer dependency config");
+if (config.selected !== "consumer") throw new Error("Wrong consumer dependency config");
 console.log(${JSON.stringify(native)});\n`,
     );
   }
@@ -103,55 +106,48 @@ console.log(${JSON.stringify(native)});\n`,
     [foreign, undefined],
     [own, undefined],
     [undefined, "CATALY"],
-    [undefined, "DORI"],
-    [foreign, "DORI"],
+    [foreign, "CATALY"],
   ] as const) {
-    const inherited = Object.fromEntries(
-      Object.entries(context ?? {}).flatMap(([key, value]) => [
-        [`CATALY_${key}`, value],
-        [`DORI_${key}`, value],
-      ]),
+    const inherited: Record<string, string> = Object.fromEntries(
+      Object.entries(context ?? {}).map(([key, value]) => [`CATALY_${key}`, value]),
     );
     if (managed) {
-      inherited[`${managed}_MANAGED_STARTUP`] = "1";
-      inherited[`${managed}_STATE_DIR`] = own.STATE_DIR;
-      if (managed === "DORI") inherited["CATALY_MANAGED_STARTUP"] = "";
+      inherited["CATALY_MANAGED_STARTUP"] = "1";
+      if (context === undefined) inherited["CATALY_STATE_DIR"] = own.STATE_DIR;
     }
-    const launched = Bun.spawnSync([wrapper, "--cataly-role", "dori", "space argument"], {
+    const launched = Bun.spawnSync([wrapper, "--cataly-role", "lane", "space argument"], {
       cwd,
       env: { ...inherited, HOME: f.paths.home, PATH: `.:${dirname(process.execPath)}:${process.env["PATH"]}` },
     });
-    const state = (prefix: "CATALY" | "DORI") =>
-      context === own || (context === undefined && managed === prefix) ? own.STATE_DIR : "state unset";
+    const state = context === own || (context === undefined && managed) ? own.STATE_DIR : "state unset";
     expect(launched.exitCode, launched.stderr.toString()).toBe(0);
     expect(launched.stdout.toString().trim().split("\n")).toEqual([
       basename(managed ? current : next),
       f.paths.cataly,
       f.paths.config,
-      f.paths.cataly,
-      f.paths.config,
-      state("CATALY"),
-      state("DORI"),
+      state,
       cwd,
       "--cataly-role",
-      "dori",
+      "lane",
       "space argument",
     ]);
   }
 });
 
-function withAutomatic(bundle: VerifiedBundle, next: string): VerifiedBundle {
-  const path = "src/release/automatic.ts";
-  const bytes = Buffer.from(`console.log(${JSON.stringify(next)});\n`);
-  const files = [...bundle.files, { path, bytes, executable: false }].sort((a, b) =>
-    a.path < b.path ? -1 : a.path > b.path ? 1 : 0,
-  );
+/** Replace or add exact release files, rebinding the source manifest and archive. */
+function withFiles(
+  bundle: VerifiedBundle,
+  replaced: Record<string, { bytes: string; executable: boolean }>,
+): VerifiedBundle {
+  const kept = bundle.files.filter((file) => !Object.hasOwn(replaced, file.path));
+  const added = Object.entries(replaced).map(([path, file]) => ({
+    path,
+    bytes: Buffer.from(file.bytes),
+    executable: file.executable,
+  }));
+  const files = [...kept, ...added].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
   const entries = files.map((file) => ({ path: file.path, sha256: digest(file.bytes), executable: file.executable }));
-  const source = {
-    ...bundle.manifest.source,
-    files: entries,
-    hash: digest(JSON.stringify({ files: entries, ulwPresent: false })),
-  };
+  const source = { ...bundle.manifest.source, files: entries, hash: digest(JSON.stringify({ files: entries })) };
   const archiveBytes = archive(
     files.map((file) => ({
       name: `${bundle.manifest.archive.root}/${file.path}`,
@@ -165,18 +161,21 @@ function withAutomatic(bundle: VerifiedBundle, next: string): VerifiedBundle {
 
 posix("isolated launch computes extension and discovery argv from the new source, in an empty cwd", async () => {
   const f = fixture(true);
-  const next = f.release("next").bundle;
+  // The selected source's own launcher prints the argv the isolated wrapper computed for it.
+  const next = withFiles(f.release("next").bundle, {
+    "scripts/consumer/omp": { bytes: '#!/bin/sh\nprintf "%s\\n" "$@"\n', executable: true },
+  });
   const nextSource = releasePath(f.paths, next.manifest);
   const newer = await installBundle(f.paths, next, undefined);
-  const current = withAutomatic(f.release("current").bundle, nextSource);
+  const current = withFiles(f.release("current").bundle, {
+    "src/release/automatic.ts": { bytes: `console.log(${JSON.stringify(nextSource)});\n`, executable: false },
+  });
   await installBundle(f.paths, current, newer);
-  const native = join(f.root, "native-bin/omp");
-  writeFileSync(native, '#!/bin/sh\nprintf "%s\\n" "$@"\n', { mode: 0o755 });
   const cwd = join(f.root, "untrusted-cwd");
   mkdirSync(cwd);
   writeFileSync(join(cwd, "bunfig.toml"), 'preload = ["./injected.ts"]\n');
   writeFileSync(join(cwd, "injected.ts"), 'throw new Error("untrusted preload ran");\n');
-  const launched = Bun.spawnSync([join(f.paths.dori, "bin/omp"), "--cataly-role", "dori"], {
+  const launched = Bun.spawnSync([join(f.paths.cataly, "bin/omp"), "--cataly-role", "lane"], {
     cwd,
     env: { HOME: f.paths.home, PATH: process.env["PATH"] },
   });
@@ -194,7 +193,7 @@ posix("automatic CLI opt-out and resume are durable and leave config bytes untou
   const cli = resolve(import.meta.dir, "../skills/cataly-mode/scripts/src/cli.ts");
   for (const mode of ["disable", "status", "enable"] as const) {
     const result = Bun.spawnSync([process.execPath, cli, "update", "auto", mode], {
-      env: { HOME: f.paths.home, CATALY_HOME: f.paths.dori, PATH: process.env["PATH"] },
+      env: { HOME: f.paths.home, CATALY_HOME: f.paths.cataly, PATH: process.env["PATH"] },
     });
     expect(result.exitCode, result.stderr.toString()).toBe(0);
     expect(JSON.parse(result.stdout.toString()).automatic.enabled).toBe(mode === "enable");
@@ -208,7 +207,7 @@ posix(
     const f = fixture();
     await installBundle(f.paths, f.release("one").bundle, undefined);
     const settings = "modelRoles:\n  default: owner/model\ndefaultThinkingLevel: ultra\nupdate:\n  auto: false\n";
-    const path = join(f.paths.dori, "omp.yml");
+    const path = join(f.paths.cataly, "omp.yml");
     writeFileSync(path, settings, { mode: 0o600 });
     const candidate = boundRelease(f, "two").bundle;
     await automaticUpdate(f.paths, {
@@ -224,7 +223,7 @@ posix(
 posix("an owner-edited owned isolated settings file is preserved and fails launch admission closed", async () => {
   const f = fixture(true);
   await installBundle(f.paths, f.release("one").bundle, undefined);
-  const path = join(f.paths.dori, "omp.yml");
+  const path = join(f.paths.cataly, "omp.yml");
   const original = readFileSync(path, "utf8");
   expect(original).toContain("update:\n  auto: false\n");
   const settings = `${original}modelRoles:\n  default: owner/model\ndefaultThinkingLevel: ultra\n`;

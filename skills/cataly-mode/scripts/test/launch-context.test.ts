@@ -13,14 +13,6 @@ beforeEach(() => {
 });
 afterEach(() => state.done());
 
-test("retrying a v0.1.3 generated brief drops its old instructions but not an owner's literal delimiter", () => {
-  const body = "Keep the quoted <!-- dori launch: footer start --> as data.";
-  const old = `generated lessons\n<!-- dori launch: the brief starts below -->\n${body}\n\n<!-- dori launch: footer start -->\nold instructions\n<!-- dori launch: footer end -->\n`;
-  expect(originalBrief(old)).toBe(body);
-  const quoted = `${body}\n<!-- dori launch: footer start -->\nexample only\n<!-- dori launch: footer end -->`;
-  expect(originalBrief(quoted)).toBe(quoted);
-});
-
 test("new native lanes report to the attested native lead, but not to a session that lost the lead role", async () => {
   const world = newWorld();
   const id = sid(1);

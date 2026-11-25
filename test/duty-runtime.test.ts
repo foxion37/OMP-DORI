@@ -7,13 +7,14 @@ const ID = sid(7);
 const lane = (over: Partial<Lane> = {}): Lane => ({
   key: "native-lane",
   sessionRef: href(ID),
-  paneId: ID,
-  tabId: "",
   brief: "/b.md",
   cwd: "/w",
   status: "working",
   createdAt: 0,
   lastActivityAt: 0,
+  progressAt: 0,
+  noticeId: "native-lane-notice",
+  progressEpoch: 0,
   nudges: 0,
   log: [],
   ...over,
@@ -29,15 +30,5 @@ describe("the duty pass on native lanes", () => {
     expect(await dutyTick(d)).toEqual([]);
     expect(d.store.lane("native-lane")!.nudges).toBe(0);
     expect(pane.received).toEqual([]);
-  });
-
-  test("a legacy record still marked as under migration is left alone: not lost, not nudged", async () => {
-    const w = new World();
-    const d = w.deps();
-    d.store.saveLane(lane({ migration: true }));
-    w.clock = 60 * 60_000;
-    expect(await dutyTick(d)).toEqual([]);
-    expect(d.store.lane("native-lane")).toMatchObject({ status: "working", nudges: 0, lastActivityAt: 0 });
-    expect(w.calls).toEqual([]);
   });
 });

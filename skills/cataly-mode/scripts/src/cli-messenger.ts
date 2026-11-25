@@ -3,12 +3,11 @@ import { existsSync } from "node:fs";
 import { InboundActivityError } from "../../../../src/update/source-activity.ts";
 
 import { type Command, die, envSlackToken, every, messageText, slackAuth } from "./cli-context.ts";
-import { discordNativeBinary } from "./cli-discord-binary.ts";
+import { discordNativeBinary } from "../../../../src/native-binary.ts";
 import { reactDiscord, sendDiscord, threadDiscord } from "./cli-discord-ops.ts";
 import { channelDiscord } from "./cli-discord-purpose.ts";
 import { discordClock, openDiscordSocket, untilStopped } from "./cli-discord-gateway.ts";
 import { inboundCommand } from "./cli-inbound.ts";
-import { configuredHookEnv } from "./config.ts";
 import { ChannelPurposeError } from "./messenger/discord-channels.ts";
 import { discordPresence } from "./messenger/discord-presence.ts";
 import { fetchHttp, MessengerError, UnsafeMessageError } from "./messenger/http.ts";
@@ -148,11 +147,6 @@ export const messengerCommands: Readonly<Record<string, Command>> = {
   transcribe: async ({ key, config }) => {
     const source = key ?? die("transcribe needs an audio file path");
     const hook = config.hooks.transcribe;
-    const env = hook && configuredHookEnv(config.hooks, hook);
-    console.log(
-      await withLocalAudio(source, config.transcribeMaxBytes, (file) =>
-        transcribe(env ? (argv) => run(argv, { env }) : run, hook, file),
-      ),
-    );
+    console.log(await withLocalAudio(source, config.transcribeMaxBytes, (file) => transcribe(run, hook, file)));
   },
 };

@@ -37,7 +37,7 @@ test("an exit from an older start cannot complete a same-named replacement", () 
   expect(recordedMonitorStates(branch).get("ci")).toEqual({ spec, id: "new", completed: false });
 });
 
-test("legacy persistent starts keep their intent and gain a last-exit observation", () => {
+test("persistent starts without a mode keep their intent and gain a last-exit observation", () => {
   const { mode: _mode, ...persistent } = spec;
   const branch = [entry({ op: "start", ...persistent }), entry({ op: "exit", name: "ci", exit })];
   expect(recordedMonitors(branch).get("ci")).toEqual(persistent);

@@ -8,7 +8,7 @@ import { load, until, useConfig } from "./fake-pi";
 
 const inbound = 'INBOUND discord 20 100 from=owner ref=- "question"';
 const setup = async () => {
-  const root = useConfig(join(import.meta.dir, "fake-ulw.ts"));
+  const root = useConfig();
   const pi = await load({ session: { id: "s1", entries: [] }, flags: { "cataly-role": "cataly" } });
   await pi.emit("session_start");
   mkdirSync(join(root, "owes"), { recursive: true, mode: 0o700 });

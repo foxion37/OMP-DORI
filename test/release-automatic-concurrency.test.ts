@@ -8,7 +8,7 @@ import { installBundle } from "../src/release/install.ts";
 import { acquireLaunchGate, assertNoConsumerLaunches, registerConsumerLaunch } from "../src/release/launch-leases.ts";
 import { loadInstalled, releasePath } from "../src/release/state.ts";
 import { processIdentity } from "../src/update/deployment-process.ts";
-import { portableFixture as fixture } from "./release-consumer-setup.ts";
+import { fixture } from "./release-consumer-setup.ts";
 import { blockStatePublication, boundRelease } from "./release-native-recovery-setup.ts";
 
 // POSIX-only: release installation refuses non-private directories by POSIX mode bits.

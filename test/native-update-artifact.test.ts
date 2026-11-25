@@ -73,12 +73,12 @@ posix("Bun trailing commas are data; quoted strings are never rewritten by lock 
     const text = readFileSync(path, "utf8");
     writeFileSync(path, text.replace(/}$/, ",}"));
   }
-  expect(() => validateNativeDependencies(f.source, f.output, "18.20.0", "19.0.1")).not.toThrow();
+  expect(() => validateNativeDependencies(f.source, f.output, "19.0.0", "19.0.1")).not.toThrow();
   const path = join(f.output, "native-addon/bun.lock");
   const lock = JSON.parse(readFileSync(path, "utf8").replace(/,}$/, "}"));
   lock.packages["@oh-my-pi/pi-natives"][2] = { description: "keep ,} and ,] within quoted strings" };
   writeFileSync(path, JSON.stringify(lock));
-  expect(() => validateNativeDependencies(f.source, f.output, "18.20.0", "19.0.1")).not.toThrow();
+  expect(() => validateNativeDependencies(f.source, f.output, "19.0.0", "19.0.1")).not.toThrow();
 });
 
 posix("receipt injection, wrong previous identity, altered patch and forged conflict bytes are rejected", async () => {

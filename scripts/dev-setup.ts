@@ -1,19 +1,20 @@
 /**
- * `bun run dev:setup`: prepare this checkout the way CI's `.github/actions/setup` does with `fixtures: all`, then write
- * target/dev-env.sh (pinned Bun first on PATH, CATALY_TEST_OMP_ROOT, CATALY_TEST_COMPAT_ULW_ENTRY).
+ * `bun run dev:setup`: prepare this checkout the way CI's `.github/actions/setup` does with `fixtures: all`, including
+ * its `cargo build --locked --release --bin cataly` of the native headless host, then write target/dev-env.sh (pinned
+ * Bun first on PATH, CATALY_TEST_OMP_ROOT, CATALY_DISCORD_NATIVE_BIN).
  *
  * The action's own `run:` scripts execute verbatim under the pinned Bun, umask 022 and a private /tmp TMPDIR, so the
  * installs, the native host version check and every fixture pin stay defined only in the action. Its `uses:` steps are
- * replaced by the Bun that package.json `packageManager` pins. A compatibility checkout already at the step's pin is
- * reused; every other step is idempotent and runs again.
+ * replaced by the Bun that package.json `packageManager` pins. Every step is idempotent and runs again. A checkout from
+ * before the omp-ulw removal loses that former fixture (`ref/omp-ulw`) first.
  */
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { delimiter, dirname, join, resolve } from "node:path";
+import { removeUlwFixture } from "../src/update/ulw-fixture.ts";
 import { ensurePinnedBun, pinnedBunVersion, requirePosix, runUnderPinnedBun, withPrivateTmp } from "./dev-bun.ts";
 
 const ACTION = ".github/actions/setup/action.yml";
-const COMPAT_ENV = "CATALY_TEST_COMPAT_ULW_ENTRY";
-const REQUIRED_ENV = ["CATALY_TEST_OMP_ROOT", COMPAT_ENV] as const;
+const REQUIRED_ENV = ["CATALY_TEST_OMP_ROOT", "CATALY_DISCORD_NATIVE_BIN"] as const;
 
 interface Step {
   readonly name: string;
@@ -62,45 +63,16 @@ const readEnvFile = (file: string): Map<string, string> => {
   return env;
 };
 
-const gitOutput = (dir: string, args: readonly string[]): string | undefined => {
-  const result = Bun.spawnSync(["git", "-C", dir, ...args], { stdout: "pipe", stderr: "ignore" });
-  return result.exitCode === 0 ? result.stdout.toString() : undefined;
-};
-
-/** An earlier checkout is reused only at the step's exact pin with a clean worktree. */
-const compatReady = (entry: string | undefined, pin: string): entry is string => {
-  if (!entry || !existsSync(entry)) return false;
-  const dir = dirname(entry);
-  return gitOutput(dir, ["rev-parse", "HEAD"])?.trim() === pin && gitOutput(dir, ["status", "--porcelain"]) === "";
-};
-
 const shellQuote = (value: string): string => `'${value.replaceAll("'", `'\\''`)}'`;
 
 const runSteps = async (root: string, bunVersion: string, fixtures: string): Promise<Map<string, string>> => {
   const runner = join(fixtures, "runner");
-  const compatRunner = join(fixtures, "compat-runner");
   mkdirSync(runner, { recursive: true, mode: 0o700 });
   const recorded = join(fixtures, "github-env");
-  const previous = readEnvFile(recorded);
   const githubEnv = `${recorded}.next`;
   writeFileSync(githubEnv, "");
   await withPrivateTmp("cataly-setup", async (tmp) => {
     for (const step of actionSteps(root, bunVersion)) {
-      let runnerTemp = runner;
-      if (step.run.includes(COMPAT_ENV)) {
-        const pin = /^\s*pin=([0-9a-f]{40})\s*$/m.exec(step.run)?.[1];
-        if (!pin) throw new Error(`${ACTION}: step ${JSON.stringify(step.name)} has no pin=<commit> line`);
-        const entry = previous.get(COMPAT_ENV);
-        if (compatReady(entry, pin)) {
-          console.log(`dev:setup: ${step.name}: reusing ${dirname(entry)} at ${pin}`);
-          appendFileSync(githubEnv, `${COMPAT_ENV}=${entry}\n`);
-          continue;
-        }
-        // The step clones into a fixed $RUNNER_TEMP path; give it a fresh owned directory as on a new runner.
-        rmSync(compatRunner, { recursive: true, force: true });
-        mkdirSync(compatRunner, { mode: 0o700 });
-        runnerTemp = compatRunner;
-      }
       console.log(`dev:setup: ${step.name}`);
       // GitHub runs `shell: bash` steps as `bash --noprofile --norc -eo pipefail`, with earlier GITHUB_ENV exports.
       const result = Bun.spawnSync(["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", step.run], {
@@ -110,7 +82,7 @@ const runSteps = async (root: string, bunVersion: string, fixtures: string): Pro
           ...Object.fromEntries(readEnvFile(githubEnv)),
           PATH: `${dirname(process.execPath)}${delimiter}${process.env["PATH"] ?? ""}`,
           GITHUB_WORKSPACE: root,
-          RUNNER_TEMP: runnerTemp,
+          RUNNER_TEMP: runner,
           GITHUB_ENV: githubEnv,
           TMPDIR: tmp,
         },
@@ -146,6 +118,7 @@ if (import.meta.main) {
   process.umask(0o022);
   const started = performance.now();
   const root = resolve(import.meta.dir, "..");
+  removeUlwFixture(root, (line) => console.log(`dev:setup: ${line}`));
   const bunVersion = pinnedBunVersion(root);
   runUnderPinnedBun(bunVersion, await ensurePinnedBun(root, bunVersion));
   const env = await runSteps(root, bunVersion, join(root, "target", "dev-fixtures"));

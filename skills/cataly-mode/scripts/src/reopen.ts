@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { HeadlessRuntime, headlessArgv } from "../../../../src/runtime/headless.ts";
 import { mayRunOmpArgv } from "../../../../src/runtime/omp-argv.ts";
-import { isLegacyRuntime, type RuntimeKind, type SessionRef } from "../../../../src/runtime/types.ts";
+import type { RuntimeKind, SessionRef } from "../../../../src/runtime/types.ts";
 import { configPath, fill } from "./config.ts";
 import { withDeliveryLock } from "./delivery-lock.ts";
 import { type FlowDeps, movedOn } from "./done-flow.ts";
@@ -34,11 +34,8 @@ export const reopenLane = async (deps: FlowDeps, seen: Lane, note?: string): Pro
     runContext(new Reports(deps.config.stateDir), lane, lane.runId);
     const oldRef = sessionOf(lane);
     const rts = runtimesOf(deps);
-    // A lane recorded on the removed herdr/hc runtime reopens on headless: its saved OMP session is resumed either way.
     const prior = oldRef?.runtime;
-    const legacy = prior !== undefined && isLegacyRuntime(prior);
-    const kind: RuntimeKind | undefined =
-      prior === undefined ? rts.choice?.kind : isLegacyRuntime(prior) ? "headless" : prior;
+    const kind: RuntimeKind | undefined = prior ?? rts.choice?.kind;
     const headless = kind === "headless";
     if (kind === undefined || (!oldRef && (preparedPark || kind === "headless")))
       return fail(`REOPEN_UNVERIFIED ${lane.key}: previous session identity missing`);
@@ -80,9 +77,9 @@ export const reopenLane = async (deps: FlowDeps, seen: Lane, note?: string): Pro
       const callerEnv = headless ? (deps.env ?? process.env) : process.env;
       const env = laneLaunchEnv(callerEnv, callerEnv["CATALY_CONFIG"] ?? configPath(), deps.config);
       if (!headless && lane.requestId !== undefined) env["CATALY_LANE_RUN"] = "";
-      const oldGroup = legacy ? undefined : oldRef?.group;
+      const oldGroup = oldRef?.group;
       const group = headless ? oldGroup : (oldGroup ?? deps.config.laneWorkspace);
-      const ref = await rts.for(oldRef && !legacy ? oldRef : { runtime: kind, id: "" }).create({
+      const ref = await rts.for(oldRef ?? { runtime: kind, id: "" }).create({
         name: lane.key,
         role: "lane",
         container: "tab",
@@ -99,9 +96,7 @@ export const reopenLane = async (deps: FlowDeps, seen: Lane, note?: string): Pro
           claim: _claim,
           objection: _objection,
           hold: _hold,
-          tab: _tab,
           sessionRef: _ref,
-          pane: _pane,
           ...rest
         } = current;
         if (current.requestId !== lane.requestId || current.runId !== lane.runId || current.nativeCloseIntent)

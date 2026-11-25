@@ -16,14 +16,14 @@ afterEach(() => {
 });
 
 function cache() {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "dori-native-hold-")));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "cataly-native-hold-")));
   roots.push(root);
   const home = join(root, "home");
   const refs = join(root, "refs");
   mkdirSync(refs);
   // Each identity's own source is gone, so only the reference under test can name it.
   const native = (name: string) => {
-    const f = overlayFixture(join(root, `source-${name}`), join(root, `upstream-${name}`), true, `${name} ${root}`);
+    const f = overlayFixture(join(root, `source-${name}`), join(root, `upstream-${name}`), `${name} ${root}`);
     const receipt = nativeCacheFixture(f.source, home, f.checkout);
     rmSync(f.source, { recursive: true });
     return receipt;
@@ -103,7 +103,7 @@ posix(
     const wrapper = `#!/bin/sh\nexec ${wrapped.omp} "$@"\n`;
     // A valid source of another identity outside the roots, holding a wrapper of this one.
     const outside = join(c.root, "outside");
-    overlayFixture(outside, join(c.root, "upstream-other"), true, `other ${c.root}`);
+    overlayFixture(outside, join(c.root, "upstream-other"), `other ${c.root}`);
     writeFileSync(join(outside, "omp"), wrapper);
     symlinkSync(outside, join(c.refs, "release"));
     // A directory inside a root that the walk skips (node_modules), reached through a link.

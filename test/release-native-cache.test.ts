@@ -25,11 +25,11 @@ afterEach(() => {
 const posix = test.skipIf(process.platform === "win32");
 
 function cache() {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "dori-native-cache-")));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "cataly-native-cache-")));
   roots.push(root);
   const home = join(root, "home");
   const native = (name: string, source = join(root, `source-${name}`)) => {
-    const f = overlayFixture(source, join(root, `upstream-${name}`), true, `${name} ${root}`);
+    const f = overlayFixture(source, join(root, `upstream-${name}`), `${name} ${root}`);
     return { source: f.source, receipt: nativeCacheFixture(f.source, home, f.checkout) };
   };
   return { root, home, native };
@@ -38,17 +38,17 @@ function cache() {
 posix("the report names what uses each identity and removes none, the unused one included", async () => {
   const c = cache();
   const live = c.native("live");
-  const releases = join(c.root, "dori/releases");
+  const releases = join(c.root, "cataly/releases");
   const discovered = c.native("discovered", join(releases, "retained-release"));
   const wrapped = c.native("wrapped");
   const running = c.native("running");
   const superseded = c.native("superseded");
   for (const source of [wrapped.source, running.source, superseded.source]) rmSync(source, { recursive: true });
-  mkdirSync(join(c.root, "dori/bin"), { recursive: true });
-  writeFileSync(join(c.root, "dori/bin/omp"), `#!/bin/sh\nexec ${wrapped.receipt.omp} "$@"\n`);
+  mkdirSync(join(c.root, "cataly/bin"), { recursive: true });
+  writeFileSync(join(c.root, "cataly/bin/omp"), `#!/bin/sh\nexec ${wrapped.receipt.omp} "$@"\n`);
   const unknown = join(c.home, ".cache/omp-cataly", `native-${process.platform}-${process.arch}-${"e".repeat(64)}`);
   mkdirSync(unknown, { mode: 0o700 });
-  const holder = Bun.spawn(["/bin/sh", "-c", "echo ready; read line", "dori-native-holder", running.receipt.omp], {
+  const holder = Bun.spawn(["/bin/sh", "-c", "echo ready; read line", "cataly-native-holder", running.receipt.omp], {
     stdin: "pipe",
     stdout: "pipe",
   });
@@ -57,14 +57,14 @@ posix("the report names what uses each identity and removes none, the unused one
     const reader = holder.stdout.getReader();
     expect(new TextDecoder().decode((await reader.read()).value)).toBe("ready\n");
     const sources = [live.source];
-    const scanned = [join(c.root, "dori")];
+    const scanned = [join(c.root, "cataly")];
     const entries = reportNativeCache(c.home, sources, scanned, ownProcessCwds, { files: ownProcessFiles });
     const reasons = Object.fromEntries(entries.map((entry) => [entry.directory, entry.protectedBy]));
     expect(reasons[live.receipt.directory]).toEqual(
       expect.arrayContaining([`source ${live.source}`, "receipt source"]),
     );
     expect(reasons[discovered.receipt.directory]).toContain(`source ${discovered.source}`);
-    expect(reasons[wrapped.receipt.directory]).toEqual([`reference ${join(c.root, "dori/bin/omp")}`]);
+    expect(reasons[wrapped.receipt.directory]).toEqual([`reference ${join(c.root, "cataly/bin/omp")}`]);
     // Only processes keep it, the holder among them (another process may work in that directory too).
     expect(reasons[running.receipt.directory]).toContain(`process ${holder.pid}`);
     expect(reasons[running.receipt.directory]?.every((reason) => reason.startsWith("process "))).toBe(true);
@@ -88,7 +88,7 @@ posix("a link into the cache, a process working in an entry and a partial receip
   const worked = c.native("worked");
   const free = c.native("free");
   for (const f of [linked, chained, partial, worked, free]) rmSync(f.source, { recursive: true });
-  const bin = join(c.root, "dori/bin");
+  const bin = join(c.root, "cataly/bin");
   mkdirSync(bin, { recursive: true });
   symlinkSync(linked.receipt.omp, join(bin, "omp"));
   // A chain whose first link names nothing in the cache still resolves into it.
@@ -104,7 +104,7 @@ posix("a link into the cache, a process working in an entry and a partial receip
   });
   try {
     expect(new TextDecoder().decode((await holder.stdout.getReader().read()).value)).toBe("ready\n");
-    const entries = reportNativeCache(c.home, [], [join(c.root, "dori")], ownProcessCwds, { files: ownProcessFiles });
+    const entries = reportNativeCache(c.home, [], [join(c.root, "cataly")], ownProcessCwds, { files: ownProcessFiles });
     const reasons = Object.fromEntries(entries.map((entry) => [entry.directory, entry.protectedBy]));
     expect(reasons[linked.receipt.directory]).toEqual([`link ${join(bin, "omp")}`]);
     expect(reasons[chained.receipt.directory]).toEqual([`link ${join(bin, "omp-side")}`]);
@@ -171,7 +171,7 @@ posix.each(["linux", "darwin"] as const)("a process's working directory is read 
   }
 });
 
-posix("dori update cache reports by default; --prune quarantines, trusting only the processes it is told to", () => {
+posix("cataly update cache reports by default; --prune quarantines, trusting only the processes it is told to", () => {
   const c = cache();
   const superseded = c.native("superseded");
   renameSync(superseded.source, join(c.root, "moved-away"));

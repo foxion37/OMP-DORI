@@ -209,7 +209,7 @@ export const laneTokenEnv = (env: Env, configFile: string): Record<string, strin
 export const laneLaunchEnv = (
   env: Env,
   rawConfig: string,
-  resolved?: Pick<CatalyConfig, "stateDir" | "ompUlwPath">,
+  resolved?: Pick<CatalyConfig, "stateDir">,
 ): Record<string, string> => {
   const config = resolve(rawConfig);
   if (dirname(config) !== resolve(dirname(rawConfig)))

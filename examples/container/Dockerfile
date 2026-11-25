@@ -3,7 +3,7 @@
 FROM ubuntu:24.04
 
 # Binary assets are sha256-verified. Top-level npm packages have exact versions.
-# Cataly comes from this build context; native OMP and omp-ulw consume its bound upstream source/overlay locks.
+# Cataly comes from this build context; native OMP consumes its bound upstream source lock.
 # This recipe has not been built as part of the source port.
 # Builds for linux/amd64 and linux/arm64; TARGETARCH is set by the builder.
 ARG TARGETARCH
@@ -79,10 +79,7 @@ RUN useradd -m -s /bin/bash cataly \
 USER cataly
 WORKDIR /home/cataly
 ENV HOME=/home/cataly CATALY_TELEMETRY=0
-RUN set -eu; \
-    bun /opt/omp-cataly/scripts/source-dependencies.ts native /opt/omp-cataly /home/cataly >/dev/null; \
-    ulw="$(bun /opt/omp-cataly/scripts/source-dependencies.ts ulw /opt/omp-cataly /home/cataly)"; \
-    ln -s "$ulw" /home/cataly/.cataly/omp-ulw
+RUN bun /opt/omp-cataly/scripts/source-dependencies.ts native /opt/omp-cataly /home/cataly >/dev/null
 
 # The image starts no runtime server or session. Interactive commands can use docker compose exec.
 CMD ["sleep", "infinity"]

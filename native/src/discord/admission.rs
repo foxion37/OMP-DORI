@@ -12,22 +12,10 @@ use super::inbox::admissions::{Attempt, HeadUnresolved, Outcome};
 use super::ipc::Ipc;
 
 pub(super) const PROTOCOL: &str = "cataly-head-admission-v1";
-pub(super) const LEGACY_PROTOCOL: &str = "dori-head-admission-v1";
 
-/// `CATALY_MONITOR_ADMISSION ?? DORI_MONITOR_ADMISSION` (head-admission.ts:23).
+/// `CATALY_MONITOR_ADMISSION` (head-admission.ts).
 pub(super) fn mode() -> Option<String> {
-    std::env::var("CATALY_MONITOR_ADMISSION")
-        .ok()
-        .or_else(|| std::env::var("DORI_MONITOR_ADMISSION").ok())
-}
-
-/// The wire tag a v0.1.3 parent understands (head-admission.ts:31-35, cli.ts:9-14).
-pub(super) fn protocol() -> &'static str {
-    let legacy = std::env::var("CATALY_MONITOR_ADMISSION_PROTOCOL")
-        .is_ok_and(|tag| tag == LEGACY_PROTOCOL)
-        || (std::env::var_os("CATALY_MONITOR_ADMISSION").is_none()
-            && std::env::var("DORI_MONITOR_ADMISSION").is_ok_and(|mode| mode == "1"));
-    if legacy { LEGACY_PROTOCOL } else { PROTOCOL }
+    std::env::var("CATALY_MONITOR_ADMISSION").ok()
 }
 
 enum Reply {

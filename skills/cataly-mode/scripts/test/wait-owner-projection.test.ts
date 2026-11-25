@@ -17,7 +17,7 @@ for (const [name, owner, postRaw] of [
     const f = await waitFixture();
     const log = spyOn(console, "log").mockImplementation(() => {});
     try {
-      agentIn(f.world, f.lane.pane!, { body: "Working (1m)" });
+      agentIn(f.world, f.lane.sessionRef!.id, { body: "Working (1m)" });
       await f.deps.registry.write({ ...f.lane, thread: "discord:123" });
       const internal = "private-operation-identity";
       await report(

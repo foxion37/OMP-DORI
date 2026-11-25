@@ -6,6 +6,7 @@ import { hhmm } from "../src/fit.ts";
 import { report, startLane } from "../src/lanes.ts";
 import { audit } from "../src/loop-audit.ts";
 import { laneBoard } from "../src/status-view.ts";
+import { knownRefs } from "../src/target.ts";
 import type { LoopRun } from "../src/store-types.ts";
 import { setup } from "./harness-setup.ts";
 
@@ -22,7 +23,7 @@ async function longWait(target = URL, runtime?: "tern") {
   const s = setup(runtime ? { runtime } : {});
   const key = `k${"-long".repeat(8)}`;
   const lane = await startLane(s.d, key, s.brief, { group: "w1" });
-  const pane = s.w.panes.get(lane.paneId)!;
+  const pane = s.w.panes.get(lane.sessionRef.id)!;
   pane.status = "idle";
   await report(s.d, key, "WAITING: CI", { status: "waiting", waitingFor: target });
   const at = (min: number) => {
@@ -75,12 +76,12 @@ describe("a long waiting target or evidence link", () => {
   test("the board keeps the lane on its line and puts the whole target below it when the line cut it", async () => {
     // A Tern block's short ref leaves the lane's waiting field room on its line; a headless UUID ref, never cut, does not.
     const { d, w, key, lane } = await longWait(URL, "tern");
-    const lines = laneBoard(d.store.lanes(), w.clock);
+    const lines = laneBoard(d.store.lanes(), w.clock, knownRefs(d.store));
     expect(lines[0]).toMatch(new RegExp(`^${key} .* waiting: https://\\S*… since ${hhmm(lane.createdAt)}`));
     expect(lines).toContain(`  ${URL}`);
     within120(lines);
     await report(d, key, "x", { status: "waiting", waitingFor: "CI 812" });
-    expect(laneBoard(d.store.lanes(), w.clock)).toHaveLength(1);
+    expect(laneBoard(d.store.lanes(), w.clock, knownRefs(d.store))).toHaveLength(1);
   });
 
   test("the hourly audit names the whole target", async () => {
@@ -94,7 +95,7 @@ describe("a long waiting target or evidence link", () => {
   test("the escalation names the whole last evidence under its line when the line cut it", async () => {
     const { w, d, lead, brief } = setup();
     const lane = await startLane(d, "talker", brief, { group: "w1" });
-    w.panes.get(lane.paneId)!.status = "idle";
+    w.panes.get(lane.sessionRef.id)!.status = "idle";
     await report(d, "talker", "CI is running", { evidence: [URL] });
     w.clock = lane.createdAt + 41 * MIN;
     expect(await dutyTick(d)).toContainEqual({ lane: "talker", action: "escalated" });
@@ -115,7 +116,7 @@ describe("a link wider than a line", () => {
     const { d, w, key, lane, pane, lead, at } = await longWait(WIDE);
     await at(10);
     expect(pane.received.at(-1)!.split("\n")).toContain(whole);
-    expect(laneBoard(d.store.lanes(), w.clock)).toContain(whole);
+    expect(laneBoard(d.store.lanes(), w.clock, knownRefs(d.store))).toContain(whole);
     expect(await at(40)).toContainEqual({ lane: key, action: "escalated" });
     expect(lead.received.at(-1)!.split("\n")[2]).toBe(whole);
     w.clock = lane.createdAt + 4 * 60 * MIN;
@@ -127,7 +128,7 @@ describe("a link wider than a line", () => {
   test("is named whole on one line under the escalation's last evidence", async () => {
     const { w, d, lead, brief } = setup();
     const lane = await startLane(d, "talker", brief, { group: "w1" });
-    w.panes.get(lane.paneId)!.status = "idle";
+    w.panes.get(lane.sessionRef.id)!.status = "idle";
     await report(d, "talker", "CI is running", { evidence: [WIDE] });
     w.clock = lane.createdAt + 41 * MIN;
     expect(await dutyTick(d)).toContainEqual({ lane: "talker", action: "escalated" });
@@ -145,7 +146,7 @@ describe("a path with spaces wider than a line", () => {
     const { d, w, key, pane, lead, at } = await longWait(target);
     await at(10);
     expect(pane.received.at(-1)!.split("\n")).toContain(`  ${target}`);
-    expect(laneBoard(d.store.lanes(), w.clock)).toContain(`  ${target}`);
+    expect(laneBoard(d.store.lanes(), w.clock, knownRefs(d.store))).toContain(`  ${target}`);
     expect(await at(40)).toContainEqual({ lane: key, action: "escalated" });
     expect(lead.received.at(-1)!.split("\n")[2]).toBe(`  ${target}`);
   });
@@ -156,7 +157,7 @@ describe("a path with spaces wider than a line", () => {
     mkdirSync(join(file, ".."), { recursive: true });
     writeFileSync(file, "ok");
     const lane = await startLane(d, "talker", brief, { group: "w1" });
-    w.panes.get(lane.paneId)!.status = "idle";
+    w.panes.get(lane.sessionRef.id)!.status = "idle";
     w.clock = lane.createdAt + MIN;
     await report(d, "talker", "built", { evidence: [file] });
     expect(d.store.lane("talker")!.lastEvidence?.ref).toBe(file);
@@ -207,7 +208,7 @@ describe("a name with runs of spaces", () => {
     mkdirSync(join(file, ".."), { recursive: true });
     writeFileSync(file, "ok");
     const lane = await startLane(d, "talker", brief, { group: "w1" });
-    w.panes.get(lane.paneId)!.status = "idle";
+    w.panes.get(lane.sessionRef.id)!.status = "idle";
     w.clock = lane.createdAt + MIN;
     const { progress } = await report(d, "talker", "built", { evidence: [file] });
     expect(progress[0]).toEndWith(`end${sep}result  log.txt`);
@@ -222,7 +223,7 @@ describe("a name with runs of spaces", () => {
     const { d, w, key, lane, pane, lead, at } = await longWait(target);
     await at(10);
     expect(pane.received.at(-1)!.split("\n")).toContain(`  ${target}`);
-    expect(laneBoard(d.store.lanes(), w.clock)).toContain(`  ${target}`);
+    expect(laneBoard(d.store.lanes(), w.clock, knownRefs(d.store))).toContain(`  ${target}`);
     expect(await at(40)).toContainEqual({ lane: key, action: "escalated" });
     expect(lead.received.at(-1)!.split("\n")[2]).toBe(`  ${target}`);
     w.clock = lane.createdAt + 4 * 60 * MIN;

@@ -15,11 +15,11 @@ posix(
   "local release installation preserves config/auth/work and updates every stable reference through one source pointer",
   async () => {
     const f = fixture();
-    const config = '{"stateDir":"~/.dori/state","ompUlwPath":"/owner/custom.ts","defaultModel":"owner/model"}\n';
+    const config = '{"stateDir":"~/.cataly/state","defaultModel":"owner/model"}\n';
     writeFileSync(f.paths.config, config, { mode: 0o600 });
-    writeFileSync(join(f.paths.dori, "auth.json"), "owner authentication\n", { mode: 0o600 });
-    mkdirSync(join(f.paths.dori, "work"), { mode: 0o700 });
-    writeFileSync(join(f.paths.dori, "work", "owner.txt"), "owner work\n", { mode: 0o600 });
+    writeFileSync(join(f.paths.cataly, "auth.json"), "owner authentication\n", { mode: 0o600 });
+    mkdirSync(join(f.paths.cataly, "work"), { mode: 0o700 });
+    writeFileSync(join(f.paths.cataly, "work", "owner.txt"), "owner work\n", { mode: 0o600 });
     const first = f.release("first\n");
     const before = await installBundle(f.paths, await acquireBundle({ from: first.dist }), undefined);
     const old = readlinkSync(f.paths.live);
@@ -31,8 +31,8 @@ posix(
     expect(readFileSync(join(f.paths.live, "payload.txt"), "utf8")).toBe("second\n");
     for (const [path, target] of f.paths.links) expect(readlinkSync(path)).toBe(target);
     expect(readFileSync(f.paths.config, "utf8")).toBe(config);
-    expect(readFileSync(join(f.paths.dori, "auth.json"), "utf8")).toBe("owner authentication\n");
-    expect(readFileSync(join(f.paths.dori, "work", "owner.txt"), "utf8")).toBe("owner work\n");
+    expect(readFileSync(join(f.paths.cataly, "auth.json"), "utf8")).toBe("owner authentication\n");
+    expect(readFileSync(join(f.paths.cataly, "work", "owner.txt"), "utf8")).toBe("owner work\n");
   },
 );
 
@@ -53,21 +53,28 @@ posix("rollback verifies and restores the exact previous release while retaining
   expect(existsSync(releasePath(f.paths, two.current))).toBe(true);
 });
 
-posix("a live identity-bound Dori receipt holds both install and rollback without signalling the process", async () => {
-  const f = fixture();
-  const one = await installBundle(f.paths, f.release("first\n").bundle, undefined);
-  const two = await installBundle(f.paths, f.release("second\n").bundle, one);
-  const pointer = readlinkSync(f.paths.live);
-  const state = readFileSync(f.paths.state);
-  const runtime = join(f.paths.dori, "state/runtime");
-  mkdirSync(runtime, { recursive: true, mode: 0o700 });
-  saveJson(join(runtime, "owned-pane.json"), { ...processIdentity(process.pid), role: "dori", sessionId: "isolated" });
-  await expect(installBundle(f.paths, f.release("third\n").bundle, two)).rejects.toThrow("Live Cataly PID");
-  await expect(rollbackRelease(f.paths, two)).rejects.toThrow("Live Cataly PID");
-  expect(processIdentity(process.pid)).toBeDefined();
-  expect(readlinkSync(f.paths.live)).toBe(pointer);
-  expect(readFileSync(f.paths.state)).toEqual(state);
-});
+posix(
+  "a live identity-bound Cataly receipt holds both install and rollback without signalling the process",
+  async () => {
+    const f = fixture();
+    const one = await installBundle(f.paths, f.release("first\n").bundle, undefined);
+    const two = await installBundle(f.paths, f.release("second\n").bundle, one);
+    const pointer = readlinkSync(f.paths.live);
+    const state = readFileSync(f.paths.state);
+    const runtime = join(f.paths.cataly, "state/runtime");
+    mkdirSync(runtime, { recursive: true, mode: 0o700 });
+    saveJson(join(runtime, "owned-pane.json"), {
+      ...processIdentity(process.pid),
+      role: "cataly",
+      sessionId: "isolated",
+    });
+    await expect(installBundle(f.paths, f.release("third\n").bundle, two)).rejects.toThrow("Live Cataly PID");
+    await expect(rollbackRelease(f.paths, two)).rejects.toThrow("Live Cataly PID");
+    expect(processIdentity(process.pid)).toBeDefined();
+    expect(readlinkSync(f.paths.live)).toBe(pointer);
+    expect(readFileSync(f.paths.state)).toEqual(state);
+  },
+);
 
 posix("tampered rollback executable modes leave the active source and installed-state bytes unchanged", async () => {
   const f = fixture();

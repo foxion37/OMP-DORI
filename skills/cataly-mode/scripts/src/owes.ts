@@ -1,6 +1,6 @@
 /**
  * A Discord owner request stays owed until its exact read mark and complete reply receipt exist.
- * Terminal output, reactions alone and unrelated sends are not answers; legacy channel/time receipts cannot settle it.
+ * Terminal output, reactions alone and unrelated sends are not answers; receipts without a request ID never are.
  * The CLI records all accepted parts only after the complete reply succeeds. Capped snapshots retain stale-owe limits.
  * Writer locks protect deduplication and atomic publication; corrupt lines cannot swallow the next admitted record.
  * Continuation limits are unchanged.

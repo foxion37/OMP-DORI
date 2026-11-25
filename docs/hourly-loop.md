@@ -21,7 +21,7 @@ An item needing a person carries a `decision` question and stays unstarted while
 4. Ask. Each open decision is asked once through the lead as a `[DECIDE <id>]` line, with at most one reminder after 6 hours. When the opt-in [owner profile](owner-profile.md) and its `ownerDistillHour` are both set, the loop queues one date-bound `[OWNER-DISTILL <date>]` request for the lead after that local hour.
 5. Record and report. The run is written to `loop/runs/<time>.json` (the newest 168 are kept) and `loop/last-run.json`, then one `[LOOP ...]` message goes to the lead: lanes against the limit, backlog counts, host load and memory, and each non-empty section.
 
-Duty uses the same progress clock: it nudges quiet lanes at 10 and 20 minutes and queues one escalation after 40 minutes without progress, including waiting lanes. That queued escalation ends nudges for the epoch; new evidence or READY starts a new epoch. Older binaries could leave an explicit marker at or before their latest progress; it belongs to an earlier epoch and does not stop supervision of the current one. A legacy record without an explicit escalation marker receives one verifiable queued alert when overdue, even if it already has three nudges: the old counter cannot prove delivery. With no lead registered, no escalation is marked.
+Duty uses the same progress clock: it nudges quiet lanes at 10 and 20 minutes and queues one escalation after 40 minutes without progress, including waiting lanes. That queued escalation ends nudges for the epoch; new evidence or READY starts a new epoch. With no lead registered, no escalation is marked.
 
 ## Safety
 

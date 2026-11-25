@@ -87,8 +87,8 @@ printf '%s\\n' "$*" >> "$HOME/checkpoint-args"
         message("108", "!remember project verified project note"),
         message("109", "!remember common password exclude-this"),
     ]
-    legacy = root / "legacy-discord"
-    argv = [*prefix, "--poll-seconds", "0", "--state-dir", str(state), "--legacy-cursors", str(legacy)]
+    cursors = root / "ts-discord"
+    argv = [*prefix, "--poll-seconds", "0", "--state-dir", str(state), "--import-cursors", str(cursors)]
     unavailable = root / "omp-must-not-start-for-memory"
     unavailable.write_text("#!/bin/sh\nexit 86\n", encoding="utf-8")
     unavailable.chmod(0o700)
@@ -106,9 +106,9 @@ printf '%s\\n' "$*" >> "$HOME/checkpoint-args"
 
 
 def rest(prefix, env, root, world, calls, omp):
-    legacy = root / "legacy-discord"
-    legacy.mkdir(mode=0o700)
-    cursor = legacy / "20.json"
+    cursors = root / "ts-discord"
+    cursors.mkdir(mode=0o700)
+    cursor = cursors / "20.json"
     cursor.write_text('{"version":1,"channelId":"20","cursor":"100"}', encoding="utf-8")
     cursor.chmod(0o600)
     wrapper = root / "omp-new-version"
@@ -121,7 +121,7 @@ exec "{omp}" "$@"
     prefix = [*prefix]
     prefix[2] = str(wrapper)
     argv = [*prefix, "--poll-seconds", "0", "--state-dir", str(root / "discord-transport"),
-            "--legacy-cursors", str(legacy)]
+            "--import-cursors", str(cursors)]
     world.rate_limit = True
     world.history.extend([
         message("101", "cataly-test: ignored nonowner", "11"),

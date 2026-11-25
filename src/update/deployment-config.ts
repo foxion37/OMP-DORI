@@ -1,6 +1,5 @@
 import { homedir } from "node:os";
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import { LegacyRuntimeError } from "../runtime/registry.ts";
 import { hasControl } from "./config.ts";
 import type { DeploymentConfig } from "./deployment-types.ts";
 import { digest } from "./source.ts";
@@ -16,23 +15,6 @@ const below = (root: string, path: string): boolean => {
   const rel = relative(root, path);
   return rel !== "" && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
 };
-
-/** Settings that only described a herdr/hc pane target (and its resumed session) or the v0.1.3 brand. */
-const TERMINAL_SETTINGS = [
-  "runtime",
-  "herdr",
-  "herdrSession",
-  "hc",
-  "hcSession",
-  "pane",
-  "sessionId",
-  "model",
-  "nativeStopMode",
-  "legacyOmp",
-  "monitorBootstrapFile",
-  "doriHome",
-  "doriConfig",
-];
 
 export const matchesDeploymentConfigHash = (config: DeploymentConfig, expected: string): boolean =>
   digest(JSON.stringify(config)) === expected;
@@ -72,12 +54,6 @@ export function parseDeploymentConfig(value: unknown, configDir: string): Deploy
       ? home
       : resolve(supplied.startsWith("~/") ? home : configDir, supplied.startsWith("~/") ? supplied.slice(2) : supplied);
   };
-  if (TERMINAL_SETTINGS.some((key) => Object.hasOwn(value, key))) {
-    const catalyConfig = value["catalyConfig"] ?? value["doriConfig"];
-    throw new LegacyRuntimeError(
-      typeof catalyConfig === "string" ? resolvedPath(catalyConfig, "catalyConfig") : configDir,
-    );
-  }
   if (Object.keys(value).some((key) => !allowed.has(key))) return fail("unknown setting");
   const path = (name: string): string => resolvedPath(value[name], name);
   const ms = (name: string, fallback?: number): number => {

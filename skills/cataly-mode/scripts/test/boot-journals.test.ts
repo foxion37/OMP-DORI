@@ -117,9 +117,7 @@ test("a lane without the report protocol has its journal ignored, so a done reco
   // When boot runs; then the journal is ignored like freshness ignores it, and the watch is kept.
   const result = await bootCheck(deps);
   expect(result.lines.some((l) => /^(NO-)?REPORT adopted/.test(l))).toBe(false);
-  expect(result.lines).toContain(
-    "MONITORS cleanupCandidates=0 deliveryPaused=0 expired=0 (from metadata; liveness unverified)",
-  );
+  expect(result.lines).toContain("MONITORS cleanupCandidates=0 (from metadata; liveness unverified)");
   expect(result.exitCode).toBe(0);
 });
 

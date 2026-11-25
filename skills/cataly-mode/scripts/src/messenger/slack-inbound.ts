@@ -56,7 +56,7 @@ export const pollSlackInbound = async (
   emit: (message: Inbound) => void | Promise<void>,
 ): Promise<boolean> => {
   const scope = await slack.identity();
-  ledger.assertScoped();
+  ledger.assertReadable();
   const out: Inbound[] = [];
   const seenUpTo: { channel: string; rootTs: string; ts: string }[] = [];
   const seen = new Map<string, Inbound>();

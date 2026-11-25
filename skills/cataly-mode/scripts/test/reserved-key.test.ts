@@ -1,11 +1,10 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { LaunchError, launchLane } from "../src/launch.ts";
-import { Registry } from "../src/registry.ts";
 import { run } from "../src/run.ts";
-import { depsFor, fakeClock, href, newWorld, sid, withState, type World } from "./fakes.ts";
+import { depsFor, fakeClock, newWorld, withState, type World } from "./fakes.ts";
 
 const T0 = Date.parse("2026-01-01T12:00:00.000Z");
 const REFUSED = 'lane key "lead" is reserved for the lead';
@@ -53,26 +52,4 @@ test("cataly launch with key lead exits 1 with the reserved message and writes n
   }
   expect(readFileSync(brief, "utf8")).toBe("# brief\n");
   expect(stateFiles()).toEqual(["brief.md", "config.json"]);
-});
-
-test("bySession never returns a record keyed lead left from before the key was reserved", async () => {
-  // Given a legacy registry record named lead on the lead's session, next to a real lane.
-  const registry = new Registry(state.dir);
-  const legacy = {
-    key: "lead",
-    title: "old",
-    thread: "none",
-    pane: sid(1),
-    sessionRef: href(sid(1)),
-    brief: "/b.md",
-    done: "closed acme/app#3",
-    openedAt: new Date(T0).toISOString(),
-  };
-  await registry.write(legacy);
-  await registry.write({ ...legacy, key: "real-lane", pane: sid(2), sessionRef: href(sid(2)) });
-  // Then the lead's session resolves to no lane, the lane's session still resolves, and the record stays readable.
-  expect(await registry.bySession(href(sid(1)))).toBeNull();
-  expect((await registry.bySession(href(sid(2))))?.key).toBe("real-lane");
-  expect((await registry.read("lead"))?.sessionRef).toEqual(href(sid(1)));
-  expect(existsSync(registry.path("lead"))).toBe(true);
 });

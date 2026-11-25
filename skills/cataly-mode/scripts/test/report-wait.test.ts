@@ -120,7 +120,7 @@ test("a native close intent arriving during the probe fences the wait append", a
         lane && {
           ...lane,
           nativeCloseIntent: {
-            ref: { runtime: "tern", id: f.lane.pane! },
+            ref: { runtime: "tern", id: f.lane.sessionRef!.id },
             session: SESSION,
             note: "close pending",
             checks: [],

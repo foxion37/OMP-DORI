@@ -41,7 +41,7 @@
     <circle cx="545" cy="118" r="15" fill="#c8102e"/>
     <text x="545" y="124" text-anchor="middle" font-size="16" font-weight="700" fill="#ffffff">3</text>
     <text x="569" y="124" font-size="18" font-weight="700" fill="#1f2328">레인이 보고합니다</text>
-    <text x="531" y="166" font-size="15" fill="#59636e">herdr 또는 hc의 전용</text>
+    <text x="531" y="166" font-size="15" fill="#59636e">터미널 없이 실행되는 전용</text>
     <text x="531" y="188" font-size="15" fill="#59636e">OMP 세션입니다. 작업 로그,</text>
     <text x="531" y="210" font-size="15" fill="#59636e">보고, 체크포인트로 재시작</text>
     <text x="531" y="232" font-size="15" fill="#59636e">후에도 진행을 확인합니다.</text>

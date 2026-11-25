@@ -9,7 +9,7 @@ const cataly = join(import.meta.dir, "../index.ts");
 const ASTRA = { ...SOL_MODEL, id: "gpt-6-astra", name: "GPT-6 Astra" };
 
 beforeEach(() => {
-  useConfig("");
+  useConfig();
 });
 
 for (const role of ["cataly", "lane"] as const) {

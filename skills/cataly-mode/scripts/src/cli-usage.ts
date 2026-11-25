@@ -17,7 +17,7 @@ export const USAGE = `cataly <command> [options]
   queue list | start <key> | cancel <key>
                                        start only on explicit command after verified predecessors, host capacity and expiry checks
   adopt  <key> --pane ID --title T --brief FILE --done "..." [--thread REF]
-  policy allow-once <key> <denyBash[index]> [--root <headless:UUID> | --skill] --reason TEXT
+  policy allow-once <key> <denyBash[index]> [--root <headless:UUID|prefix> | --skill] --reason TEXT
                                        admit one attempt of the last blocked command after owner approval; native approvals still apply
   lanes [--thread REF] [--open]        list registered lanes, optionally for one exact thread
   status [<key>] [--json]              read-only lane, runtime, journal, decision and monitor observations
@@ -123,7 +123,6 @@ export const USAGE = `cataly <command> [options]
   inbound slack|telegram|discord [--loop MIN] [--gateway] [--context] [--activity-file PATH]
                                        Slack defaults to INBOUND_READY slack and physical channel IDs;
                                        --qualified-routes opts into account-qualified readiness and destinations
-                                       Slack: --adopt-legacy-threads WORKSPACE:ACCOUNT explicitly binds an old unscoped ledger
                                        print INBOUND lines: Slack unread thread replies / Telegram owner DMs, edits and media + configured topic
                                        the Cataly posted in (any helper), DMs and channels with unread mentions
                                        Discord requires CATALY_DISCORD_TOKEN, CATALY_DISCORD_OWNER_ID and configured channel IDs
@@ -138,5 +137,5 @@ export const USAGE = `cataly <command> [options]
   recall --scope PLATFORM:BOT:OWNER --space=ID [--limit N] QUERY
                                        search one explicitly scoped local conversation space; off by default
   recall --scope PLATFORM:BOT:OWNER --purge
-                                       logically delete that identity’s scoped rows only; legacy records are untouched
+                                       logically delete that identity’s scoped rows only
   inbound-lag [--limit N]              receive-lag percentiles from state/telegram-lag.jsonl (the meter behind the INBOUND lines)`;

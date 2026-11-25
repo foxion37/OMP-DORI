@@ -96,7 +96,7 @@ function newDestination(ctx: UpdateContext, value: string, ...inputs: readonly s
 
 /**
  * Snapshot code, updater-owned control evidence and, only when named, explicit task-owned application data.
- * No personal auth, model sessions, installed packages or live state is ever read; admitted ULW source stays frozen.
+ * No personal auth, model sessions, installed packages or live state is ever read.
  */
 export function snapshotUpdate(ctx: UpdateContext, id: string, output: string, appState?: string): string {
   const release = lockUpdate(ctx);
@@ -163,7 +163,7 @@ function readSnapshot(input: string): RecoveryManifest {
   if (
     !object(raw) ||
     raw["version"] !== 1 ||
-    (raw["target"] !== "cataly" && raw["target"] !== "dori") ||
+    raw["target"] !== "cataly" ||
     typeof raw["job"] !== "string" ||
     !object(raw["source"]) ||
     !object(raw["inputs"]) ||

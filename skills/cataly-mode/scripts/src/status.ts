@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { readMonitorManifests, terminalMonitorDirs } from "./boot-monitors.ts";
+import { readMonitorManifests } from "./boot-monitors.ts";
 import { Checkpoints, type Checkpoint } from "./checkpoints.ts";
 import { Decisions } from "./decisions.ts";
 import { type Decision, settled } from "./decisions-record.ts";
@@ -7,7 +7,6 @@ import type { FlowDeps } from "./done-flow.ts";
 import { unfinishedOutcome } from "./holds.ts";
 import type { PaneState } from "./lane-state.ts";
 import { runContext } from "./lane-run.ts";
-import { hasTerminalScope, leadAddress } from "./lead-ref.ts";
 import type { ReportDelivery, ReportProvenance } from "./request-identity.ts";
 import { type Lane, LANE_KEY, type LaneStatus, sessionOf, statusOf } from "./registry.ts";
 import { type Progress, Reports, reportScope } from "./reports.ts";
@@ -75,11 +74,7 @@ export type StatusSnapshot = {
   readonly registryIncomplete: boolean;
   readonly lanes: readonly StatusLane[];
   readonly decisions: number | null;
-  readonly monitors: {
-    readonly recorded: number | null;
-    readonly suspended: number | null;
-    readonly expired: number | null;
-  };
+  readonly monitors: { readonly recorded: number | null };
   readonly errors: readonly string[];
 };
 
@@ -90,10 +85,7 @@ export const laneStatus = async (deps: FlowDeps, key?: string): Promise<StatusSn
   const all = registry.lanes.filter((lane) => key !== undefined || statusOf(lane) !== "closed");
   if (key !== undefined && !all.length && !registry.errors.length) throw new StatusError(`no registered lane ${key}`);
   const now = deps.clock.now();
-  const env = deps.env ?? process.env;
   const rts = runtimesOf(deps);
-  const target = leadAddress(deps.config, env);
-  const terminal = hasTerminalScope(rts.choice?.kind, all, "ref" in target ? target.ref : undefined);
   const errors = [...registry.errors];
   let open: Decision[] = [];
   let decisionsKnown = true;
@@ -168,30 +160,15 @@ export const laneStatus = async (deps: FlowDeps, key?: string): Promise<StatusSn
       errors: problems,
     });
   }
-  const { manifests, errors: monitorErrors } = readMonitorManifests(
-    deps.config.sessionsDir,
-    terminal ? terminalMonitorDirs(env) : [],
-    join(deps.config.stateDir, "monitors"),
-    terminal,
-  );
+  const { manifests, errors: monitorErrors } = readMonitorManifests(join(deps.config.stateDir, "monitors"));
   errors.push(...monitorErrors.map(() => "monitor metadata unreadable"));
-  const monitors = manifests.flatMap((m) => m.data.monitors);
-  // Legacy boot may use command when argv is unusable; status does not certify that metadata as complete.
-  const fieldsKnown = monitors.every(
-    (m) => m.argv === undefined || (Array.isArray(m.argv) && m.argv.every((arg: unknown) => typeof arg === "string")),
-  );
-  if (!fieldsKnown) errors.push("monitor argv metadata invalid");
-  const monitorsKnown = monitorErrors.length === 0 && fieldsKnown;
+  const recorded = manifests.reduce((count, m) => count + m.data.monitors.length, 0);
   return {
     observedAt: new Date(now).toISOString(),
     registryIncomplete: registry.errors.length > 0,
     lanes,
     decisions: decisionsKnown ? (key === undefined ? open.length : open.filter((d) => d.lane === key).length) : null,
-    monitors: {
-      recorded: monitorsKnown ? monitors.length : null,
-      suspended: monitorsKnown ? monitors.filter((m) => m.suspended === true).length : null,
-      expired: monitorsKnown ? monitors.filter((m) => m.expiresAt !== undefined && m.expiresAt <= now).length : null,
-    },
+    monitors: { recorded: monitorErrors.length === 0 ? recorded : null },
     errors,
   };
 };

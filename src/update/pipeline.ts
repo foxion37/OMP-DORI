@@ -15,7 +15,7 @@ import {
 import { saveJson, transition } from "./state.ts";
 import type { UpdateContext, UpdateJob } from "./types.ts";
 
-/** Source normalization may never move the frozen inputs, opaque local ULW pin or Git identity. */
+/** Source normalization may never move the frozen inputs, opaque local source-bundle pin or Git identity. */
 function assertBoundary(job: UpdateJob, metadata: string): void {
   const source = sourceManifest(job.candidate);
   assertSourceAdmission(source, "candidate");

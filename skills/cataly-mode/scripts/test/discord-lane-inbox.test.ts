@@ -11,7 +11,6 @@ const lane: Lane = {
   key: "discord-work",
   title: "Discord work",
   thread: `discord:${channel}`,
-  pane: sid(1),
   sessionRef: href(sid(1)),
   session,
   brief: "/brief.md",

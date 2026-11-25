@@ -73,7 +73,7 @@ test("doctor skips malformed stored lane keys before reporting supervision or re
       {
         check: "supervision",
         severity: "INFO",
-        detail: "not supervised (adopted/legacy lanes): adopted; configured ceilings do not apply",
+        detail: "not supervised (adopted lanes): adopted; configured ceilings do not apply",
       },
       { check: "supervision", severity: "WARN", detail: "no configured ceilings for active lanes: launched" },
     ]);

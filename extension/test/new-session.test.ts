@@ -10,10 +10,10 @@ import { type FakePi, type FakeSession, load, until, useConfig } from "./fake-pi
 
 const PANE = "6100";
 const ROLE = "omp-cataly:role";
-const MONITOR = "omp-dori:monitor";
-const agentStart = { type: "before_agent_start", prompt: "ulw keep working", systemPrompt: ["base prompt"] };
+const MONITOR = "omp-cataly:monitor";
+const agentStart = { type: "before_agent_start", prompt: "keep working", systemPrompt: ["base prompt"] };
 const roleEntry = (role: string) => ({ type: "custom", customType: ROLE, data: role });
-const wireRole = (role: "dori" | "lane") => ({ type: "custom", customType: "omp-dori:role", data: role });
+const wireRole = (role: "cataly" | "lane") => ({ type: "custom", customType: "omp-cataly:role", data: role });
 const session = (id: string, entries: FakeSession["entries"] = []): FakeSession => ({
   id,
   file: `/sessions/${id}.jsonl`,
@@ -49,7 +49,7 @@ const runningPid = async (pi: FakePi): Promise<number> => {
 beforeEach(() => {
   for (const key of ["CATALY_CONFIG", "CATALY_STATE_DIR", "TERN_PANE", "CATALY_MANAGED_STARTUP"])
     previousEnv.set(key, process.env[key]);
-  stateDir = useConfig(join(import.meta.dir, "fake-ulw.ts"));
+  stateDir = useConfig();
   process.env.TERN_PANE = PANE;
   delete process.env.CATALY_MANAGED_STARTUP;
 });
@@ -117,7 +117,7 @@ test("a new lane carries only its role and resets goal, approvals and working st
     agentStatus: "idle",
   });
   expect(await pi.emit("before_agent_start", agentStart)).toContainEqual({
-    systemPrompt: ["base prompt", ROLE_INVARIANTS.lane, "<fake-ulw-policy>"],
+    systemPrompt: ["base prompt", ROLE_INVARIANTS.lane],
   });
   await expect(run(pi, { op: "list" })).rejects.toThrow("monitor works only in the Cataly session");
   await pi.emit("tool_approval_resolved", {
@@ -209,8 +209,8 @@ posix("a new Cataly session does not reapply its original session-bound bootstra
   });
   sessions.push(pi);
   await pi.emit("session_start");
-  expect(started.entries.at(-1)).toEqual(wireRole("dori"));
-  expect(started.entries.filter((entry) => entry.customType === "omp-dori:monitor-bootstrap")).toHaveLength(1);
+  expect(started.entries.at(-1)).toEqual(wireRole("cataly"));
+  expect(started.entries.filter((entry) => entry.customType === "omp-cataly:monitor-bootstrap")).toHaveLength(1);
   const oldPid = await runningPid(pi);
 
   const fresh = session("bootstrap-new");
@@ -220,9 +220,9 @@ posix("a new Cataly session does not reapply its original session-bound bootstra
   // Intake routing belongs to the monitors, not to the old session's private bootstrap token.
   expect(readMonitorSet(saved, fresh.id, true)).toMatchObject({ sessionId: fresh.id, monitors: [spec], intake });
   expect(fresh.entries).toEqual([
-    wireRole("dori"),
+    wireRole("cataly"),
     { type: "custom", customType: MONITOR, data: { op: "start", ...spec, id: expect.any(String) } },
-    { type: "custom", customType: "omp-dori:intake", data: intake },
+    { type: "custom", customType: "omp-cataly:intake", data: intake },
   ]);
   await until(() => !alive(oldPid));
   const exitedPid = await runningPid(pi);

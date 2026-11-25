@@ -4,7 +4,7 @@ use serde::Deserialize;
 
 use super::{Frame, IntakeLink, Link, Resume};
 use crate::discord::{
-    Interaction, Snowflake, User, intake::migration, threads::ThreadMetadata, wake::Wake,
+    Interaction, Snowflake, User, intake::cursor_file, threads::ThreadMetadata, wake::Wake,
 };
 
 #[derive(Deserialize)]
@@ -181,7 +181,7 @@ impl IntakeLink<'_> {
         if !supervision.all && self.channels.binary_search(&channel).is_err() && parent.is_none() {
             return Ok(());
         }
-        let admitted = migration::read(Some(supervision.cursors), channel)?;
+        let admitted = cursor_file::read(Some(supervision.cursors), channel)?;
         self.inbox
             .push_scoped(channel, message, raw, admitted, parent)
             .context("persisting Discord Gateway event")?;

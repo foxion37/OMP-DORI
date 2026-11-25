@@ -72,7 +72,6 @@ test("a registered lane cannot manage a shared thread title", async () => {
       key: "group-member",
       title: "member",
       thread: `discord:${ids.thread}`,
-      pane: "5007",
       sessionRef: { runtime: "tern", id: "5007" },
       brief: "/b",
       done: "file /done",

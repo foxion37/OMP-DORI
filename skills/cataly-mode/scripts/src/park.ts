@@ -1,5 +1,4 @@
 import { mayRunOmpArgv } from "../../../../src/runtime/omp-argv.ts";
-import { isLegacyRuntime } from "../../../../src/runtime/types.ts";
 import { unpushedWork } from "./close-worktrees.ts";
 import { withDeliveryLock } from "./delivery-lock.ts";
 import { type FlowDeps, movedOn } from "./done-flow.ts";
@@ -42,8 +41,6 @@ export const parkLane = async (
       if (pendingDiscordLane(deps.config.stateDir, member))
         return fail(`HELD ${lane.key}: Discord messages are still pending`);
       const ref = sessionOf(lane);
-      if (ref && isLegacyRuntime(ref.runtime))
-        return fail(`REFUSED ${lane.key}: the lane runs on the removed herdr/hc runtime`, 2);
       const runtime = ref && runtimesOf(deps).for(ref);
       const isPresent = async () =>
         runtime &&

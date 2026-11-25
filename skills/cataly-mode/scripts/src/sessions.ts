@@ -1,12 +1,6 @@
 // Sessions across every runtime the skill talks to: one `Runtimes` registry, each stored ref answered by its own kind.
 import type { Runtimes } from "../../../../src/runtime/registry.ts";
-import {
-  type DeliverWhen,
-  formatRef,
-  isLegacyRuntime,
-  type SessionInfo,
-  type SessionRef,
-} from "../../../../src/runtime/types.ts";
+import { type DeliverWhen, formatRef, type SessionInfo, type SessionRef } from "../../../../src/runtime/types.ts";
 import type { FlowDeps } from "./done-flow.ts";
 import { type Clock, runtimesOf } from "./run.ts";
 
@@ -17,8 +11,7 @@ const SCREEN_LINES = 60;
 
 /**
  * Every session of every runtime in use: the selected kind, each kind a registered lane lives on, and any kind built
- * so far. `group` keeps only the sessions of that group (a Tern session). A lane still recorded on the removed
- * herdr/hc runtime has no runtime to list it, so it reads as gone.
+ * so far. `group` keeps only the sessions of that group (a Tern session).
  */
 export const listSessions = async (
   rts: Runtimes,
@@ -28,8 +21,7 @@ export const listSessions = async (
     readonly terminalOnly?: boolean;
   } = {},
 ): Promise<SessionInfo[]> => {
-  for (const lane of options.lanes ?? [])
-    if (lane.sessionRef && !isLegacyRuntime(lane.sessionRef.runtime)) rts.for(lane.sessionRef);
+  for (const lane of options.lanes ?? []) if (lane.sessionRef) rts.for(lane.sessionRef);
   // The selected kind is read last: a failed choice still lists every stored lane, and fails only when nothing else is.
   try {
     void rts.default;

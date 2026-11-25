@@ -61,9 +61,11 @@ export type ToolchainReceipt = {
   readonly ompEntryHash: string;
   readonly bunHash: string;
   readonly nativeConfig: string;
+  /** The bound native source, or `nativeOverride` for an explicitly configured executable. */
   readonly nativeSource?: NativeReceipt;
   readonly nativeOverride?: true;
-  readonly ompUlw?: { readonly source: string; readonly identity: string; readonly directory: string };
+  /** Source whose `extension/` the managed command pins in place of discovered extensions. */
+  readonly extensionSource: string;
   readonly nativeConfigHash: string;
 };
 export type MonitorSpec = {
@@ -157,7 +159,7 @@ export type RuntimeHealth = {
   readonly pid: number;
   readonly sessionId: string;
   readonly role: string;
-  readonly presetLoaded: boolean;
+  readonly configLoaded: boolean;
   readonly startedAt: string;
   readonly updatedAt: string;
   readonly source: string;

@@ -150,67 +150,51 @@ test("real CLI rejects a trailing bare --repo instead of reporting healthy diagn
   }
 });
 
-for (const source of ["PI_SESSION_DIR", "PI_SESSION_FILE"] as const) {
-  test(`real CLI warns about corrupt external ${source} monitor metadata without exposing private data`, async () => {
-    const state = withHealthyCli();
-    try {
-      const before = readFileSync(state.config, "utf8");
-      // Match boot's two external roots, each independently outside configured sessionsDir.
-      const external = join(state.dir, "private-current-session");
-      const terminal = join(external, "extensions", "terminal");
-      mkdirSync(terminal, { recursive: true });
-      const sessionFile = join(external, "private-session.jsonl");
-      const transcript = "PRIVATE_TRANSCRIPT_MUST_NOT_BE_READ";
-      writeFileSync(sessionFile, transcript);
-      const env = { [source]: source === "PI_SESSION_DIR" ? external : sessionFile };
-      const absent = await state.run(["doctor", "--json"], env);
-      expect(absent.code).toBe(0);
-      expect(absent.err).toBe("");
-      expect(JSON.parse(absent.out)).toMatchObject({ warnings: 0, exitCode: 0, ignored: ["runtime"] });
+test("real CLI warns about corrupt monitor metadata without exposing private data", async () => {
+  const state = withHealthyCli();
+  try {
+    const before = readFileSync(state.config, "utf8");
+    const monitors = join(state.stateDir, "monitors");
+    mkdirSync(monitors);
+    const sessionFile = join(state.sessionsDir, "private-session.jsonl");
+    const transcript = "PRIVATE_TRANSCRIPT_MUST_NOT_BE_READ";
+    writeFileSync(sessionFile, transcript);
+    const metadata = join(monitors, "private-monitor-metadata.json");
+    writeFileSync(metadata, JSON.stringify({ version: 1, sessionId: "private-owner", monitors: [] }));
+    const empty = await state.run(["doctor", "--json"]);
+    expect(empty.code).toBe(0);
+    expect(empty.err).toBe("");
+    expect(JSON.parse(empty.out)).toMatchObject({ warnings: 0, exitCode: 0, ignored: ["runtime"] });
 
-      const metadata = join(terminal, "private-monitor-metadata.json");
-      writeFileSync(metadata, JSON.stringify({ version: 1, sessionId: "private-owner", monitors: [] }));
-      const empty = await state.run(["doctor", "--json"], env);
-      expect(empty.code).toBe(0);
-      expect(empty.err).toBe("");
-      expect(JSON.parse(empty.out)).toMatchObject({ warnings: 0, exitCode: 0, ignored: ["runtime"] });
-
-      const privatePayload = "PRIVATE_MONITOR_PAYLOAD";
-      const corrupt = `{"version":1,"sessionId":"${privatePayload}","monitors":[`;
-      writeFileSync(metadata, corrupt);
-      for (const json of [true, false]) {
-        const result = await state.run(json ? ["doctor", "--json"] : ["doctor"], env);
-        expect(result.code).toBe(1);
-        expect(result.err).toBe("");
-        if (json) {
-          const report = JSON.parse(result.out);
-          expect(report.warnings).toBe(1);
-          expect(report.exitCode).toBe(1);
-          expect(report.findings).toContainEqual({
-            check: "monitors",
-            severity: "WARN",
-            detail: "unreadable monitor metadata locations: 1",
-          });
-        } else {
-          expect(result.out).toContain("WARN monitors: unreadable monitor metadata locations: 1");
-          expect(result.out).toContain("DOCTOR warn=1 ignored=runtime read-only; nothing changed");
-        }
-        for (const secret of [
-          state.dir,
-          "private-current-session",
-          "private-monitor-metadata.json",
-          privatePayload,
-          transcript,
-        ])
-          expect(result.out + result.err).not.toContain(secret);
+    const privatePayload = "PRIVATE_MONITOR_PAYLOAD";
+    const corrupt = `{"version":1,"sessionId":"${privatePayload}","monitors":[`;
+    writeFileSync(metadata, corrupt);
+    for (const json of [true, false]) {
+      const result = await state.run(json ? ["doctor", "--json"] : ["doctor"]);
+      expect(result.code).toBe(1);
+      expect(result.err).toBe("");
+      if (json) {
+        const report = JSON.parse(result.out);
+        expect(report.warnings).toBe(1);
+        expect(report.exitCode).toBe(1);
+        expect(report.findings).toContainEqual({
+          check: "monitors",
+          severity: "WARN",
+          detail: "unreadable monitor metadata locations: 1",
+        });
+      } else {
+        expect(result.out).toContain("WARN monitors: unreadable monitor metadata locations: 1");
+        expect(result.out).toContain("DOCTOR warn=1 ignored=runtime read-only; nothing changed");
       }
-      expect(readFileSync(metadata, "utf8")).toBe(corrupt);
-      expect(readFileSync(sessionFile, "utf8")).toBe(transcript);
-      expect(readFileSync(state.config, "utf8")).toBe(before);
-      expect(readdirSync(state.stateDir)).toEqual([]);
-      expect(readdirSync(state.sessionsDir)).toEqual([]);
-    } finally {
-      state.done();
+      for (const secret of [state.dir, "private-monitor-metadata.json", privatePayload, transcript])
+        expect(result.out + result.err).not.toContain(secret);
     }
-  });
-}
+    expect(readFileSync(metadata, "utf8")).toBe(corrupt);
+    expect(readFileSync(sessionFile, "utf8")).toBe(transcript);
+    expect(readFileSync(state.config, "utf8")).toBe(before);
+    expect(readdirSync(state.stateDir)).toEqual(["monitors"]);
+    expect(readdirSync(state.sessionsDir)).toEqual(["private-session.jsonl"]);
+  } finally {
+    state.done();
+  }
+});

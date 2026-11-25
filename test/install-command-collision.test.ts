@@ -19,7 +19,7 @@ const posix = test.skipIf(process.platform === "win32");
 // Version/argv stubs only; setup records package installs without installing dependencies.
 const executable = `#!/bin/sh
 if [ -n "\${INSTALL_TEST_OMP_PROBE:-}" ]; then printf '%s\\n' "$*" >> "$INSTALL_TEST_OMP_PROBE"; fi
-if [ "\${1:-}" = --version ]; then echo 'omp 18.20.0'; else printf '%s\\0' "$0" "$@"; fi
+if [ "\${1:-}" = --version ]; then echo 'omp 19.0.1'; else printf '%s\\0' "$0" "$@"; fi
 `;
 
 for (const mode of ["primary", "side"]) {
@@ -103,7 +103,7 @@ for (const mode of ["primary", "side"]) {
   posix(`${mode} also holds the bound dependency producer when its launcher aliases a wrapper`, () => {
     const s = setup();
     // This fixture has synthetic addon bytes; it proves receipt/path admission, not native loading.
-    const native = overlayFixture(s.src, join(s.root, "native-upstream"), true);
+    const native = overlayFixture(s.src, join(s.root, "native-upstream"));
     const receipt = nativeCacheFixture(s.src, s.home, native.checkout);
     const bytes = readFileSync(receipt.omp);
     const base = join(s.home, mode === "primary" ? ".cataly" : ".omp-cataly");

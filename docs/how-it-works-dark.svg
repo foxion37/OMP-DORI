@@ -47,7 +47,7 @@
     <text x="531" y="210" font-size="15" fill="#9aa3ad">checkpoints keep progress</text>
     <text x="531" y="232" font-size="15" fill="#9aa3ad">inspectable across restarts.</text>
     <rect x="531" y="278" width="186" height="32" rx="8" fill="#21262d"/>
-    <text x="624.0" y="299" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace" font-size="14" fill="#c9d1d9">OMP in herdr or hc</text>
+    <text x="624.0" y="299" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace" font-size="14" fill="#c9d1d9">headless OMP</text>
   </g>
   <path d="M738 206.0 H758" stroke="#8b9099" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
   <g id="step-4">

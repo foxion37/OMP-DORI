@@ -38,18 +38,6 @@ const result = (id: string, cells: unknown[], extra: Record<string, unknown> = {
 });
 
 describe("native eval evidence", () => {
-  test("a newer refusal in a v0.1.3 completion entry cannot fall back to older evidence", () => {
-    const job = "eval-job";
-    const base = { call: "eval", job, tool: "eval", cwd: CWD };
-    const branch = [
-      call("eval"),
-      result("eval", [], { async: { state: "running", jobId: job } }),
-      { type: "custom", customType: "omp-cataly:tool-completion", data: { ...base, fingerprint: "a".repeat(64) } },
-      { type: "custom", customType: "omp-dori:tool-completion", data: { ...base, refused: "partial result" } },
-    ];
-    expect(() => toolEvidence(branch, "eval", CWD)).toThrow("partial result");
-  });
-
   test("native cell timing and input labels are not new output", () => {
     const branch = [
       call("first"),

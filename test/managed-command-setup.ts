@@ -27,7 +27,7 @@ export const executable = (path: string): void => {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   writeFileSync(
     path,
-    '#!/bin/sh\nif [ "$1" = --version ]; then printf "18.20.0\\n"; exit; fi\nprintf \'%s\\0\' "$0" "$@"\n',
+    '#!/bin/sh\nif [ "$1" = --version ]; then printf "19.0.1\\n"; exit; fi\nprintf \'%s\\0\' "$0" "$@"\n',
     { mode: 0o755 },
   );
 };
@@ -43,22 +43,18 @@ export function managedCommand() {
   const toolchain: ToolchainReceipt = {
     omp,
     bun: process.execPath,
-    nativeVersion: "18.20.0",
+    nativeVersion: "19.0.1",
     ompEntry: omp,
     ompEntryHash: digest(readFileSync(omp)),
     bunHash: digest(readFileSync(process.execPath)),
     nativeConfig,
     nativeConfigHash: digest(readFileSync(nativeConfig)),
-    ompUlw: {
-      source: join(root, "prepared source 'extension'; literal"),
-      identity: "a".repeat(64),
-      directory: join(root, "selected ulw 'quote'"),
-    },
+    extensionSource: join(root, "prepared source 'extension'; literal"),
     nativeOverride: true,
   };
   const env = actorEnv(config, toolchain);
   environment({ ...env, CATALY_AGENT_CMD: undefined });
-  const argv = [omp, "--config", nativeConfig, "--no-extensions", "-e", join(toolchain.ompUlw!.source, "extension")];
+  const argv = [omp, "--config", nativeConfig, "--no-extensions", "-e", join(toolchain.extensionSource, "extension")];
   return { root, omp, config, toolchain, env, argv };
 }
 

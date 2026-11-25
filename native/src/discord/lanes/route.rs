@@ -7,11 +7,11 @@ use anyhow::Result;
 
 use super::LaneHold;
 use super::headless;
-use super::json::Json;
 use super::lock::{Lock, take_lock};
-use super::registry::{Lane, RESERVED_LANE_KEY, Registry, SessionRef, pane_role, pane_state};
-use super::util::{safe_int, signalable};
+use super::registry::{Lane, Registry, SessionRef, pane_state};
 use super::wake::is_pending;
+use crate::json::Json;
+use crate::util::{safe_int, signalable};
 
 /// `DELIVERY_WAIT_MS`.
 pub(super) const DELIVERY_WAIT: Duration = Duration::from_secs(30);
@@ -54,7 +54,7 @@ impl Route {
 fn open_lanes(lanes: Vec<Lane>) -> Vec<Lane> {
     lanes
         .into_iter()
-        .filter(|lane| lane.key() != RESERVED_LANE_KEY && lane.status() != "closed")
+        .filter(|lane| lane.status() != "closed")
         .collect()
 }
 
@@ -134,7 +134,7 @@ pub(super) async fn classify(state: &Path, channel: &str) -> Result<Option<Route
         }
         return Ok(Some(Route::NativeUnavailable(key)));
     }
-    // herdr/hc lanes (and legacy pane rows upgraded to herdr refs) ran on a removed runtime.
+    // Only a Tern pane row can serve a non-native lane.
     let inactive = Ok(Some(Route::Inactive(key.clone())));
     if reference.as_ref().and_then(SessionRef::runtime) != Some("tern") {
         return inactive;
@@ -146,7 +146,7 @@ pub(super) async fn classify(state: &Path, channel: &str) -> Result<Option<Route
     else {
         return inactive;
     };
-    if pane_role(&pane) != Some("lane") || pane.get("discordLaneInbox") != Some(&Json::Bool(true)) {
+    if pane.str("role") != Some("lane") || pane.get("discordLaneInbox") != Some(&Json::Bool(true)) {
         return inactive;
     }
     let pane_session = pane.get("sessionId");
@@ -269,7 +269,7 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
-    use crate::discord::lanes::util::uuid;
+    use crate::util::uuid;
 
     struct State(PathBuf);
 
@@ -295,9 +295,9 @@ mod tests {
         }
     }
 
-    fn herdr(key: &str, channel: &str, pane: &str, session: &str) -> String {
+    fn tern(key: &str, channel: &str, pane: &str, session: &str) -> String {
         format!(
-            r#"{{"key":"{key}","thread":"discord:{channel}","sessionRef":{{"runtime":"herdr","id":"{pane}"}},"session":"{session}","openedAt":"2026-01-01T00:00:00.000Z","brief":"","done":"","title":""}}"#
+            r#"{{"key":"{key}","thread":"discord:{channel}","sessionRef":{{"runtime":"tern","id":"{pane}"}},"session":"{session}","openedAt":"2026-01-01T00:00:00.000Z","brief":"","done":"","title":""}}"#
         )
     }
 
@@ -309,10 +309,9 @@ mod tests {
     async fn unowned_channels_and_ignored_rows() {
         let state = State::new();
         assert_eq!(route(&state, "1").await, None);
-        state.lane("lead", &herdr("lead", "1", "w1:p1", "s"));
         state.lane(
             "gone",
-            &herdr("gone", "1", "w1:p1", "s").replace(r#""title":"""#, r#""closedAt":"x""#),
+            &tern("gone", "1", "w1:p1", "s").replace(r#""title":"""#, r#""closedAt":"x""#),
         );
         assert_eq!(route(&state, "1").await, None);
     }
@@ -320,11 +319,11 @@ mod tests {
     #[tokio::test]
     async fn unreadable_or_shared_owners_are_ambiguous() {
         let state = State::new();
-        state.lane("aa", &herdr("aa", "1", "w1:p1", "s1"));
-        state.lane("bb", &herdr("bb", "1", "w1:p2", "s2"));
+        state.lane("aa", &tern("aa", "1", "w1:p1", "s1"));
+        state.lane("bb", &tern("bb", "1", "w1:p2", "s2"));
         assert_eq!(route(&state, "1").await, Some(Route::Ambiguous));
         fs::remove_file(state.0.join("lanes/bb.json")).unwrap();
-        state.lane("cc", &herdr("cc", "2", "w1:p3", "s1"));
+        state.lane("cc", &tern("cc", "2", "w1:p3", "s1"));
         assert_eq!(
             route(&state, "1").await,
             Some(Route::Ambiguous),
@@ -340,7 +339,7 @@ mod tests {
             None
         );
         fs::remove_file(state.0.join("lanes/dd.json")).unwrap();
-        state.lane("ee", &herdr("zz", "3", "w9:p9", "s9"));
+        state.lane("ee", &tern("zz", "3", "w9:p9", "s9"));
         assert_eq!(
             route(&state, "1").await,
             Some(Route::Ambiguous),
@@ -349,28 +348,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn closing_and_removed_runtime_lanes() {
+    async fn closing_and_paneless_lanes() {
         let state = State::new();
         state.lane(
             "aa",
-            &herdr("aa", "1", "w1:p1", "s1")
+            &tern("aa", "1", "w1:p1", "s1")
                 .replace(r#""title":"""#, r#""nativeCloseIntent":{"at":"x"}"#),
         );
         assert_eq!(route(&state, "1").await, Some(Route::Closing("aa".into())));
-        state.lane("aa", &herdr("aa", "1", "w1:p1", "s1"));
+        state.lane("aa", &tern("aa", "1", "w1:p1", "s1"));
         assert_eq!(
             route(&state, "1").await,
             Some(Route::Inactive("aa".into())),
-            "herdr runtime is removed"
-        );
-        state.lane(
-            "aa",
-            r#"{"key":"aa","thread":"discord:1","pane":"w1:p1","tab":"t","session":"s1","openedAt":"2026-01-01T00:00:00.000Z"}"#,
-        );
-        assert_eq!(
-            route(&state, "1").await,
-            Some(Route::Inactive("aa".into())),
-            "legacy pane row"
+            "a tern lane without a pane record is inactive"
         );
     }
 
@@ -387,16 +377,7 @@ mod tests {
             fs::write(state.0.join("sessions").join(format!("{name}.json")), body).unwrap();
         };
         pane("w1:p1");
-        state.lane("aa", &herdr("aa", "1", "w1:p1", "s1"));
-        assert_eq!(
-            route(&state, "1").await,
-            Some(Route::Inactive("aa".into())),
-            "herdr stays inactive even with a pane record"
-        );
-        state.lane(
-            "aa",
-            &herdr("aa", "1", "w1:p1", "s1").replace(r#""runtime":"herdr""#, r#""runtime":"tern""#),
-        );
+        state.lane("aa", &tern("aa", "1", "w1:p1", "s1"));
         assert_eq!(
             route(&state, "1").await,
             Some(Route::Live {
@@ -439,7 +420,7 @@ mod tests {
     async fn enqueue_follows_the_route_and_holds_every_race() {
         let state = State::new();
         assert_eq!(queue(&state, false).await.unwrap(), None);
-        state.lane("aa", &herdr("aa", "1", "w1:p1", "s1"));
+        state.lane("aa", &tern("aa", "1", "w1:p1", "s1"));
         assert_eq!(
             queue(&state, true).await.unwrap(),
             None,
@@ -456,13 +437,13 @@ mod tests {
         lock.release().unwrap();
         state.lane(
             "aa",
-            &herdr("aa", "1", "w1:p1", "s1").replace(r#""title":"""#, r#""nativeCloseIntent":{}"#),
+            &tern("aa", "1", "w1:p1", "s1").replace(r#""title":"""#, r#""nativeCloseIntent":{}"#),
         );
         assert_eq!(
             held(queue(&state, false).await),
             "Discord lane native close is in progress; cursor not advanced"
         );
-        state.lane("bb", &herdr("bb", "1", "w1:p2", "s2"));
+        state.lane("bb", &tern("bb", "1", "w1:p2", "s2"));
         assert_eq!(
             held(queue(&state, false).await),
             "Discord lane owner ambiguous; cursor not advanced"

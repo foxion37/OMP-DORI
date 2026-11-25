@@ -67,7 +67,7 @@ describe("candidate application state recovery", () => {
     expect(restoredCursor?.observedAt).toBe(cursor.observedAt);
     expect(restoredCursor?.seen).toEqual(cursor.seen);
     expect(fileTgInboundStore(skill, 900).load()?.offset).toBe(999);
-    const watched = readMonitorManifests(join(restoredSkill, "sessions"), [], join(restoredSkill, "monitors"));
+    const watched = readMonitorManifests(join(restoredSkill, "monitors"));
     expect(watched.errors).toEqual([]);
     expect(watched.manifests[0]?.data).toEqual(monitors);
     expect(existsSync(join(restoredApplication, "auth.json"))).toBe(false);

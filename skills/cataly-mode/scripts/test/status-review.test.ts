@@ -17,8 +17,7 @@ const lane = {
   done: "file proof",
 };
 let state: ReturnType<typeof withState>;
-const deps = (patch: { leadPane?: string } = {}) =>
-  depsFor(newWorld(), fakeClock(now), state.dir, { sessionsDir: join(state.dir, "sessions"), ...patch });
+const deps = () => depsFor(newWorld(), fakeClock(now), state.dir, { sessionsDir: join(state.dir, "sessions") });
 beforeEach(async () => {
   state = withState();
   await deps().registry.write(lane);
@@ -121,58 +120,19 @@ test("a specifically requested damaged lane is unknown, not an absent lane or a 
   expect(renderStatus(snapshot)).not.toContain("none open");
 });
 
-const malformed = [
-  { suspended: "false" },
-  { suspended: null },
-  { persistent: "true" },
-  { deliveryPaused: 1 },
-  { expiresAt: "0" },
-  { expiresAt: null },
-  { expiresAt: [] },
-  { expiresAt: Number.POSITIVE_INFINITY },
-  { name: false },
-  { cwd: 7 },
-  { filter: [] },
-  { monitorId: 33 },
-  { sessionId: {} },
-  { description: 5 },
-  { command: false },
-  { path: [] },
-  { target: null },
-  { argv: ["cataly", null] },
-];
-for (const kind of ["omp", "legacy"] as const) {
-  test.each(malformed)(`${kind} monitor fields are validated before counting: %j`, async (patch) => {
-    const root =
-      kind === "omp" ? join(state.dir, "monitors") : join(state.dir, "sessions", "session", "extensions", "terminal");
-    mkdirSync(root, { recursive: true });
-    const monitor =
-      kind === "omp"
-        ? { name: "watch", argv: ["cataly", "watch"], cwd: "/repo" }
-        : { monitorId: "mon_a", sessionId: "session", persistent: true };
-    for (const [name, item] of [
-      ["good", monitor],
-      ["bad", { ...monitor, ...patch }],
-    ] as const) {
-      const data = JSON.stringify({ version: 1, sessionId: "session", monitors: [item] });
-      writeFileSync(
-        join(root, `${name}.json`),
-        name === "bad" && patch.expiresAt === Number.POSITIVE_INFINITY
-          ? data.replace('"expiresAt":null', '"expiresAt":1e309')
-          : data,
-      );
-    }
-    // Legacy terminal metadata is read only in a terminal scope: here a Tern lead.
-    const snapshot = await laneStatus(deps(kind === "legacy" ? { leadPane: "tern:5001" } : {}));
-    expect(snapshot.monitors).toEqual({ recorded: null, suspended: null, expired: null });
-    const read = readMonitorManifests(deps().config.sessionsDir, [], join(state.dir, "monitors"));
-    // Boot deliberately preserves legacy argv for command matching; status must still be unknown above.
-    const legacyArgv = kind === "legacy" && Object.hasOwn(patch, "argv");
-    expect(read.manifests).toHaveLength(legacyArgv ? 2 : 1);
-    expect(read.errors).toHaveLength(legacyArgv ? 0 : 1);
-    if (legacyArgv)
-      expect(
-        JSON.stringify(read.manifests.flatMap((m) => m.data.monitors).find((m) => m.argv !== undefined)?.argv),
-      ).toBe('["cataly",null]');
-  });
-}
+const malformed = [{ name: false }, { cwd: 7 }, { filter: [] }, { argv: ["cataly", null] }];
+test.each(malformed)("monitor fields are validated before counting: %j", async (patch) => {
+  const root = join(state.dir, "monitors");
+  mkdirSync(root, { recursive: true });
+  const monitor = { name: "watch", argv: ["cataly", "watch"], cwd: "/repo" };
+  for (const [name, item] of [
+    ["good", monitor],
+    ["bad", { ...monitor, ...patch }],
+  ] as const)
+    writeFileSync(join(root, `${name}.json`), JSON.stringify({ version: 1, sessionId: "session", monitors: [item] }));
+  const snapshot = await laneStatus(deps());
+  expect(snapshot.monitors).toEqual({ recorded: null });
+  const read = readMonitorManifests(root);
+  expect(read.manifests).toHaveLength(1);
+  expect(read.errors).toHaveLength(1);
+});

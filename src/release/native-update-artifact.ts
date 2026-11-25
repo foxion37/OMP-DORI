@@ -64,15 +64,15 @@ export function readNativeArtifact(source: string, directory: string): NativeCan
     ...(candidate.status === "candidate" ? NATIVE_UPDATE_FILES : ["conflicts.patch"]),
   ];
   if (files.sort().join("\0") !== expected.sort().join("\0")) throw new Error("Unexpected native artifact files");
-  const before = readSourceBundle(source, true);
+  const before = readSourceBundle(source);
   if (
     before.identity !== candidate.previousIdentity ||
     before.lock.commit !== candidate.previous ||
-    compareNativeVersions(candidate.nativeVersion, before.lock.nativeVersion!) <= 0
+    compareNativeVersions(candidate.nativeVersion, before.lock.nativeVersion) <= 0
   )
     throw new Error("Native artifact differs from the exact previous bundle identity");
   if (candidate.status === "candidate") {
-    const next = readSourceBundle(directory, true);
+    const next = readSourceBundle(directory);
     if (
       !/^19\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(candidate.nativeVersion) ||
       next.identity !== candidate.identity ||
@@ -82,7 +82,7 @@ export function readNativeArtifact(source: string, directory: string): NativeCan
       next.lock.repository !== before.lock.repository
     )
       throw new Error("Native candidate differs from its authenticated bundle identity or supported runtime");
-    validateNativeDependencies(source, directory, before.lock.nativeVersion!, candidate.nativeVersion);
+    validateNativeDependencies(source, directory, before.lock.nativeVersion, candidate.nativeVersion);
   } else if (digest(readFileSync(join(directory, "conflicts.patch"))) !== candidate.identity) {
     throw new Error("Native conflict artifact digest differs");
   }

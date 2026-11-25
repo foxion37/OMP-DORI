@@ -11,7 +11,7 @@ const T0 = Date.parse("2026-01-01T12:00:00Z");
 const lane = (key: string, status: LaneStatus = "working", pane = `w1:${key}`): Lane => ({
   key,
   status,
-  pane,
+  sessionRef: { runtime: "tern", id: pane },
   title: key,
   thread: "none",
   brief: "/b.md",
@@ -19,13 +19,17 @@ const lane = (key: string, status: LaneStatus = "working", pane = `w1:${key}`): 
   openedAt: new Date(T0).toISOString(),
 });
 
+/** A desired-monitor spec; `cwd` defaults to "/repo". */
+const watch = (name: string, argv: string[], extra: Partial<Monitor> = {}): Monitor => ({
+  name,
+  argv,
+  cwd: "/repo",
+  ...extra,
+});
+
 const manifest = (monitors: Monitor[]): Manifest => ({
-  path: "/fixture/extensions/terminal/owner.json",
-  data: {
-    version: 1,
-    sessionId: "owner",
-    monitors: monitors.map((m) => ({ sessionId: "owner", persistent: true, monitorId: "mon_FIXTURE", ...m })),
-  },
+  path: "/fixture/monitors/owner.json",
+  data: { version: 1, sessionId: "owner", monitors },
 });
 
 let state: TestState;
@@ -39,9 +43,9 @@ afterEach(() => state.done());
 test("vanished, live and unassigned sessions reconcile without mutating the lane records", () => {
   // Given lanes whose sessions are gone, live, or never assigned.
   const lanes = [
-    { ...lane("old"), pane: sid(8), sessionRef: href(sid(8)) },
-    { ...lane("current"), pane: sid(2), sessionRef: href(sid(2)) },
-    { ...lane("pending"), pane: undefined },
+    { ...lane("old"), sessionRef: href(sid(8)) },
+    { ...lane("current"), sessionRef: href(sid(2)) },
+    (({ sessionRef: _unassigned, ...pending }) => pending)(lane("pending")),
   ];
   const before = JSON.stringify(lanes);
   // When reconciled against the live session list.
@@ -55,33 +59,31 @@ test("vanished, live and unassigned sessions reconcile without mutating the lane
   expect(JSON.stringify(lanes)).toBe(before);
 });
 
-test("persistent watches on closed or verified lanes become owner-scoped stop calls", () => {
-  // Given watches for closed, verified and still-claimed lanes, plus a non-persistent one.
+test("watches on closed or verified lanes become owner-scoped stop calls", () => {
+  // Given watches for closed, verified and still-claimed lanes.
   const lanes = [lane("closed", "closed"), lane("verified", "verified-done"), lane("claimed", "done-claimed")];
   const input = manifest([
-    { command: "cataly watch closed", monitorId: "mon_CLOSED" },
-    { command: "herdr pane read w1:verified", monitorId: "mon_VERIFIED" },
-    { command: "cataly watch claimed", monitorId: "mon_CLAIMED" },
-    { command: "cataly watch closed", monitorId: "mon_EPHEMERAL", persistent: false },
+    watch("CLOSED", ["cataly", "watch", "closed"]),
+    watch("VERIFIED", ["tern", "read", "w1:verified"]),
+    watch("CLAIMED", ["cataly", "watch", "claimed"]),
   ]);
   // When cleanup candidates are computed.
   const result = monitorCleanup(lanes, [input]);
-  // Then only persistent watches of finished lanes are listed, with the owner's exact stop call.
-  expect(result.map((m) => m.monitorId)).toEqual(["mon_CLOSED", "mon_VERIFIED"]);
-  expect(result[0]?.stop).toBe('kill_bash({"bash_id":"mon_CLOSED"})');
+  // Then only watches of finished lanes are listed, with the owner's exact stop call.
+  expect(result.map((m) => m.monitorId)).toEqual(["CLOSED", "VERIFIED"]);
+  expect(result[0]?.stop).toBe('monitor({"op":"stop","name":"CLOSED"})');
   expect(result[0]?.sessionId).toBe("owner");
   expect(result[0]?.metadata).toBe(input.path);
 });
 
-test("shared, prefix-matched, unknown and foreign-owner watches are preserved", () => {
+test("shared, prefix-matched and unknown watches are preserved", () => {
   // Given a closed lane whose key is a prefix of an active one, and watches of every risky shape.
   const lanes = [lane("api", "closed"), lane("api-release"), lane("closed", "closed")];
   const result = monitorCleanup(lanes, [
     manifest([
-      { command: "cataly watch api-release", monitorId: "mon_ACTIVE" },
-      { command: "cataly watch closed api-release", monitorId: "mon_SHARED" },
-      { description: "unrelated presence", command: "bun presence.ts", monitorId: "mon_UNKNOWN" },
-      { command: "cataly watch closed", sessionId: "other", monitorId: "mon_WRONGOWNER" },
+      watch("ACTIVE", ["cataly", "watch", "api-release"]),
+      watch("SHARED", ["cataly", "watch", "closed", "api-release"]),
+      watch("UNKNOWN", ["bun", "presence.ts"], { filter: "unrelated presence" }),
     ]),
   ]);
   // Then none is offered for cleanup.
@@ -91,34 +93,35 @@ test("shared, prefix-matched, unknown and foreign-owner watches are preserved", 
 test("an active lane named after a colon or before a period or colon still keeps a shared watch", () => {
   // Given a closed lane, an active one, and a closed key that appears only inside a dotted name.
   const lanes = [lane("closed", "closed"), lane("api-release"), lane("v2", "closed")];
+  const closed = ["cataly", "watch", "closed"];
   const result = monitorCleanup(lanes, [
     manifest([
-      { command: "cataly watch closed", description: "closed reports; lane:api-release", monitorId: "mon_COLON" },
-      { command: "cataly watch closed", description: "closed reports, then api-release.", monitorId: "mon_PERIOD" },
-      { command: "cataly watch closed", path: "/logs/api-release: both", monitorId: "mon_TRAILCOLON" },
-      { command: "cataly watch api.v2", monitorId: "mon_DOTTED" },
-      { command: "cataly watch closed", monitorId: "mon_CLOSED" },
+      watch("COLON", closed, { filter: "closed reports; lane:api-release" }),
+      watch("PERIOD", closed, { filter: "closed reports, then api-release." }),
+      watch("TRAILCOLON", closed, { cwd: "/logs/api-release: both" }),
+      watch("DOTTED", ["cataly", "watch", "api.v2"]),
+      watch("CLOSED", closed),
     ]),
   ]);
   // Then only the watch naming nothing but the closed lane is offered.
-  expect(result.map((m) => m.monitorId)).toEqual(["mon_CLOSED"]);
+  expect(result.map((m) => m.monitorId)).toEqual(["CLOSED"]);
 });
 
-test("a common-word key ties a watch to its lane only as a command or target token, never in prose or a path", () => {
-  // Given a closed lane keyed "docs" and watches that name it in prose, in a path, as a token and by pane.
+test("a common-word key ties a watch to its lane only as an argv word, never in prose or a path", () => {
+  // Given a closed lane keyed "docs" and watches that name it in prose, in a path, as a word and by pane.
   const lanes = [lane("docs", "closed")];
   const result = monitorCleanup(lanes, [
     manifest([
-      { description: "CI for the docs site on main", command: "gh run watch 4242", monitorId: "mon_PROSE" },
-      { description: "build log", command: "tail -F build/docs/out.log", monitorId: "mon_PATH" },
-      { description: "lane reports", command: "cataly report-watch 'docs'", monitorId: "mon_KEY" },
-      { description: "lane screen", target: "w1:docs", monitorId: "mon_PANE" },
+      watch("PROSE", ["gh", "run", "watch", "4242"], { filter: "CI for the docs site on main" }),
+      watch("PATH", ["tail", "-F", "build/docs/out.log"]),
+      watch("KEY", ["cataly", "report-watch", "docs"]),
+      watch("PANE", ["tern", "read", "w1:docs"]),
     ]),
   ]);
-  // Then only the token and pane watches are offered, each with the field that matched.
+  // Then only the word and pane watches are offered, each with what matched.
   expect(result.map((m) => [m.monitorId, m.match])).toEqual([
-    ["mon_KEY", ["docs:command:key"]],
-    ["mon_PANE", ["docs:target:pane"]],
+    ["KEY", ["docs:argv:key"]],
+    ["PANE", ["docs:argv:pane"]],
   ]);
 });
 
@@ -131,82 +134,61 @@ test("a done journal qualifies a lane for cleanup on its own; halted does not", 
   // When cleanup candidates are computed.
   const cleanup = monitorCleanup(lanes, [
     manifest([
-      { command: "cataly watch done-report", monitorId: "mon_DONE" },
-      { command: "cataly watch halted-report", monitorId: "mon_HALTED" },
+      watch("DONE", ["cataly", "watch", "done-report"]),
+      watch("HALTED", ["cataly", "watch", "halted-report"]),
     ]),
   ]);
   // Then only the done lane's watch is listed.
-  expect(cleanup.map((m) => m.monitorId)).toEqual(["mon_DONE"]);
+  expect(cleanup.map((m) => m.monitorId)).toEqual(["DONE"]);
 });
 
-test("metadata discovery reads only terminal JSON, never transcripts or nested state", () => {
-  // Given a session directory with a transcript, nested state and one manifest.
-  const root = join(state.dir, "sessions");
-  const terminal = join(root, "project", "extensions", "terminal");
-  mkdirSync(join(terminal, "state"), { recursive: true });
-  writeFileSync(join(root, "project", "session.jsonl"), "not JSON: never inspect");
-  writeFileSync(join(terminal, "state", "private.json"), "not JSON: never inspect");
-  writeFileSync(join(terminal, "owner.json"), JSON.stringify(manifest([]).data));
+test("metadata discovery reads only the monitors directory's own JSON files, never nested state", () => {
+  // Given a monitors directory with nested state, a non-JSON file and one manifest.
+  const dir = join(state.dir, "monitors");
+  mkdirSync(join(dir, "state"), { recursive: true });
+  writeFileSync(join(dir, "session.jsonl"), "not JSON: never inspect");
+  writeFileSync(join(dir, "state", "private.json"), "not JSON: never inspect");
+  writeFileSync(join(dir, "owner.json"), JSON.stringify(manifest([]).data));
   // When manifests are read; then only the manifest is.
-  const read = readMonitorManifests(root);
-  expect(read.manifests.map((m) => m.path)).toEqual([join(terminal, "owner.json")]);
+  const read = readMonitorManifests(dir);
+  expect(read.manifests.map((m) => m.path)).toEqual([join(dir, "owner.json")]);
   expect(read.errors).toEqual([]);
 });
 
-test("OMP desired specs retain argv boundaries, owner scope and open-lane guards alongside terminal metadata", () => {
-  const root = join(state.dir, "sessions");
-  const terminal = join(root, "project", "extensions", "terminal");
+test("OMP desired specs retain argv boundaries, owner scope and open-lane guards", () => {
   const ompDir = join(state.dir, "monitors");
-  mkdirSync(terminal, { recursive: true });
   mkdirSync(ompDir);
-  writeFileSync(
-    join(terminal, "legacy.json"),
-    JSON.stringify(manifest([{ command: "cataly watch closed", monitorId: "mon_LEGACY" }]).data),
-  );
   const specs = [
     { name: "closed-watch", argv: ["cataly", "watch", "closed"], filter: "REPORT", cwd: "/repo" },
     { name: "quoted-argument", argv: ["notify", "closed and something else"], cwd: "/repo" },
     { name: "watch open", argv: ["cataly", "watch", "closed"], cwd: "/repo" },
     { name: "cwd-watch", argv: ["cataly", "watch", "closed"], cwd: "/repo/open" },
     { name: "filter-watch", argv: ["cataly", "watch", "closed"], filter: "^open$", cwd: "/repo" },
-    { name: "pane-watch", argv: ["hc", "read", "t7"], cwd: "/repo" },
-    { name: "ref-watch", argv: ["cataly", "harness", "send", "hc:t7"], cwd: "/repo" },
+    { name: "pane-watch", argv: ["tern", "read", "7"], cwd: "/repo" },
+    { name: "ref-watch", argv: ["cataly", "harness", "send", "tern:7"], cwd: "/repo" },
   ];
   const path = join(ompDir, "owner.json");
   writeFileSync(path, JSON.stringify({ version: 1, sessionId: "owner", monitors: specs }));
-  const read = readMonitorManifests(root, [], ompDir);
+  const read = readMonitorManifests(ompDir);
   expect(read.errors).toEqual([]);
-  expect(read.manifests.find((entry) => entry.path === path)?.kind).toBe("omp");
   const result = monitorCleanup(
-    [
-      lane("closed", "closed"),
-      lane("open"),
-      { ...lane("hc-lane", "closed", "t7"), sessionRef: { runtime: "hc", id: "t7" } },
-    ],
+    [lane("closed", "closed"), lane("open"), lane("tern-lane", "closed", "7")],
     read.manifests,
   );
-  expect(result.map((entry) => entry.monitorId).sort()).toEqual([
-    "closed-watch",
-    "mon_LEGACY",
-    "pane-watch",
-    "ref-watch",
-  ]);
+  expect(result.map((entry) => entry.monitorId).sort()).toEqual(["closed-watch", "pane-watch", "ref-watch"]);
   expect(result.find((entry) => entry.monitorId === "closed-watch")).toMatchObject({
     sessionId: "owner",
     metadata: path,
     match: ["closed:argv:key"],
     stop: 'monitor({"op":"stop","name":"closed-watch"})',
   });
-  expect(result.find((entry) => entry.monitorId === "pane-watch")?.match).toEqual(["hc-lane:argv:pane"]);
-  expect(result.find((entry) => entry.monitorId === "ref-watch")?.match).toEqual(["hc-lane:argv:pane"]);
+  expect(result.find((entry) => entry.monitorId === "pane-watch")?.match).toEqual(["tern-lane:argv:pane"]);
+  expect(result.find((entry) => entry.monitorId === "ref-watch")?.match).toEqual(["tern-lane:argv:pane"]);
 });
 
-test("malformed OMP desired metadata is reported without hiding valid specs or reading transcripts", () => {
-  const root = join(state.dir, "sessions");
+test("malformed OMP desired metadata is reported without hiding valid specs", () => {
   const ompDir = join(state.dir, "monitors");
-  mkdirSync(root);
   mkdirSync(ompDir);
-  writeFileSync(join(root, "private-session.jsonl"), "not metadata and never read");
   const bad = join(ompDir, "bad.json");
   writeFileSync(
     bad,
@@ -224,7 +206,7 @@ test("malformed OMP desired metadata is reported without hiding valid specs or r
       monitors: [{ name: "good", argv: ["cataly", "watch", "closed"], cwd: "/repo" }],
     }),
   );
-  const read = readMonitorManifests(root, [], ompDir);
+  const read = readMonitorManifests(ompDir);
   expect(read.errors).toEqual([bad]);
   expect(monitorCleanup([lane("closed", "closed")], read.manifests).map((entry) => entry.monitorId)).toEqual(["good"]);
 });
@@ -233,14 +215,14 @@ test("a closed lane named after a cataly program, command or platform word does 
   const lanes = ["cataly", "inbound", "slack", "freshness", "tail"].map((key) => lane(key, "closed"));
   const result = monitorCleanup(lanes, [
     manifest([
-      { argv: ["cataly", "inbound", "slack", "--loop", "1"], monitorId: "mon_INBOUND" },
-      { argv: ["/home/user/.cataly/bin/cataly", "freshness", "--loop", "1"], monitorId: "mon_FRESHNESS" },
-      { command: "cataly inbound slack --loop 1", monitorId: "mon_COMMAND" },
-      { command: 'bash -c "cd /srv && exec cataly inbound slack --loop 1"', monitorId: "mon_WRAPPED" },
-      { argv: ["bun", "/opt/cataly/skills/cataly-mode/scripts/src/cli.ts", "freshness"], monitorId: "mon_SOURCE" },
-      { command: "tail -F /logs/out.log", monitorId: "mon_TAIL" },
-      { argv: ["cataly", "report-watch", "slack"], monitorId: "mon_LANE" },
+      watch("INBOUND", ["cataly", "inbound", "slack", "--loop", "1"]),
+      watch("FRESHNESS", ["/home/user/.cataly/bin/cataly", "freshness", "--loop", "1"]),
+      watch("COMMAND", ["sh", "-c", "cataly inbound slack --loop 1"]),
+      watch("WRAPPED", ["sh", "-c", 'bash -c "cd /srv && exec cataly inbound slack --loop 1"']),
+      watch("SOURCE", ["bun", "/opt/cataly/skills/cataly-mode/scripts/src/cli.ts", "freshness"]),
+      watch("TAIL", ["sh", "-c", "tail -F /logs/out.log"]),
+      watch("LANE", ["cataly", "report-watch", "slack"]),
     ]),
   ]);
-  expect(result.map((m) => [m.monitorId, m.match])).toEqual([["mon_LANE", ["slack:argv:key"]]]);
+  expect(result.map((m) => [m.monitorId, m.match])).toEqual([["LANE", ["slack:argv:key"]]]);
 });

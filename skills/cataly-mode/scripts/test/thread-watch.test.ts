@@ -142,7 +142,7 @@ test("a miskeyed row holds its strict group election without stopping a later un
   expect(await Bun.file(hook).exists()).toBe(false);
 });
 
-test("boot recommends STOP for a legacy finished lane but not a verified claim waiting on its group", async () => {
+test("boot recommends STOP for a finished ungrouped lane but not a verified claim waiting on its group", async () => {
   const world = newWorld();
   const pending = { ...claimed("first-lane", "merged acme/app#1"), ...nativeLane(world, 1) };
   let now = EXPIRED;
@@ -160,23 +160,22 @@ test("boot recommends STOP for a legacy finished lane but not a verified claim w
   const held = await withDeliveryLock(deps, groupKey, () => watchTick(deps));
   expect(held.ok && held.value[0]).toStartWith("LANE_HELD first-lane thread close in flight");
   expect(await deps.registry.read(pending.key)).toMatchObject({ status: "verified-done", claim: pending.claim });
-  await deps.registry.write({ ...claimed("legacy-lane", pending.done), status: "verified-done", thread: "none" });
+  await deps.registry.write({ ...claimed("solo-lane", pending.done), status: "verified-done", thread: "none" });
 
-  const monitorDir = join(state.dir, "terminal");
+  const monitorDir = join(state.dir, "monitors");
   mkdirSync(monitorDir);
   const monitors = [
-    { command: "cataly checkpoints first-lane", monitorId: "mon_PENDING", sessionId: "owner", persistent: true },
-    { command: "cataly checkpoints legacy-lane", monitorId: "mon_LEGACY", sessionId: "owner", persistent: true },
+    { name: "pending", argv: ["cataly", "checkpoints", "first-lane"], cwd: state.dir },
+    { name: "solo", argv: ["cataly", "checkpoints", "solo-lane"], cwd: state.dir },
   ];
   writeFileSync(join(monitorDir, "owner.json"), JSON.stringify({ version: 1, sessionId: "owner", monitors }));
   const boot = await bootCheck({
     ...deps,
-    monitorDirs: [monitorDir],
     reports: new Reports(state.dir),
     worklog: new Worklog(state.dir),
     slack: async () => null,
   });
   expect(boot.lines.filter((line) => line.startsWith("STOP "))).toEqual([
-    'STOP in the owner session only: kill_bash({"bash_id":"mon_LEGACY"})',
+    'STOP in the owner session only: monitor({"op":"stop","name":"solo"})',
   ]);
 });

@@ -12,11 +12,11 @@ describe("lanes", () => {
   test("start opens a native lane, begins its goal with the brief, and tells the lead", async () => {
     const { w, d, lead, brief } = setup();
     const lane = await startLane(d, "fix-login", brief, { group: "w1" });
-    const pane = w.panes.get(lane.paneId)!;
-    expect(lane.sessionRef).toEqual({ runtime: "headless", id: lane.paneId, group: "w1" });
+    const pane = w.panes.get(lane.sessionRef.id)!;
+    expect(lane.sessionRef).toEqual({ runtime: "headless", id: lane.sessionRef.id, group: "w1" });
     expect(pane.received[0]).toStartWith("Read your brief at ");
     expect(await Bun.file(lane.brief).text()).toContain("cataly ready fix-login --text");
-    expect(lead.received).toEqual([`[START fix-login] lane opened in headless:${lane.paneId}`]);
+    expect(lead.received).toEqual([`[START fix-login] lane opened in headless:${lane.sessionRef.id}`]);
     await expect(startLane(d, "fix-login", brief, { group: "w1" })).rejects.toThrow(Refusal);
   });
 
@@ -44,7 +44,7 @@ describe("lanes", () => {
     expect(w.usage.map((e) => e.name)).toEqual(["cataly.lane_started", "cataly.lane_ready"]);
     expect(JSON.stringify(w.usage)).not.toContain("fix-login");
     await done(d, "fix-login");
-    expect(w.panes.has(lane.paneId)).toBe(false);
+    expect(w.panes.has(lane.sessionRef.id)).toBe(false);
     expect(d.store.lane("fix-login")!.status).toBe("done");
   });
 });
@@ -65,25 +65,13 @@ describe("startLane group fallback", () => {
   };
   const clear = { CATALY_HEADLESS_ID: undefined };
 
-  test("a lane with no group gets this home's group label, never a caller's old herdr workspace id", async () => {
+  test("a lane with no group gets this home's group label", async () => {
     const { w, d, brief } = setup();
-    const saved = { pane: process.env["HERDR_PANE_ID"], workspace: process.env["HERDR_WORKSPACE_ID"] };
-    process.env["HERDR_PANE_ID"] = "w9:p9";
-    process.env["HERDR_WORKSPACE_ID"] = "w9";
-    try {
-      await startLane(d, "no-group", brief);
-    } finally {
-      if (saved.pane === undefined) delete process.env["HERDR_PANE_ID"];
-      else process.env["HERDR_PANE_ID"] = saved.pane;
-      if (saved.workspace === undefined) delete process.env["HERDR_WORKSPACE_ID"];
-      else process.env["HERDR_WORKSPACE_ID"] = saved.workspace;
-    }
+    await startLane(d, "no-group", brief);
     const spec = w.created.at(-1)!;
     expect(spec.group).toBe(groupId(d.store.root));
     expect(spec.group).toMatch(/^[0-9a-f]{8}$/);
     expect(spec.env["CATALY_HOME"]).toBe(d.store.root);
-    expect(Object.values(spec.env)).not.toContain("w9");
-    expect(Object.values(spec.env)).not.toContain("w9:p9");
   });
 
   test("a tern lane is a named tab in the caller's own Tern session, else in the session named cataly", async () => {
@@ -110,8 +98,6 @@ describe("startLane group fallback", () => {
     expect(fake.ran.map((r) => r.command.split(" ")[0])).toEqual(["omp", "omp"]);
     expect(d.store.lane("inside")).toMatchObject({
       sessionRef: { runtime: "tern", id: "8000", group: "7001", container: "8001" },
-      paneId: "8000",
-      tabId: "8001",
     });
     expect(fake.submitted).toEqual([
       { id: "5001", text: "[START inside] lane opened in tern:8000" },

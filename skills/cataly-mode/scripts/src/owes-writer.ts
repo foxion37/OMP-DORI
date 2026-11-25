@@ -14,7 +14,7 @@ const openReservation = (path: string): Database => {
   return new Database(path, { readwrite: true, create: false });
 };
 
-/** Serialize inspection, recovery and release of the legacy lock without storing message data in SQLite. */
+/** Serialize inspection, recovery and release of the owner lock file without storing message data in SQLite. */
 export const tryOwesWriter = <T>(path: string, write: () => T): T | undefined => {
   const reservation = openReservation(`${path}.writer.sqlite`);
   try {

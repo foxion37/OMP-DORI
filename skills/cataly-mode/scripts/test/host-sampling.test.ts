@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
+import { platform } from "../../../../src/platform/index.ts";
 import { sampleHost } from "../src/host-guard.ts";
 import { canLaunch } from "../src/routing.ts";
-import { ChosenRuntimes, type Runner } from "../src/run.ts";
+import { ChosenRuntimes, type Runner, run } from "../src/run.ts";
 import { FakeHeadless } from "./fake-headless.ts";
 import { newWorld } from "./fakes.ts";
 
@@ -9,10 +10,17 @@ const loadavg = "0.50 0.40 0.30 1/200 999\n";
 const meminfo = "MemTotal: 16000000 kB\nMemAvailable: 4000000 kB\n";
 const fixture = (
   platform: NodeJS.Platform,
-  options: { mac?: boolean; sessionFailure?: boolean; memory?: string | null; load?: string | null } = {},
+  options: {
+    mac?: boolean;
+    sessionFailure?: boolean;
+    memory?: string | null;
+    load?: string | null;
+    darwinMemory?: number;
+  } = {},
 ) => {
   const calls: string[][] = [],
     reads: string[] = [];
+  let memoryReads = 0;
   const runner: Runner = async (argv) => {
     calls.push([...argv]);
     const key = argv.join(" ");
@@ -39,6 +47,11 @@ const fixture = (
   );
   const result = sampleHost(runner, "/data path", rts, {
     platform,
+    // The platform adapter's macOS reader, injected so no host runs a real sysctl here.
+    memFreePct: () => {
+      memoryReads++;
+      return options.darwinMemory ?? 42;
+    },
     readFile: (path) => {
       reads.push(path);
       const value =
@@ -55,7 +68,7 @@ const fixture = (
       return value;
     },
   });
-  return { result, calls, reads, world };
+  return { result, calls, reads, world, rts, memoryReads: () => memoryReads };
 };
 
 test("Linux reads proc directly, only spawns df and counts sessions through the headless supervisor", async () => {
@@ -71,6 +84,7 @@ test("Linux reads proc directly, only spawns df and counts sessions through the 
   expect(f.reads).toEqual(["/proc/loadavg", "/proc/meminfo", "/proc/self/cgroup", "/proc/self/mountinfo"]);
   expect(f.calls).toEqual([["df", "-k", "/data path"]]);
   expect(f.world.calls).toEqual([["headless", "list", ""]]);
+  expect(f.memoryReads()).toBe(0);
 });
 
 test.each([null, "MemTotal: 16000000 kB\n", "MemTotal: 0 kB\nMemAvailable: 0 kB\n", "invalid"])(
@@ -98,19 +112,59 @@ test("a failed session list still holds admission rather than claiming zero sess
   ).toEqual(["session count unknown"]);
 });
 
-test.each(["darwin", "freebsd"] as const)(
-  "%s retains successful sysctl, memory_pressure and swap probes",
-  async (platform) => {
-    const f = fixture(platform, { mac: true });
-    expect(await f.result).toEqual({ load1: 1.25, memFreePct: 42, diskFreeGb: 0.5, swapFreeGb: 2, panes: 0 });
-    expect(f.reads).toEqual([]);
-    expect(f.calls.map((argv) => argv[0])).toEqual(["sysctl", "memory_pressure", "df", "sysctl"]);
-  },
-);
+test("darwin takes memory from the platform adapter and keeps the sysctl load, df and swap probes", async () => {
+  const f = fixture("darwin", { mac: true });
+  expect(await f.result).toEqual({ load1: 1.25, memFreePct: 42, diskFreeGb: 0.5, swapFreeGb: 2, panes: 0 });
+  expect(f.reads).toEqual([]);
+  expect(f.memoryReads()).toBe(1);
+  expect(f.calls.map((argv) => argv[0])).toEqual(["sysctl", "df", "sysctl"]);
+});
+
+test("darwin samples the adapter's fail-closed 0 when no memory reader answers, never a /proc fallback", async () => {
+  const f = fixture("darwin", { darwinMemory: 0 });
+  const s = await f.result;
+  expect(s.memFreePct).toBe(0);
+  expect(
+    canLaunch(s, { loadAlert: 150, loadOk: 80, memFreeMinPct: 20, diskFreeMinGb: 0, panesMax: 20 }).reasons,
+  ).toEqual(["memory free 0% < 20%"]);
+  expect(f.calls.map((argv) => argv[0])).toEqual(["sysctl", "cat", "df", "sysctl"]);
+  expect(f.calls).not.toContainEqual(["cat", "/proc/meminfo"]);
+});
+
+test("another non-Linux host keeps the legacy runner probes and never asks memory_pressure", async () => {
+  const f = fixture("freebsd", { mac: true });
+  expect(await f.result).toEqual({ load1: 1.25, memFreePct: 25, diskFreeGb: 0.5, swapFreeGb: 2, panes: 0 });
+  expect(f.memoryReads()).toBe(0);
+  expect(f.calls.map((argv) => argv[0])).toEqual(["sysctl", "cat", "df", "sysctl"]);
+});
 
 test("non-Linux probe failures retain the legacy runner fallback", async () => {
-  const f = fixture("darwin");
+  const f = fixture("freebsd");
   expect((await f.result).memFreePct).toBe(25);
   expect(f.reads).toEqual([]);
-  expect(f.calls.map((argv) => argv[0])).toEqual(["sysctl", "cat", "memory_pressure", "cat", "df", "sysctl"]);
+  expect(f.calls.map((argv) => argv[0])).toEqual(["sysctl", "cat", "cat", "df", "sysctl"]);
 });
+
+// One macOS definition: the guard's sample and the platform adapter both read the kernel level memory_pressure prints
+// as "System-wide memory free percentage". Memory moves, so each must fall between two memory_pressure reads.
+test.skipIf(process.platform !== "darwin")(
+  "on macOS the host guard samples the free percentage memory_pressure prints, through the platform adapter",
+  async () => {
+    const pressure = (): number => {
+      const out = Bun.spawnSync(["/usr/bin/memory_pressure", "-Q"], { env: { LC_ALL: "C" } }).stdout.toString();
+      const level = /System-wide memory free percentage: (\d+)%/.exec(out)?.[1];
+      expect(level).toBeDefined();
+      return Number(level);
+    };
+    const { result, rts } = fixture("darwin");
+    await result;
+    const before = pressure();
+    const adapter = platform.memFreePct();
+    const sampled = (await sampleHost(run, "/", rts)).memFreePct;
+    const after = pressure();
+    for (const value of [adapter, sampled]) {
+      expect(value).toBeGreaterThanOrEqual(Math.min(before, after) - 2);
+      expect(value).toBeLessThanOrEqual(Math.max(before, after) + 2);
+    }
+  },
+);

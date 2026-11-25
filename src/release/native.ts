@@ -40,24 +40,11 @@ export type NativeReceipt = {
   readonly addonHash: string;
 };
 const LAUNCHER = "packages/coding-agent/scripts/omp";
-const nativeCacheDirectory = (home: string, identity: string, legacy = false): string =>
-  join(nativeCacheRoot(home, legacy), `${platform.nativeCacheLabel()}-${identity}`);
-const legacyNativeSource = (source: string): boolean =>
-  !regularFile(join(source, "release-headless.json")) &&
-  regularFile(join(source, "install.sh")) &&
-  regularFile(join(source, "skills/dori-mode/SKILL.md"));
-
-function selectNativeDirectory(source: string, home: string, identity: string): string {
-  const current = nativeCacheDirectory(home, identity);
-  const legacy = nativeCacheDirectory(home, identity, true);
-  // Old source scripts know only the legacy root. A tagged old updater also provisions there for new sources.
-  if (legacyNativeSource(source)) return legacy;
-  if (!lstatSync(current, { throwIfNoEntry: false }) && lstatSync(legacy, { throwIfNoEntry: false })) return legacy;
-  return current;
-}
+const nativeCacheDirectory = (home: string, identity: string): string =>
+  join(nativeCacheRoot(home), `${platform.nativeCacheLabel()}-${identity}`);
 
 export function nativeDirectory(source: string, home: string): string {
-  return selectNativeDirectory(source, home, readSourceBundle(source, true).identity);
+  return nativeCacheDirectory(home, readSourceBundle(source).identity);
 }
 
 /** The cache launcher always validates source then execs the protected upstream launcher through the recorded Bun. */
@@ -76,12 +63,11 @@ export function assertNativeSource(
   bun = process.execPath,
   options: { readonly holder?: number; readonly directory?: string } = {},
 ): NativeReceipt {
-  const bundle = readSourceBundle(source, true);
-  const directory = options.directory ?? selectNativeDirectory(source, home, bundle.identity);
-  const legacy = directory === nativeCacheDirectory(home, bundle.identity, true);
-  if (!legacy && directory !== nativeCacheDirectory(home, bundle.identity))
+  const bundle = readSourceBundle(source);
+  const directory = options.directory ?? nativeCacheDirectory(home, bundle.identity);
+  if (directory !== nativeCacheDirectory(home, bundle.identity))
     throw new Error(`Native source identity does not bind ${directory}`);
-  leaseNativeIdentity(home, bundle.identity, options.holder, undefined, legacy);
+  leaseNativeIdentity(home, bundle.identity, options.holder);
   const receipt = readJson(join(directory, "receipt.json")) as NativeReceipt;
   const checkout = join(directory, "source");
   if (
@@ -95,8 +81,7 @@ export function assertNativeSource(
     (lstatSync(receipt.omp).mode & 0o111) === 0 ||
     JSON.stringify(readJson(join(directory, "native-config.json"))) !== JSON.stringify({ update: { auto: false } }) ||
     typeof receipt.source !== "string" ||
-    readSourceBundle(receipt.source, true).identity !== bundle.identity ||
-    (!legacy && legacyNativeSource(receipt.source)) ||
+    readSourceBundle(receipt.source).identity !== bundle.identity ||
     receipt.ompHash !== digest(nativeLauncher(receipt.source, home, directory, receipt.bun)) ||
     receipt.entry !== join(checkout, "packages/coding-agent/src/cli.ts") ||
     receipt.bun !== realpathSync(bun) ||
@@ -129,12 +114,11 @@ export async function provisionNativeSource(
 ): Promise<NativeReceipt> {
   source = realpathSync(source);
   bun = realpathSync(bun);
-  const bundle = readSourceBundle(source, true);
+  const bundle = readSourceBundle(source);
   if (bundle.lock.launcher !== LAUNCHER)
     throw new Error("Native bundle must use the protected upstream omp source launcher");
-  // Look again after leasing: a prune may have acted on the chosen root before the lease.
-  const directory = selectNativeDirectory(source, home, bundle.identity);
-  leaseNativeIdentity(home, bundle.identity, holder, undefined, dirname(directory) === nativeCacheRoot(home, true));
+  const directory = nativeCacheDirectory(home, bundle.identity);
+  leaseNativeIdentity(home, bundle.identity, holder);
   if (lstatSync(directory, { throwIfNoEntry: false }))
     return assertNativeSource(source, home, bun, { directory, holder });
   const cache = dirname(directory);

@@ -115,7 +115,7 @@ if (method === "GET" && Object.hasOwn(fixture.responses, path)) {
 `;
 
 export function publisherFixture(options: Options = {}) {
-  const directory = mkdtempSync(join(tmpdir(), "dori-release-publish-"));
+  const directory = mkdtempSync(join(tmpdir(), "cataly-release-publish-"));
   directories.push(directory);
   const bin = join(directory, "bin");
   mkdirSync(bin);

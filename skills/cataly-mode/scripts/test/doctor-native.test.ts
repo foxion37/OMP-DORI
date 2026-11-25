@@ -12,7 +12,7 @@ beforeEach(() => {
 });
 afterEach(() => state.done());
 const source = resolve(import.meta.dir, "../../../..");
-const lock = readSourceBundleDiagnostic(source, true).lock;
+const lock = readSourceBundleDiagnostic(source).lock;
 const { nativeVersion } = lock;
 if (nativeVersion === undefined) throw new Error("The native fixture lock must declare its version");
 const help = "--config <path> --extension <path> --no-extensions --model <id>";

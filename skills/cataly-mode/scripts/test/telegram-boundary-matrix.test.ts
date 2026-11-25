@@ -1,25 +1,17 @@
-import { afterEach, beforeAll, beforeEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { fileTgInboundStore } from "../src/messenger/telegram-inbound-state.ts";
 import { pollTelegramInbound, type TgInbound } from "../src/messenger/telegram-inbound.ts";
 import { withState } from "./fakes.ts";
 import { GROUP, mk, msg, OTHER, OWNER, telegramFake, TOPIC } from "./telegram-inbound-fakes.ts";
-import { telegramTestStore, windowsSecurity } from "./telegram-win32-fixtures.ts";
 
-// Each case can run two PowerShell ACL setups in addition to real NTFS I/O.
-const windowsAclTimeoutMs = process.platform === "win32" ? 15_000 : undefined;
+const posix = test.skipIf(process.platform === "win32");
 const state = withState();
-// A cold Windows runner can spend over 10 s on its first PowerShell start alone (loading .NET and the ACL types). Pay
-// that once here, so each case's budget measures only its own ACL work.
-beforeAll(() => {
-  if (process.platform !== "win32") return;
-  mkdirSync(state.dir, { recursive: true });
-  windowsSecurity(state.dir, "$null");
-}, 60_000);
 beforeEach(() => mkdirSync(state.dir, { recursive: true }));
 afterEach(() => state.done());
 
-test.each([
+posix.each([
   [
     "another author using the owner username",
     { ...msg(OTHER, OWNER, "private", "spoof"), from: { id: OTHER, username: "owner" } },
@@ -35,38 +27,34 @@ test.each([
   ],
   ["a channel masquerading as the configured group", msg(OWNER, GROUP, "channel", "wrong source", TOPIC, true)],
   ["a private message without an author", { message_id: 1, chat: { id: OWNER, type: "private" }, text: "anonymous" }],
-] as const)(
-  "%s cannot enter either the message or edit consumer",
-  async (_name, rejected) => {
-    for (const kind of ["message", "edited_message"] as const) {
-      const { http, bodies } = telegramFake([
-        [
-          { update_id: 100, [kind]: rejected },
-          { update_id: 101, [kind]: msg(OWNER, OWNER, "private", "allowed") },
-        ],
-      ]);
-      const store = telegramTestStore(join(state.dir, `route-${kind}`), 900);
-      const seen: TgInbound[] = [];
-      const { inbound } = await pollTelegramInbound(
-        mk(http),
-        store,
-        { ownerId: OWNER, groupChatId: GROUP, topicId: TOPIC },
-        (message) => {
-          seen.push(message);
-        },
-      );
-      expect(seen.map((message) => [message.updateId, message.kind, message.source, message.text])).toEqual([
-        [101, kind === "message" ? "message" : "edit", "dm", "allowed"],
-      ]);
-      expect(inbound).toEqual(seen);
-      expect(store.load()?.offset).toBe(102);
-      expect(bodies[0]).not.toHaveProperty("offset");
-    }
-  },
-  windowsAclTimeoutMs,
-);
+] as const)("%s cannot enter either the message or edit consumer", async (_name, rejected) => {
+  for (const kind of ["message", "edited_message"] as const) {
+    const { http, bodies } = telegramFake([
+      [
+        { update_id: 100, [kind]: rejected },
+        { update_id: 101, [kind]: msg(OWNER, OWNER, "private", "allowed") },
+      ],
+    ]);
+    const store = fileTgInboundStore(join(state.dir, `route-${kind}`), 900);
+    const seen: TgInbound[] = [];
+    const { inbound } = await pollTelegramInbound(
+      mk(http),
+      store,
+      { ownerId: OWNER, groupChatId: GROUP, topicId: TOPIC },
+      (message) => {
+        seen.push(message);
+      },
+    );
+    expect(seen.map((message) => [message.updateId, message.kind, message.source, message.text])).toEqual([
+      [101, kind === "message" ? "message" : "edit", "dm", "allowed"],
+    ]);
+    expect(inbound).toEqual(seen);
+    expect(store.load()?.offset).toBe(102);
+    expect(bodies[0]).not.toHaveProperty("offset");
+  }
+});
 
-test(
+posix(
   "message IDs may decrease across chats and repeat for edits without reordering or deduplicating updates",
   async () => {
     const dm = { ...msg(OWNER, OWNER, "private", "first"), message_id: 90 };
@@ -82,7 +70,7 @@ test(
       [],
     ]);
     const path = join(state.dir, "identity-offset");
-    const store = telegramTestStore(path, 900);
+    const store = fileTgInboundStore(path, 900);
     store.save({ offset: 200, observedAt: Date.now(), seen: [] });
     const seen: TgInbound[] = [];
     const offsetsAtEmit: number[] = [];
@@ -103,12 +91,11 @@ test(
     expect(inbound).toEqual(seen);
     expect(offsetsAtEmit).toEqual([200, 201, 202, 203, 204]);
     expect(store.load()?.offset).toBe(205);
-    const resumed = await pollTelegramInbound(mk(http), telegramTestStore(path, 900), opts, (message) => {
+    const resumed = await pollTelegramInbound(mk(http), fileTgInboundStore(path, 900), opts, (message) => {
       seen.push(message);
     });
     expect(resumed.inbound).toEqual([]);
     expect(bodies.map((body) => body["offset"])).toEqual([200, 205]);
     expect(seen).toHaveLength(5);
   },
-  windowsAclTimeoutMs,
 );

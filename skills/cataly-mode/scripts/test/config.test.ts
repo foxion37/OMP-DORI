@@ -1,8 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { join } from "node:path";
 
-import { LegacyRuntimeError } from "../../../../src/runtime/registry.ts";
-
 import { ConfigError, fill, loadConfig } from "../src/config.ts";
 import { footer } from "../src/launch-footer.ts";
 import { sid, withState } from "./fakes.ts";
@@ -25,7 +23,6 @@ test("OMP paths expand while explicit commands, models and environment overrides
     JSON.stringify({
       stateDir: "~/configured-state",
       sessionsDir: "~/custom-sessions",
-      ompUlwPath: "~/extensions/ulw/index.ts",
       leadPane: `headless:${sid(1)}`,
       defaultModel: "provider/custom-model",
       agentCommand: ["custom-agent", "--model", "{model}", "{prompt}"],
@@ -44,7 +41,6 @@ test("OMP paths expand while explicit commands, models and environment overrides
     expect(c.leadPane).toBe(`headless:${sid(2)}`);
     // The expansion joins with the platform's separator, as the OS would.
     expect(c.sessionsDir).toBe(join("/home/ana", "custom-sessions"));
-    expect(c.ompUlwPath).toBe(join("/home/ana", "extensions", "ulw", "index.ts"));
     expect(c.defaultModel).toBe("provider/custom-model");
     expect(c.agentCommand).toEqual(["custom-agent", "--model", "{model}", "{prompt}"]);
     expect(c.guard).toMatchObject({ panesMax: 7 });
@@ -122,21 +118,8 @@ test("startupWaitSeconds is a nonnegative number of seconds; anything else falls
   }
 });
 
-test("a herdr/hc runtime setting stops the load with the upgrade guidance; tern and headless still load", async () => {
+test("tern and headless runtime settings load", async () => {
   const path = join(state.dir, "config.json");
-  for (const legacy of [
-    { runtime: "herdr" },
-    { runtime: "hc" },
-    { sessionRuntime: "herdr" },
-    { sessionRuntime: "hc" },
-  ]) {
-    await Bun.write(path, JSON.stringify(legacy));
-    const error = await loadConfig(path, "/home/ana").catch((e: unknown) => e);
-    expect(error).toBeInstanceOf(LegacyRuntimeError);
-    expect((error as Error).message).toContain(
-      `Remove "runtime" (if it names herdr or hc) and "sessionRuntime" from ${path}.`,
-    );
-  }
   await Bun.write(path, JSON.stringify({ runtime: "tern", sessionRuntime: "tern", laneRuntime: "terminal" }));
   const tern = await loadConfig(path, "/home/ana");
   expect([tern.runtime, tern.sessionRuntime, tern.laneRuntime]).toEqual(["tern", "tern", "terminal"]);

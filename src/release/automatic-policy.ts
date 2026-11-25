@@ -5,8 +5,6 @@ import { type ConsumerPaths, readJson, realDirectory, regularFile } from "./file
 import { preflightInstallation } from "./install.ts";
 import { waitLaunchGate } from "./launch-leases.ts";
 import { assertNativeSource } from "./native.ts";
-import { provisionDependency } from "./provision.ts";
-import { readSourceBundle } from "./source-bundle.ts";
 import type { InstalledState } from "./state.ts";
 import { assertInstalledPointer, verifyRelease } from "./state.ts";
 
@@ -16,26 +14,13 @@ export function automaticConfig(paths: ConsumerPaths): Record<string, unknown> {
   return config as Record<string, unknown>;
 }
 
-/** External native/ULW choices are deliberate compatibility contracts, not automatic-update targets. */
+/** External native choices are deliberate compatibility contracts, not automatic-update targets. */
 export function automaticOverrides(paths: ConsumerPaths, config: Record<string, unknown>): boolean {
-  if (
-    ["OMP_ULW_SRC", "OMP_ULW_REF", "OMP_ULW_REPO", "CATALY_OMP", "CATALY_AGENT_ARGV", "CATALY_OMP_ULW_PATH"].some(
-      (name) => process.env[name] !== undefined,
-    )
-  )
-    return true;
+  if (["CATALY_OMP", "CATALY_AGENT_ARGV"].some((name) => process.env[name] !== undefined)) return true;
   const configuredFile = process.env["CATALY_CONFIG"];
   if (configuredFile !== undefined && resolve(configuredFile) !== paths.config) return true;
   const commandOverride = process.env["CATALY_AGENT_CMD"];
   if (commandOverride !== undefined && commandOverride !== "omp" && commandOverride !== join(paths.cataly, "bin/omp"))
-    return true;
-  const ulw = config["ompUlwPath"];
-  const path = typeof ulw === "string" && ulw.startsWith("~/") ? join(paths.home, ulw.slice(2)) : ulw;
-  if (
-    path !== undefined &&
-    (typeof path !== "string" ||
-      !/^omp-ulw-[a-f0-9]{40}(?:-[a-f0-9]{64})?(?:\/index\.ts)?$/.test(relative(paths.dependencies, path)))
-  )
     return true;
   const command = config["agentCommand"];
   return (
@@ -60,13 +45,7 @@ export async function verifyAutomaticInstallation(paths: ConsumerPaths, state: I
   }
   const source = verifyRelease(paths, state.current);
   if (state.previous) verifyRelease(paths, state.previous);
-  if (state.current.requirements.omp !== "18.18.8") assertNativeSource(source, paths.home);
-  const suffix = state.current.requirements.omp !== "18.18.8" ? `-${readSourceBundle(source).identity}` : "";
-  const dependency = join(paths.dependencies, `omp-ulw-${state.current.ompUlw.commit}${suffix}`);
-  realDirectory(dependency);
-  if (!regularFile(join(dependency, "index.ts")))
-    throw new Error("Installed public dependency is missing; automatic replacement is held");
-  await provisionDependency(paths, state.current, source);
+  assertNativeSource(source, paths.home);
   return source;
 }
 

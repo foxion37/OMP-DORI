@@ -14,7 +14,6 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { LegacyRuntimeError } from "../src/runtime/registry.ts";
 import { parseDeploymentConfig } from "../src/update/deployment.ts";
 import { capturePointer, restorePointer, switchPointer } from "../src/update/deployment-files.ts";
 import { processIdentity, sameProcess } from "../src/update/deployment-process.ts";
@@ -80,30 +79,6 @@ test("deployment config is canonical and names only the headless harness's paths
   expect(() => parseDeploymentConfig({ ...config, unknownSetting: true }, root)).toThrow("unknown setting");
 });
 
-test("a terminal-era deployment config is refused with the upgrade guard, before any path is admitted", () => {
-  const { root, config } = fixture();
-  const terminal = [
-    { runtime: "herdr" },
-    { runtime: "hc" },
-    { herdr: process.execPath, pane: "w1:p1" },
-    { hc: process.execPath, pane: "t7", hcSession: "fixture" },
-    { herdrSession: "fixture" },
-    { sessionId: "same-session", model: "openai-codex/gpt-6.1-sol" },
-    { nativeStopMode: "ui" },
-    { legacyOmp: "~/private-legacy/omp" },
-  ];
-  for (const fields of terminal) {
-    let error: unknown;
-    try {
-      parseDeploymentConfig({ ...config, ...fields }, root);
-    } catch (caught) {
-      error = caught;
-    }
-    expect(error, JSON.stringify(fields)).toBeInstanceOf(LegacyRuntimeError);
-    expect((error as Error).message).toContain(config.catalyConfig);
-  }
-});
-
 it("release-root shims remain stable through source conversion and restore their exact previous links", () => {
   const { root, config } = fixture();
   expect(config.home).toBe(join(root, "home"));
@@ -133,17 +108,7 @@ it("release-root shims remain stable through source conversion and restore their
 
 test("only an exact dot selects the release root; traversal, empty segments and opaque ref paths stay held", () => {
   const { root, config } = fixture();
-  for (const source of [
-    "",
-    "..",
-    "src/../index.ts",
-    "src/./index.ts",
-    "src//index.ts",
-    "src/",
-    "/extension",
-    "ref",
-    "ref/omp-ulw",
-  ])
+  for (const source of ["", "..", "src/../index.ts", "src/./index.ts", "src//index.ts", "src/", "/extension", "ref"])
     expect(() =>
       parseDeploymentConfig({ ...config, shims: [{ path: config.shims[0]!.path, source }] }, root),
     ).toThrow();

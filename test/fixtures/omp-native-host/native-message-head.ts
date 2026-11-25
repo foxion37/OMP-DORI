@@ -57,8 +57,8 @@ export async function nativeMessageHead(root: string, manager: SessionManager, a
       extension.on("message_end", async (event) => {
         const message = event.message;
         if (message.role !== "custom" || message.customType !== SESSION_WIRE.monitorMessage) return;
-        const details = message.details as { ompDoriAdmission: { identity: string; fingerprint: string } };
-        const published = readFileSync(manager.getSessionFile()!, "utf8").includes(JSON.stringify(details.ompDoriAdmission.identity));
+        const details = message.details as { ompCatalyAdmission: { identity: string; fingerprint: string } };
+        const published = readFileSync(manager.getSessionFile()!, "utf8").includes(JSON.stringify(details.ompCatalyAdmission.identity));
         await admissions.messageEnded(event);
         process.send?.({ event: "native-message-end", details, published });
       });

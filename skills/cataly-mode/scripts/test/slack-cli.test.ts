@@ -151,10 +151,10 @@ test("an inbound Slack destination round-trips only through its authenticated ac
   }
 });
 
-test("legacy Slack records refuse inbound and new posts until an explicit matching adoption", async () => {
+test("an unreadable Slack thread ledger refuses inbound and new posts without changing it", async () => {
   const file = join(state.dir, "slack-threads.json");
-  const legacy = JSON.stringify([{ channel: "C1", rootTs: "10.1", seenTs: "11.1" }]);
-  writeFileSync(file, legacy);
+  const unreadable = JSON.stringify({ version: 3, threads: [] });
+  writeFileSync(file, unreadable);
   for (const args of [
     ["inbound", "slack", "--loop", "0"],
     ["inbound", "slack", "--loop", "0", "--qualified-routes"],
@@ -162,59 +162,8 @@ test("legacy Slack records refuse inbound and new posts until an explicit matchi
   ]) {
     const held = await slackCli(args);
     expect([held.code, held.out, held.methods]).toEqual([1, "", ["auth.test"]]);
-    expect(held.err).toContain("unscoped Slack threads");
-    expect(readFileSync(file, "utf8")).toBe(legacy);
-  }
-  const wrong = await slackCli(["inbound", "slack", "--loop", "0", "--adopt-legacy-threads", "T_OTHER:U_SELF"]);
-  expect([wrong.code, wrong.out, wrong.methods]).toEqual([1, "", ["auth.test"]]);
-  expect(wrong.err).toContain("does not match");
-  expect(readFileSync(file, "utf8")).toBe(legacy);
-  const args = ["inbound", "slack", "--loop", "0", "--adopt-legacy-threads", "T_TEST:U_SELF"];
-  const adopted = await slackCli(args);
-  expect([adopted.code, adopted.err]).toEqual([0, ""]);
-  const lines = adopted.out.split("\n");
-  const receipt = JSON.parse(String(lines[0]).replace("SLACK_THREADS_ADOPTED ", ""));
-  expect(receipt).toMatchObject({ scope: { teamId: "T_TEST", userId: "U_SELF" }, count: 1 });
-  expect(Number.isFinite(Date.parse(receipt.at))).toBe(true);
-  expect(lines).toEqual([`SLACK_THREADS_ADOPTED ${JSON.stringify(receipt)}`]);
-  expect(adopted.methods).toEqual(["auth.test"]);
-  const savedBeforePoll = JSON.parse(readFileSync(file, "utf8"));
-  expect(savedBeforePoll.threads).toEqual([{ channel: "C1", rootTs: "10.1", seenTs: "11.1", scope: receipt.scope }]);
-  const poll = await slackCli(["inbound", "slack", "--loop", "0"], {
-    "conversations.replies": {
-      ok: true,
-      messages: [{ ts: "12.1", thread_ts: "10.1", user: "U_GUEST", text: "hello" }],
-    },
-  });
-  expect([poll.code, poll.err]).toEqual([0, ""]);
-  expect(poll.out.split("\n")).toEqual(["INBOUND_READY slack", 'INBOUND own-thread C1 10.1 12.1 U_GUEST "hello"']);
-  const recorded = readFileSync(join(state.dir, "fetch.jsonl"), "utf8")
-    .trim()
-    .split("\n")
-    .map((line) => JSON.parse(line));
-  expect(recorded.find((r) => r.url.endsWith("conversations.replies")).body.oldest).toBe("11.1");
-  const saved = JSON.parse(readFileSync(file, "utf8"));
-  expect(saved.threads).toEqual([{ channel: "C1", rootTs: "10.1", seenTs: "12.1", scope: receipt.scope }]);
-  expect(saved.adopted).toEqual(receipt);
-  const repeated = await slackCli([...args, "--qualified-routes"]);
-  expect([repeated.code, repeated.err, repeated.out, repeated.methods]).toEqual([0, "", adopted.out, ["auth.test"]]);
-  expect(JSON.parse(readFileSync(file, "utf8")).adopted).toEqual(receipt);
-});
-
-test("malformed or non-Slack adoption arguments make no request", async () => {
-  for (const args of [
-    ["inbound", "slack", "--adopt-legacy-threads", "T_TEST"],
-    ["inbound", "slack", "--adopt-legacy-threads", "T_TEST:U_SELF:extra"],
-    ["inbound", "slack", "--adopt-legacy-threads", "T_TEST:U_SELF", "--adopt-legacy-threads", "T_TEST:U_SELF"],
-    ["inbound", "telegram", "--adopt-legacy-threads", "T_TEST:U_SELF"],
-    ["send", "slack", "--to", "C1", "--text", "reply", "--adopt-legacy-threads", "T_TEST:U_SELF"],
-    ["send", "slack", "--to", "C1", "--text", "edit", "--edit", "12.1", "--adopt-legacy-threads", "T_TEST:U_SELF"],
-    ["harness", "status", "--adopt-legacy-threads", "T_TEST:U_SELF"],
-    ["--version", "--adopt-legacy-threads", "T_TEST:U_SELF"],
-  ]) {
-    const r = await slackCli(args);
-    expect([r.code, r.out, r.methods]).toEqual([1, "", []]);
-    expect(existsSync(join(state.dir, "slack-threads.json"))).toBe(false);
+    expect(held.err).toContain("slack thread ledger has invalid data");
+    expect(readFileSync(file, "utf8")).toBe(unreadable);
   }
 });
 

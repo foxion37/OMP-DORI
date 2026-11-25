@@ -99,14 +99,12 @@ fn candidate(line: &[u8], identity: &str, fingerprint: &str) -> Result<Option<Ac
         (Some("custom_message"), Some("cataly-monitor")) => {
             (true, &entry["details"]["ompCatalyAdmission"])
         }
+        // The previous main's message kind and metadata key, read only so a receipt it recorded still resolves.
         (Some("custom_message"), Some("dori-monitor")) => {
             (true, &entry["details"]["ompDoriAdmission"])
         }
         (Some("custom"), Some("omp-cataly:admission-rejected")) => {
             (false, &entry["data"]["ompCatalyAdmission"])
-        }
-        (Some("custom"), Some("omp-dori:admission-rejected")) => {
-            (false, &entry["data"]["ompDoriAdmission"])
         }
         _ => return Ok(None),
     };
@@ -185,4 +183,92 @@ pub fn receipt(path: &Path, identity: &str, fingerprint: &str) -> Result<Option<
     }
     line.reverse();
     candidate(&line, identity, fingerprint)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    const IDENTITY: &str = "99:10:20:101";
+
+    fn line(entry: &serde_json::Value) -> Vec<u8> {
+        serde_json::to_vec(entry).unwrap()
+    }
+
+    fn accepted(found: Option<Action>, receipt: &str) -> bool {
+        matches!(found, Some(Action::Accepted { receipt: found }) if found == receipt)
+    }
+
+    #[test]
+    fn a_previous_main_message_is_a_read_only_receipt() {
+        let fingerprint = "a".repeat(64);
+        let previous = json!({
+            "type": "custom_message",
+            "customType": "dori-monitor",
+            "id": "previous-entry",
+            "details": {"ompDoriAdmission": {"identity": IDENTITY, "fingerprint": &fingerprint}},
+        });
+        let found = candidate(&line(&previous), IDENTITY, &fingerprint).unwrap();
+        assert!(accepted(found, "previous-entry"));
+        // A different identity is not its receipt, a different fingerprint is a conflict, and a message that carries
+        // only the current metadata key is not this kind's receipt.
+        assert!(
+            candidate(&line(&previous), "99:10:20:102", &fingerprint)
+                .unwrap()
+                .is_none()
+        );
+        assert!(candidate(&line(&previous), IDENTITY, &"b".repeat(64)).is_err());
+        let mismatched = json!({
+            "type": "custom_message",
+            "customType": "dori-monitor",
+            "id": "previous-entry",
+            "details": {"ompCatalyAdmission": {"identity": IDENTITY, "fingerprint": &fingerprint}},
+        });
+        assert!(
+            candidate(&line(&mismatched), IDENTITY, &fingerprint)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn the_current_message_kind_and_a_rejection_still_resolve() {
+        let fingerprint = "a".repeat(64);
+        let message = json!({
+            "type": "custom_message",
+            "customType": "cataly-monitor",
+            "id": "current-entry",
+            "details": {"ompCatalyAdmission": {"identity": IDENTITY, "fingerprint": &fingerprint}},
+        });
+        let found = candidate(&line(&message), IDENTITY, &fingerprint).unwrap();
+        assert!(accepted(found, "current-entry"));
+        let rejected = json!({
+            "type": "custom",
+            "customType": "omp-cataly:admission-rejected",
+            "id": "rejection-entry",
+            "data": {"ompCatalyAdmission": {"identity": IDENTITY, "fingerprint": &fingerprint}},
+        });
+        assert!(matches!(
+            candidate(&line(&rejected), IDENTITY, &fingerprint).unwrap(),
+            Some(Action::Rejected { receipt }) if receipt == "rejection-entry"
+        ));
+        // An unrelated entry and an unterminated or non-UTF-8 line stay opaque.
+        let other = json!({"type": "custom_message", "customType": "other", "details": {}});
+        assert!(
+            candidate(&line(&other), IDENTITY, &fingerprint)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            candidate(
+                b"{\"type\":\"custom\",\"customType\":\"x\"}",
+                IDENTITY,
+                &fingerprint
+            )
+            .unwrap()
+            .is_none()
+        );
+        assert!(candidate(b"omp\xff\xfe", IDENTITY, &fingerprint).is_err());
+    }
 }

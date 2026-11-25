@@ -1,7 +1,6 @@
 import { expect, test } from "bun:test";
 import { chmodSync, lstatSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { provisionSourceOverlay } from "../src/release/source-checkout.ts";
 import { readSourceBundle } from "../src/release/source-bundle.ts";
 import { sourceManifest } from "../src/update/source.ts";
 import { fixtureGit, overlayFixture } from "./source-bundle-setup.ts";
@@ -16,18 +15,8 @@ it.each(["0000", "0002", "0077"])(
   "managed preparation admits locked source under caller umask %s",
   async (mask) => {
     const f = preparationFixture();
-    const ulw = overlayFixture(f.remote, join(f.directory, "ulw-upstream"));
-    overlayFixture(f.remote, join(f.directory, "native-upstream"), true);
-    git(
-      f.remote,
-      "add",
-      "--",
-      "native-omp.lock",
-      "native-omp.patch",
-      "omp-ulw.lock",
-      "omp-ulw.overlay.lock",
-      "omp-ulw.patch",
-    );
+    overlayFixture(f.remote, join(f.directory, "native-upstream"));
+    git(f.remote, "add", "--", "native-omp.lock", "native-omp.patch");
     git(f.remote, "commit", "-m", "Admit locked runtime fixture");
     fixtureGit(f.candidate, "fetch", "origin");
     fixtureGit(f.candidate, "checkout", "--detach", git(f.remote, "rev-parse", "HEAD"));
@@ -39,9 +28,8 @@ it.each(["0000", "0002", "0077"])(
       publicManifest: sourceManifest(f.remote),
       sourceHash: full.hash,
     };
-    await provisionSourceOverlay(f.candidate, f.home, undefined, ulw.checkout);
     const native = join(f.directory, "native-version-fixture");
-    writeFileSync(native, '#!/bin/sh\nprintf "18.20.0\\n"\n', { mode: 0o700 });
+    writeFileSync(native, '#!/bin/sh\nprintf "19.0.1\\n"\n', { mode: 0o700 });
     const config = { ...f.config, omp: native };
     const record = { ...f.record, commit: input.commit, tree: input.tree, sourceHash: full.hash };
     const payload = join(f.directory, "prepare-input.json");
@@ -75,8 +63,8 @@ console.log(JSON.stringify({ before, after: process.umask(), record }));
     expect(observed.before).toBe(Number.parseInt(mask, 8));
     expect(observed.after).toBe(observed.before);
     expect(observed.record.toolchain.nativeOverride).toBe(true);
-    expect(observed.record.toolchain.nativeVersion).toBe("18.20.0");
-    expect(observed.record.toolchain.ompUlw.identity).toBe(readSourceBundle(f.candidate).identity);
+    expect(observed.record.toolchain.nativeVersion).toBe("19.0.1");
+    expect(observed.record.toolchain.extensionSource).toBe(record.releasePath);
     expect(sourceManifest(record.releasePath).hash).toBe(full.hash);
     expect(sourceManifest(f.candidate)).toEqual(full);
     for (const file of full.files) expect(lstatSync(join(record.releasePath, file.path)).mode & 0o222).toBe(0);
@@ -86,7 +74,7 @@ console.log(JSON.stringify({ before, after: process.umask(), record }));
     expect(readFileSync(join(f.home, ".cataly/state/owner.json"), "utf8")).toBe('{"cursor":17}\n');
     // The fix must not relax admission for an independently writable lock.
     chmodSync(join(record.releasePath, "native-omp.lock"), 0o666);
-    expect(() => readSourceBundle(record.releasePath, true)).toThrow("Group/world-writable installation path");
+    expect(() => readSourceBundle(record.releasePath)).toThrow("Group/world-writable installation path");
   },
   30_000,
 );

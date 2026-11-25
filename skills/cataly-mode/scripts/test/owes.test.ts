@@ -170,6 +170,7 @@ describe("ledger", () => {
     }
   });
 
+  // 250 locked appends take 1.8-3.2 s on Windows runners, so it gets the 200-row owes tests' explicit budget.
   test("the ledgers stay capped instead of growing with every send", async () => {
     const state = withState();
     try {
@@ -184,7 +185,7 @@ describe("ledger", () => {
     } finally {
       state.done();
     }
-  });
+  }, 15_000);
 
   test("attempts accumulate per owe so the gate can stop looping", () => {
     const state = withState();

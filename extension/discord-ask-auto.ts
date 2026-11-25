@@ -4,7 +4,7 @@ import { type CatalyRole, readPaneState } from "../skills/cataly-mode/scripts/sr
 import { readPrivateAskFile } from "../skills/cataly-mode/scripts/src/messenger/discord-ask-mailbox.ts";
 import { discordAskReceivers } from "../skills/cataly-mode/scripts/src/messenger/discord-ask-receiver.ts";
 import { isDiscordSnowflake } from "../skills/cataly-mode/scripts/src/messenger/discord-inbound-state.ts";
-import { LANE_KEY, Registry, RESERVED_LANE_KEY, statusOf } from "../skills/cataly-mode/scripts/src/registry.ts";
+import { LANE_KEY, Registry, statusOf } from "../skills/cataly-mode/scripts/src/registry.ts";
 import { isCatalyEntry, SESSION_WIRE } from "../skills/cataly-mode/scripts/src/session-compat.ts";
 import { selfSession } from "../src/runtime/registry.ts";
 import type { DiscordAskRoute } from "./discord-ask.ts";
@@ -49,10 +49,7 @@ export async function laneChannel(
   }
   const matching = (await new Registry(stateDir).scan()).lanes.filter(
     (lane) =>
-      lane.key !== RESERVED_LANE_KEY &&
-      statusOf(lane) !== "closed" &&
-      lane.sessionRef?.runtime === pane.runtime &&
-      lane.sessionRef.id === pane.id,
+      statusOf(lane) !== "closed" && lane.sessionRef?.runtime === pane.runtime && lane.sessionRef.id === pane.id,
   );
   const lane = matching.length === 1 ? matching[0] : undefined;
   if (

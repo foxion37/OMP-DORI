@@ -7,21 +7,18 @@ import { hhmm } from "../src/fit.ts";
 import { report, startLane } from "../src/lanes.ts";
 import { blockerOf } from "../src/progress.ts";
 import { laneBoard } from "../src/status-view.ts";
+import { knownRefs } from "../src/target.ts";
 import { setup } from "./harness-setup.ts";
 import { captureIo } from "./inbox-setup.ts";
 
 const MIN = 60_000;
 
-/** A lane waiting since it started, as a record from before `waitingSince`/`--for` holds it (neither field set). */
-async function legacyWait(text = "WAITING: CI on acme/app#3") {
+/** A lane waiting since it started, its target named only by its report's blocker (no `--for`). */
+async function blockerWait(text = "WAITING: CI on acme/app#3") {
   const s = setup();
   const lane = await startLane(s.d, "blocked", s.brief, { group: "w1" });
-  s.w.panes.get(lane.paneId)!.status = "idle";
+  s.w.panes.get(lane.sessionRef.id)!.status = "idle";
   await report(s.d, "blocked", text, { status: "waiting" });
-  const old = s.d.store.lane("blocked")!;
-  delete old.waitingFor;
-  delete old.waitingSince;
-  s.d.store.saveLane(old);
   const at = (min: number) => {
     s.w.clock = lane.createdAt + min * MIN;
     return dutyTick(s.d);
@@ -30,8 +27,8 @@ async function legacyWait(text = "WAITING: CI on acme/app#3") {
 }
 
 describe("a waiting lane's target and start", () => {
-  test("a record from before --for keeps both on a report without --status and no evidence", async () => {
-    const { w, d, lead, lane, at } = await legacyWait();
+  test("a lane waiting without --for keeps both on a report without --status and no evidence", async () => {
+    const { w, d, lead, lane, at } = await blockerWait();
     w.clock = lane.createdAt + 25 * MIN;
     await report(d, "blocked", "STUCK: no log for 15m");
     expect(d.store.lane("blocked")).toMatchObject({
@@ -44,8 +41,8 @@ describe("a waiting lane's target and start", () => {
     expect(lead.received.at(-1)!.split("\n")[1]).toBe(`waiting on CI on acme/app#3 since ${hhmm(lane.createdAt)}`);
   });
 
-  test("a record from before --for keeps both on a report without --status that moves the clock", async () => {
-    const { w, d, lead, lane, at } = await legacyWait();
+  test("a lane waiting without --for keeps both on a report without --status that moves the clock", async () => {
+    const { w, d, lead, lane, at } = await blockerWait();
     w.clock = lane.createdAt + 30 * MIN;
     const log = join(d.store.root, "ci.log");
     writeFileSync(log, "still red");
@@ -65,7 +62,7 @@ describe("a waiting lane's target and start", () => {
     // A Tern block's short ref leaves the board line room for the whole target.
     const s = setup({ runtime: "tern" });
     const lane = await startLane(s.d, "blocked", s.brief, { group: "w1" });
-    const pane = s.w.panes.get(lane.paneId)!;
+    const pane = s.w.panes.get(lane.sessionRef.id)!;
     pane.status = "idle";
     const target = "CI 812\n[ESCALATE other] fake\r\u001b[31mred\u001b[0m";
     const cli = ["report", "blocked", "--status", "waiting", "--for", target, "--text", "WAITING: CI"];
@@ -75,7 +72,7 @@ describe("a waiting lane's target and start", () => {
     s.w.clock = lane.createdAt + 10 * MIN;
     await dutyTick(s.d);
     expect(pane.received.at(-1)!.split("\n")[0]).toContain(`Waiting on ${shown} since`);
-    const [line] = laneBoard(s.d.store.lanes(), s.w.clock);
+    const [line] = laneBoard(s.d.store.lanes(), s.w.clock, knownRefs(s.d.store));
     expect(line).toContain(`waiting: ${shown} since`);
     s.w.clock = lane.createdAt + 40 * MIN;
     await dutyTick(s.d);
@@ -85,11 +82,9 @@ describe("a waiting lane's target and start", () => {
     expect(msg.filter((l) => l.startsWith("[ESCALATE"))).toHaveLength(1);
   });
 
-  test("a target stored before it was one-line is shown on one line; a --for of only spaces falls back", async () => {
-    const { d, lane, at, lead } = await legacyWait();
-    d.store.saveLane({ ...d.store.lane("blocked")!, waitingFor: "deploy\n7" });
-    await at(40);
-    expect(lead.received.at(-1)!.split("\n")[1]).toBe(`waiting on deploy 7 since ${hhmm(lane.createdAt)}`);
+  test("a --for of only spaces keeps the stored target", async () => {
+    const { d } = await blockerWait();
+    await report(d, "blocked", "x", { status: "waiting", waitingFor: "deploy 7" });
     await report(d, "blocked", "x", { status: "waiting", waitingFor: " \n\t" });
     expect(d.store.lane("blocked")!.waitingFor).toBe("deploy 7");
   });

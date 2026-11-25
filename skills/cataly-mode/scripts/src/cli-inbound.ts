@@ -4,10 +4,11 @@ import { discordInboundCommand } from "./cli-discord.ts";
 import { fetchHttp, inboundPollRetryDelay } from "./messenger/http.ts";
 import { Slack } from "./messenger/slack.ts";
 import { formatSlackInbound, pollSlackInbound } from "./messenger/slack-inbound.ts";
-import { slackScope, type SlackScope, ThreadLedger } from "./messenger/thread-ledger.ts";
+import { ThreadLedger } from "./messenger/thread-ledger.ts";
 import { realClock } from "./run.ts";
 
-export const inboundCommand: Command = async ({ key, loopMinutes, config, deps, values, strings, opt }) => {
+export const inboundCommand: Command = async ({ key, loopMinutes, config, deps, values, opt }) => {
+  if (key === "telegram" && process.platform === "win32") die("Telegram intake is not supported on Windows");
   const minutes = loopMinutes();
   const context = values["context"] === true;
   if (context && key !== "discord") die("--context is supported for discord only");
@@ -26,25 +27,11 @@ export const inboundCommand: Command = async ({ key, loopMinutes, config, deps, 
       ...(activityFile ? { activityFile } : {}),
     });
   if (key !== "slack") die("inbound supports slack, telegram or discord");
-  let adoptScope: SlackScope | undefined;
-  if (values["adopt-legacy-threads"] !== undefined) {
-    const requested = strings("adopt-legacy-threads");
-    const parts = requested[0]?.split(":");
-    if (requested.length !== 1 || parts?.length !== 2)
-      return die("--adopt-legacy-threads needs exactly one WORKSPACE:ACCOUNT");
-    adoptScope = slackScope(parts[0], parts[1]);
-  }
   const auth = slackAuth(envSlackToken() ?? die("CATALY_SLACK_TOKEN is not set (nor CATALY_SLACK_TOKEN_FILE)"));
   const ledger = new ThreadLedger(`${config.stateDir}/slack-threads.json`);
   const slack = new Slack(fetchHttp, realClock, auth, undefined, ledger);
   const scope = await slack.identity();
-  if (adoptScope) {
-    if (adoptScope.teamId !== scope.teamId || adoptScope.userId !== scope.userId)
-      return die("legacy adoption does not match the authenticated Slack workspace/account");
-    console.log(`SLACK_THREADS_ADOPTED ${JSON.stringify(await ledger.adoptLegacy(scope))}`);
-    return;
-  }
-  ledger.assertScoped();
+  ledger.assertReadable();
   const qualifiedRoutes = values["qualified-routes"] === true;
   const activity = inboundActivity(activityFile, "slack");
   try {

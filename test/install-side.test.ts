@@ -42,7 +42,7 @@ posix(
   "a side install lives in ~/.omp-cataly and leaves ~/.cataly, the cataly-mode link and the cataly command alone",
   () => {
     // Given another Cataly's ~/.cataly.
-    const { home, src, ulw, install } = setup();
+    const { home, src, install } = setup();
     withOtherCataly(home);
     // When scripts/install-source.sh runs with CATALY_INSTALL_MODE=side.
     const r = install({ CATALY_INSTALL_MODE: "side" });
@@ -64,9 +64,6 @@ posix(
       "{model}",
       "{prompt}",
     ]);
-    // omp-ulw loads as an OMP extension of omp-cataly omp, so the omp-cataly extension imports no second copy.
-    expect(config.ompUlwPath).toBe("");
-    expect(existsSync(join(ulw, "index.ts"))).toBe(true);
     // And its skill is a renamed copy whose description differs from cataly-mode's, so omp lists both apart.
     const skill = readFileSync(join(side, "skills/omp-cataly-mode/SKILL.md"), "utf8");
     expect(skill).toContain("\nname: omp-cataly-mode\n");

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { configuredHookEnv, fill } from "./config.ts";
+import { fill } from "./config.ts";
 import { type Held, withDeliveryLock } from "./delivery-lock.ts";
 import type { FlowDeps } from "./done-flow.ts";
 import { type Lane, LANE_KEY, statusOf, withStatus } from "./registry.ts";
@@ -15,8 +15,8 @@ export class ThreadElectionError extends Error {
   override readonly name = "ThreadElectionError";
 }
 
-// Older launch/adopt calls could persist a blank instead of the explicit no-thread sentinel.
-const ungrouped = (thread: string): boolean => typeof thread === "string" && (thread === "none" || !thread.trim());
+// Launch and adopt record a lane without a thread as the explicit "none" sentinel.
+const ungrouped = (thread: string): boolean => thread === "none";
 
 const grouped = (deps: FlowDeps, lane: Lane): boolean =>
   deps.config.threadDonePolicy === "last-lane" && !ungrouped(lane.thread);
@@ -112,10 +112,6 @@ export const finishThread = async (
     ];
   const hook = deps.config.hooks.threadDone;
   if (!hook) return [];
-  const env = configuredHookEnv(deps.config.hooks, hook, deps.env);
-  const result = await deps.run(
-    fill(hook, { thread: lane.thread, text: note, key: lane.key }),
-    env ? { env } : undefined,
-  );
+  const result = await deps.run(fill(hook, { thread: lane.thread, text: note, key: lane.key }));
   return [result.code === 0 ? "thread marked done" : `thread hook failed: ${result.err.slice(0, 160)}`];
 };

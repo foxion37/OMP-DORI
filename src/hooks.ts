@@ -1,7 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Deps } from "./harness.ts";
-import { legacyRecipeEnv } from "./runtime/recipe-env.ts";
 
 /** An argv template: element 0 is the command; placeholders are substituted per element and never shell-expanded. */
 export type ArgvTemplate = readonly string[];
@@ -117,9 +116,7 @@ export function runHook(d: Deps, name: Exclude<HookName, "reviewCommand">, vars:
       if (!argv) return;
       const [cmd, ...rest] = substitute(argv, vars);
       if (cmd === undefined) return;
-      const env = legacyRecipeEnv(argv, { configFile: join(d.store.root, "config.json"), env: process.env });
       const res = await d.exec(cmd, rest, {
-        ...(env ? { env } : {}),
         onSpawn: (proc) => {
           hook.kill = () => proc.kill();
         },

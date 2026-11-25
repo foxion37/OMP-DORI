@@ -24,7 +24,7 @@ test("only the launched lane's exact native session can reuse its recorded bindi
   const record = (customType: string, data: unknown) => void entries.push({ type: "custom", customType, data });
   expect(bindAskLane(entries, "session-a", "worker", record)).toEqual({ key: "worker", sessionId: "session-a" });
   expect(entries).toEqual([
-    { type: "custom", customType: "omp-dori:discord-ask-lane", data: { key: "worker", sessionId: "session-a" } },
+    { type: "custom", customType: "omp-cataly:discord-ask-lane", data: { key: "worker", sessionId: "session-a" } },
   ]);
   expect(bindAskLane(entries, "session-a", undefined, record)).toEqual({ key: "worker", sessionId: "session-a" });
   expect(bindAskLane(entries, "session-b", undefined, record)).toBeUndefined();
@@ -36,7 +36,8 @@ test("only the launched lane's exact native session can reuse its recorded bindi
   expect(bindAskLane(entries, "session-a", undefined, record)).toBeUndefined();
 });
 
-// The live receiver is the native monitor; it writes a POSIX-private cursor and receiver lease.
+// The live receiver is the native monitor; it writes a POSIX-private cursor and receiver lease. Its route carries the
+// process identity discord-ask-receiver.ts reads: procfs on Linux, libproc on macOS.
 const nativeBinary = process.env["CATALY_DISCORD_NATIVE_BIN"];
 const posix = test.skipIf(process.platform === "win32" || !nativeBinary || nativeBinary === "off");
 posix.each(["private file", "lead environment"] as const)(
@@ -51,7 +52,7 @@ async function verifyAutomaticAsk(credential: "private file" | "lead environment
   const config = join(home, "config.json");
   const tokenFile = join(home, "discord-token");
   const override = join(state, "discord-ask.json");
-  const settings = JSON.stringify({ stateDir: state, ompUlwPath: "" });
+  const settings = JSON.stringify({ stateDir: state });
   const envKeys = [
     "CATALY_HOME",
     "CATALY_CONFIG",

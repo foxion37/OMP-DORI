@@ -58,7 +58,7 @@ export const claimDone = async (
     claimed,
     `[LEAD] done claim recorded for ${lane.key}: this lane closes automatically at ${closesAt}Z (${deps.config.closeAfterMin} minutes) unless the lead objects with reasons. Stay idle until then; the lead reconciles any held objection before sending further instructions.`,
   );
-  return `LANE_DONE_CLAIMED ${lane.key} ${lane.pane ?? "-"} ${evidence}`;
+  return `LANE_DONE_CLAIMED ${lane.key} ${lane.sessionRef?.id ?? "-"} ${evidence}`;
 };
 
 export const objectDone = async (
@@ -228,7 +228,7 @@ export const watchTick = async (deps: FlowDeps): Promise<string[]> => {
         current.nativeCloseIntent ? null : { ...current, claim: { ...claim, emitted: true } },
       );
       if (!emitted) continue;
-      out.push(`LANE_DONE_CLAIMED ${lane.key} ${lane.pane ?? "-"} ${claim.evidence}`);
+      out.push(`LANE_DONE_CLAIMED ${lane.key} ${lane.sessionRef?.id ?? "-"} ${claim.evidence}`);
       lane = emitted;
     }
     if (deps.clock.now() - Date.parse(claim.at) < windowMs(deps)) continue;

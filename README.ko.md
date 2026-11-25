@@ -16,7 +16,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/vntrevx/Cataly/releases/tag/v0.1.2"><img alt="게시된 프리릴리스" src="https://img.shields.io/github/v/release/vntrevx/Cataly?include_prereleases&label=preview&labelColor=2b2d33&color=c8102e"></a>
+  <a href="https://github.com/vntrevx/Cataly/releases"><img alt="최신 릴리스" src="https://img.shields.io/github/v/release/vntrevx/Cataly?include_prereleases&label=release&labelColor=2b2d33&color=c8102e"></a>
   <a href="https://github.com/vntrevx/Cataly/actions/workflows/ci.yml?query=branch%3Amain"><img alt="main 브랜치 CI" src="https://img.shields.io/github/actions/workflow/status/vntrevx/Cataly/ci.yml?branch=main&label=ci&labelColor=2b2d33"></a>
   <a href="LICENSING.md"><img alt="라이선스: SUL 1.0과 범위가 정해진 MIT 고지" src="https://img.shields.io/badge/license-SUL%201.0%20%2B%20scoped%20MIT-8b9099?labelColor=2b2d33"></a>
   <a href="https://bun.sh"><img alt="Bun 1.4.4 이상" src="https://img.shields.io/badge/bun-%E2%89%A51.4.4-8b9099?labelColor=2b2d33&logo=bun&logoColor=white"></a>
@@ -106,25 +106,20 @@
 
 <table width="100%"><tr><td>
 
-**참고**
+**Cataly는 omp-dori의 업그레이드가 아닌 새 제품입니다**
+
+이 버전에서 omp-dori라는 이름 전부와 herdr·hc 터미널 런타임, omp-ulw 오버레이가
+제거됐습니다. omp-dori 코드를 제자리에서 업그레이드할 수는 없지만 이전은 설치
+프로그램이 합니다. 이전 `~/.dori` 또는 `~/.omp-dori` 홈의 설정, 토큰, 소유자
+프로필을 새 홈으로 가져오고(이미 있는 설정은 덮어쓰지 않습니다), 그 홈에서 실행
+중인 것이 없으면 이전 홈과 이전 버전이 남긴 링크와 캐시를 삭제합니다
+([이전 방법](docs/releases.md#cataly-is-a-new-product-moving-from-omp-dori)).
 
 운영 명령은 `cataly`, 독립 하네스는 `cataly-harness`, 별도 설치 래퍼는
 `omp-cataly`입니다. 새 설치의 기본 홈은 기본 모드 `~/.cataly`, Side 모드
-`~/.omp-cataly`입니다. 기존 설치를 업데이트해도 홈이나 설정 파일은 바뀌지 않습니다.
-
-[검증된 현재 릴리스 설치](docs/releases.md#install-a-current-release) 또는
-[v0.1.3에서 업데이트](docs/releases.md#upgrade-a-v013-installation)를 참고하세요.
-
+`~/.omp-cataly`입니다.
+[검증된 현재 릴리스 설치](docs/releases.md#install-a-current-release)를 참고하세요.
 Cataly는 macOS와 Linux에서 기본적으로 headless OMP로 실행되며, Tern은 선택 사항인 터미널 런타임입니다.
-이 버전에서 herdr와 hc 터미널 런타임이 제거됐습니다. 아직 이를 쓰는 홈에서는 설치와
-업데이트가 다음 메시지와 함께 멈춥니다.
-
-```text
-This Cataly home still uses the herdr/hc terminal runtime, which this version removed.
-1. Close every herdr/hc lane (`cataly status` lists them) with your previous Cataly version.
-2. Remove "runtime" (if it names herdr or hc) and "sessionRuntime" from <configPath>.
-3. Run this command again. Cataly state and OMP sessions are kept; lanes reopen on headless.
-```
 
 </td></tr></table>
 
@@ -145,38 +140,17 @@ bun add cataly
 ./node_modules/.bin/cataly-harness --help
 ```
 
-이 방법은 하네스 CLI만 설치합니다. OMP와 메신저까지 설정하려면 아래 방법 중
-하나를 사용하세요.
-
-|            | [게시된 프리릴리스](#게시된-프리릴리스-써보기) | [현재 소스](#현재-소스에서-시작하기)           |
-| ---------- | ---------------------------------------------- | ---------------------------------------------- |
-| **빌드**   | v0.1.2 프리릴리스                              | 현재 `main`                                    |
-| **범위**   | Linux x64 / herdr / Discord                    | Linux·macOS의 headless OMP 세션, Tern 선택 사항 |
-| **OMP**    | 별도로 설치한 네이티브 OMP 18.18.8             | 고정된 패치 버전 OMP 19.0.1과 omp-ulw 오버레이 |
-| **설치 홈** | 이전 설치 홈 `~/.dori`                        | Side 모드 `~/.omp-cataly`                       |
-
-### 게시된 프리릴리스 써보기
-
-[v0.1.2 프리릴리스](https://github.com/vntrevx/Cataly/releases/tag/v0.1.2)는
-**Linux x64 / herdr / Discord** 환경을 대상으로 합니다. 검증 기준은 Ubuntu 24.04 x64,
-Bun 1.4.4, 네이티브 OMP 18.18.8, herdr 0.9.5입니다. 별도로 설치한 OMP와 기본
-설치 홈 `~/.dori`를 사용합니다. 현재 `main`의 새 기능과 도구 체인은 포함되지 않습니다.
-
-1. [정확한 프리릴리스 설치](https://github.com/vntrevx/Cataly/blob/v0.1.2/docs/releases.md#install-the-exact-preview)를 따르세요.
-   [사전 요구 사항](https://github.com/vntrevx/Cataly/blob/v0.1.2/docs/releases.md#prerequisites-and-trust)을 확인하고,
-   같은 릴리스의 배포 파일을 검증한 뒤 설치기를 실행합니다.
-2. [모델 제공업체와 Discord 봇을 설정한 뒤 Dori를 시작하세요](https://github.com/vntrevx/Cataly/blob/v0.1.2/docs/releases.md#your-authentication-and-explicit-startup).
-   본인의 제공업체 계정과 사용량 한도, 봇 토큰, 사용자 ID, 채널 ID를 사용합니다.
-3. [Discord 수신을 켜세요](https://github.com/vntrevx/Cataly/blob/v0.1.2/docs/releases.md#discord-owner-intake).
-   `INBOUND_READY`가 표시된 뒤 설정한 채널에 새 메시지를 보내세요. 첫 시작 시에는
-   이전 메시지를 다시 가져오지 않습니다.
+이 방법은 하네스 CLI만 설치합니다. OMP와 메신저까지 설정하려면
+[검증된 릴리스를 설치](docs/releases.md#install-a-current-release)하거나 현재 소스에서
+시작하세요.
 
 ### 현재 소스에서 시작하기
 
-git과 Bun 1.4.4 이상을 준비해 별도 체크아웃을 사용하세요. Linux와 macOS에서 세션은
-기본적으로 headless OMP로 실행되며 터미널 서버가 필요 없습니다. 소스 설치기는 고정된 패치 버전 **OMP 19.0.1**과 **omp-ulw** 오버레이를
-준비합니다. 기본 설치에는 사전에 설치한 OMP나 Cargo가 필요 없고, 일반 배포판 `omp`로
-이 구성을 대체하지 않습니다.
+git, Bun 1.4.4 이상, [rustup](https://rustup.rs)으로 설치한 Rust 툴체인을 준비해 별도 체크아웃을 사용하세요. Linux와 macOS에서 세션은
+기본적으로 headless OMP로 실행되며 터미널 서버가 필요 없습니다. 소스 설치기는 고정된 패치 버전 **OMP 19.0.1**을
+준비합니다. 기본 설치에는 사전에 설치한 OMP가 필요 없고, 일반 배포판 `omp`로
+이 구성을 대체하지 않습니다. 설치기는 필수 네이티브 Cataly 바이너리를 Cargo로 빌드하며,
+Rust 툴체인이 없거나 빌드가 실패하면 링크·래퍼·설정을 바꾸기 전에 중단합니다. 릴리스에는 Linux x64와 macOS arm64용 바이너리가 포함됩니다.
 선택 사항인 터미널 런타임으로 Tern을 쓸 수 있습니다. [Tern](docs/runtime.md#tern)을 참고하세요.
 
 ```bash
@@ -243,15 +217,16 @@ OMP 프로세스를 닫습니다. 결과가 불명확하면 롤백된 것으로 
 
 | 설정 | 값 |
 | --- | --- |
-| `CATALY_DISCORD_NATIVE_BIN` | 선택 사항. Rust 바이너리의 절대 경로. `off`는 기존 Discord 경로를 선택합니다. |
+| `CATALY_DISCORD_NATIVE_BIN` | 선택 사항. 네이티브 Cataly 바이너리의 절대 경로로, Discord 인입과 headless 레인·리드·듀티 호스트가 사용합니다. `off`는 TypeScript Discord 전송·프레즌스·라우팅을 유지하고 Discord 인입은 시작을 거부하며, headless 호스트는 계속 번들 또는 설치된 바이너리를 사용합니다. |
 | `CATALY_DISCORD_NATIVE_WORKSPACE` | 선택 사항. 네이티브 작업 디렉터리의 절대 경로. 생략하면 `laneWorkspace`를 사용합니다. |
 | `CATALY_DISCORD_NATIVE_CHANNEL_ID` | 선택 사항. 인입 목록의 채널 또는 스레드 하나를 지정합니다. 생략하면 명시적으로 등록한 인입 채널 전체를 루트로 사용합니다. |
 | `CATALY_DISCORD_THREADS` | 기본적으로 루트 아래의 활성 스레드를 따라갑니다. `off`면 명시한 ID만 처리합니다. Rust를 직접 실행할 때는 `--follow-threads`를 씁니다. |
 | `CATALY_OMP` / `CATALY_DISCORD_NATIVE_MODEL` | 필요할 때만 지정하는 OMP 실행 파일과 모델 |
 
 Rust가 Gateway 하트비트와 재연결, REST 조회·전송, 버튼, OMP 레인을 맡습니다.
-찾은 스레드마다 커서, 레인, 답장 위치가 따로 있습니다. 전환 전에 기존 모니터를
-중지하세요. 호환 실행기는 첫 실행 때 기존 커서를 가져옵니다. 네이티브 바이너리가
+찾은 스레드마다 커서, 레인, 답장 위치가 따로 있습니다. 전환 전에 같은 상태를 쓰는
+다른 Discord 수신기를 중지하세요. `cataly inbound discord`는 첫 실행 때 TypeScript
+수신기의 커서를 가져옵니다. 네이티브 바이너리가
 있으면 감독형 모니터는 OMP 감독자마다 필요할 때 Rust 프로세스 하나를 띄워 ASK
 답변과 head 승인을 저장된 OMP 영수증으로 판정합니다. 활성 세션, 승인 대기열,
 `message_end` 전달은 여전히 OMP 확장이 맡습니다. 중단된 라우팅 요청은 몰래 다시
@@ -285,9 +260,9 @@ Rust 바이너리가 설치되거나 배포본에 포함되어 있으면 `cataly
 `CATALY_DISCORD_GUILD_ID` 안의 고유한 채널 이름을 지정합니다. 직접 호출은
 JSON 전송 영수증을 반환합니다. 긴 코드 블록은 UTF-16 경계를 지키며 조각마다
 닫고 다시 엽니다. 온라인 상태만 유지하려면 `target/release/cataly discord-presence`를 사용하세요.
-Linux x64 배포본에는 체크섬으로 검증하는 Rust 바이너리가 포함됩니다.
-지원되는 Unix의 소스 설치는 Cargo가 있으면 직접 빌드합니다.
-바이너리가 없는 기존 설치는 기존 CLI를 그대로 사용합니다.
+Linux x64와 macOS arm64 배포본에는 체크섬으로 검증하는 Rust 바이너리가 포함됩니다.
+소스 설치는 Cargo로 직접 빌드하며, Rust 툴체인이 없거나 빌드가 실패하면
+링크·래퍼·설정을 바꾸기 전에 중단합니다.
 
 소유자의 일반 텍스트는 도구 없이 실행하고, 첨부 파일은 다운로드하지 않습니다.
 같은 채널·스레드에서 저장된 세션을 재사용하되, 실행이 끝나면 OMP 프로세스는
@@ -328,10 +303,10 @@ OMP 하네스만 빌드하려면 `--no-default-features`를 사용하세요.
 
 **중요**
 
-**지원 범위:** Slack과 Telegram은 소스에 남아 있는 연동 기능이며 게시된 프리릴리스의
+**지원 범위:** Slack과 Telegram은 소스에 남아 있는 연동 기능이며 소비자 릴리스의
 지원 범위에 포함되지 않습니다. 호환 릴리스 매니페스트에 명시된 경우 격리된
 macOS arm64 headless 설치가 가능하지만, 해당 배포본이 게시됐다는 뜻은 아닙니다.
-`main` 병합만으로 기존 프리릴리스가 업데이트되지는 않습니다.
+`main` 병합만으로 게시된 릴리스가 업데이트되지는 않습니다.
 
 </td></tr></table>
 
@@ -355,9 +330,8 @@ macOS arm64 headless 설치가 가능하지만, 해당 배포본이 게시됐다
 
 ## 라이선스와 출처
 
-Cataly는 [dori-superagent](https://github.com/sisyphuslabs/dori-superagent),
-[oh-my-pi](https://github.com/can1357/oh-my-pi),
-[omp-ulw](https://github.com/dbc-hbin/omp-ulw)를 결합합니다. dori-superagent에서
+Cataly는 [dori-superagent](https://github.com/sisyphuslabs/dori-superagent)에서 파생됐으며
+[oh-my-pi](https://github.com/can1357/oh-my-pi)를 기반으로 합니다. dori-superagent에서
 파생된 부분은 [Sustainable Use License 1.0](LICENSE)을 따릅니다. 기존 OMP 통합
 부분은 [MIT 라이선스와 저작권 고지](LICENSE.integration)를 유지하며, 이 MIT 고지는
 저장소 전체에 적용되지 않습니다. 다른 구성 요소에는 각각의 조건이 적용됩니다.

@@ -1,6 +1,6 @@
 import { mayRunOmpArgv } from "../../../../src/runtime/omp-argv.ts";
 import { HeadlessRuntime } from "../../../../src/runtime/headless.ts";
-import { isLegacyRuntime, type SessionRef } from "../../../../src/runtime/types.ts";
+import type { SessionRef } from "../../../../src/runtime/types.ts";
 import { withDeliveryLock } from "./delivery-lock.ts";
 import { type FlowDeps, movedOn } from "./done-flow.ts";
 import type { GoalStatus } from "./lane-state.ts";
@@ -46,8 +46,6 @@ const goalCommand = async (
   | "goal unverified during readback"
   | "lane changed before send"
 > => {
-  // A lane still recorded on the removed herdr/hc runtime has no runtime to carry the goal command.
-  if (isLegacyRuntime(ref.runtime)) return "identity unverified before send";
   const rts = runtimesOf(deps);
   if (ref.runtime === "headless") {
     const runtime = rts.for(ref);

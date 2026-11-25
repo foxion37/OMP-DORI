@@ -20,7 +20,7 @@ export function snapshot(path: string): string {
 }
 
 export const protectedSnapshot = (paths: ConsumerPaths) => [
-  snapshot(paths.dori),
+  snapshot(paths.cataly),
   ...paths.links.map(([path]) => snapshot(path)),
 ];
 export const consumerEnv = (paths: ConsumerPaths) => ({
@@ -35,6 +35,6 @@ export async function installedConsumer() {
   const f = fixture();
   await installBundle(f.paths, f.release("consumer source stays frozen").bundle, undefined);
   // A stale source marker must not override consumer ownership or the consumer extension link.
-  writeFileSync(join(f.paths.dori, ".omp-cataly"), "primary\n");
+  writeFileSync(join(f.paths.cataly, ".omp-cataly"), "primary\n");
   return f;
 }

@@ -6,6 +6,12 @@ const token = process.env["CATALY_TELEGRAM_TOKEN"];
 if (raw === undefined || journal === undefined || token === undefined)
   throw new Error("Telegram startup fixture is incomplete");
 const scenario = JSON.parse(raw) as Record<string, unknown>;
+const platform = process.env["CATALY_TEST_PLATFORM"];
+if (platform !== undefined)
+  Object.defineProperty(process, "platform", {
+    ...Object.getOwnPropertyDescriptor(process, "platform")!,
+    value: platform,
+  });
 
 globalThis.fetch = Object.assign(
   async (input: string | URL | Request, init?: RequestInit) => {

@@ -59,7 +59,7 @@ export function receiptHolds(directory: string, identity: string, live = directo
     const receipt = readJson(join(directory, "receipt.json"));
     if (!recognized(receipt, identity, live)) return ["unrecognized receipt"];
     try {
-      return readSourceBundle(receipt.source, true).identity === identity ? ["receipt source"] : [];
+      return readSourceBundle(receipt.source).identity === identity ? ["receipt source"] : [];
     } catch {
       // A source that is gone binds nothing; one whose lock is there but cannot be read could still bind it.
       return lstatSync(join(receipt.source, "native-omp.lock"), { throwIfNoEntry: false })

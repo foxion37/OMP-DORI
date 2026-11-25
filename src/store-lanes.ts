@@ -9,25 +9,18 @@ import { sameSession } from "./refs.ts";
 import type { SessionRef } from "./runtime/types.ts";
 import type { Lane } from "./store-types.ts";
 
-/** A lane file as any binary wrote it: one from before runtimes existed has no `sessionRef`. */
-type StoredLane = Omit<Lane, "sessionRef"> & { sessionRef?: SessionRef };
-
-const upgrade = (raw: StoredLane): Lane => {
+const readLane = (raw: Lane): Lane => {
   const { wait: saved, ...rest } = raw;
   const wait = readWait(saved);
-  return {
-    ...rest,
-    sessionRef: raw.sessionRef ?? { runtime: "herdr", id: raw.paneId, ...(raw.tabId ? { container: raw.tabId } : {}) },
-    ...(wait ? { wait } : {}),
-  };
+  return { ...rest, ...(wait ? { wait } : {}) };
 };
 
 export const rootStoreHome = (): string => process.env["CATALY_HOME"] ?? join(homedir(), ".cataly");
 
 export function readRootLane(root: string, key: string): Lane | undefined {
   try {
-    const raw = JSON.parse(readFileSync(join(root, "lanes", `${key}.json`), "utf8")) as StoredLane | null;
-    return raw ? upgrade(raw) : undefined;
+    const raw = JSON.parse(readFileSync(join(root, "lanes", `${key}.json`), "utf8")) as Lane | null;
+    return raw ? readLane(raw) : undefined;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw error;
@@ -38,7 +31,7 @@ export function readRootLane(root: string, key: string): Lane | undefined {
 export const sameLaneRegistration = (seen: Lane, current: Lane): boolean =>
   seen.key === current.key &&
   seen.createdAt === current.createdAt &&
-  (seen.noticeId === undefined || seen.noticeId === current.noticeId) &&
+  seen.noticeId === current.noticeId &&
   sameSession(seen.sessionRef, current.sessionRef);
 
 export class RootLaneStore {
@@ -56,11 +49,9 @@ export class RootLaneStore {
     try {
       return fn(this.lane(key), (lane) => {
         if (lane.key !== key) throw new Refusal(`cannot write lane ${lane.key} under lane ${key}'s lock`);
-        const { id, container } = lane.sessionRef;
         const file = join(this.root, "lanes", `${key}.json`);
         const tmp = `${file}.${process.pid}.tmp`;
-        // The legacy mirrors keep the same record readable by earlier versions.
-        writeFileSync(tmp, JSON.stringify({ ...lane, paneId: id, tabId: container ?? "" }, null, 2) + "\n");
+        writeFileSync(tmp, JSON.stringify(lane, null, 2) + "\n");
         renameSync(tmp, file);
       });
     } finally {

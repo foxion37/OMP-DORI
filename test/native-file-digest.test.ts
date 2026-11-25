@@ -114,7 +114,7 @@ test("pathname replacement between chunks does not switch the opened file", () =
 
 posix("native admission hashes the addon bytes and rejects a changed final addon chunk", () => {
   const root = fixture();
-  const f = overlayFixture(join(root, "bundle"), join(root, "upstream"), true);
+  const f = overlayFixture(join(root, "bundle"), join(root, "upstream"));
   const home = join(root, "home");
   const receipt = nativeCacheFixture(f.source, home, f.checkout);
   const bytes = Buffer.alloc(chunkSize * 2 + 17, 41);

@@ -1,7 +1,6 @@
 import { join } from "node:path";
 import { MessengerError } from "./http.ts";
 import { privateStateFile } from "./private-state-file.ts";
-import { windowsTelegramCursor } from "./telegram-inbound-win32-store.ts";
 
 export type TgInboundState = {
   readonly offset: number;
@@ -10,19 +9,11 @@ export type TgInboundState = {
 };
 export type TgInboundStore = { load(): TgInboundState | undefined; save(state: TgInboundState): void };
 
-export const fileTgInboundStore = (
-  stateDir: string,
-  botId: number,
-): TgInboundStore & Disposable & { checkWritable(): void } => {
+export const fileTgInboundStore = (stateDir: string, botId: number): TgInboundStore & { checkWritable(): void } => {
   if (!Number.isSafeInteger(botId) || botId <= 0) throw new MessengerError("Telegram inbound bot ID is invalid", 0);
-  const windows = process.platform === "win32" ? windowsTelegramCursor(stateDir, String(botId)) : undefined;
-  const file =
-    windows ?? privateStateFile(join(stateDir, "telegram-inbound"), String(botId), "Telegram inbound cursor");
+  const file = privateStateFile(join(stateDir, "telegram-inbound"), String(botId), "Telegram inbound cursor");
   let warned = false;
   return {
-    [Symbol.dispose]() {
-      windows?.close();
-    },
     checkWritable: file.checkWritable,
     load() {
       const raw = file.read();

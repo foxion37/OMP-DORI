@@ -9,7 +9,11 @@ if (process.argv.includes("--version")) {
   );
   process.exit(0);
 }
-if (!process.argv.includes("rpc-ui") || !process.argv.includes("always-ask") || process.env["HERDR_PANE_ID"])
+if (
+  !process.argv.includes("rpc-ui") ||
+  !process.argv.includes("always-ask") ||
+  process.env["CATALY_ASK_LAUNCHED_LANE"] !== undefined
+)
   throw new Error("not the isolated native headless launch");
 
 const saved = process.env["CATALY_TEST_SESSION"]!;

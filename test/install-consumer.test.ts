@@ -36,7 +36,7 @@ posix(
       expect(protectedSnapshot(paths)).toEqual(before);
       expect(snapshot(source.src)).toBe(checkout);
     }
-    expect(existsSync(join(paths.dori, "backups"))).toBe(false);
+    expect(existsSync(join(paths.cataly, "backups"))).toBe(false);
     expect(existsSync(join(source.root, "bun.log"))).toBe(false);
   },
 );
@@ -53,7 +53,6 @@ posix("a separate side source install and its reinstall preserve an installed co
   const config = JSON.parse(readFileSync(configPath, "utf8"));
   expect(config.stateDir).toBe(join(side, "state"));
   expect(config.agentCommand[0]).toBe(join(side, "bin/omp"));
-  expect(config.ompUlwPath).toBe("");
   config.defaultModel = "fixture/preserved";
   writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
   expect(source.install(options).code).toBe(0);
@@ -68,10 +67,10 @@ posix(
     const source = setup();
     const { paths } = await installedConsumer();
     const alias = join(source.home, "consumer-home");
-    symlinkSync(paths.dori, alias);
+    symlinkSync(paths.cataly, alias);
     const before = protectedSnapshot(paths);
     const checkout = snapshot(source.src);
-    for (const base of [paths.dori, alias]) {
+    for (const base of [paths.cataly, alias]) {
       const r = source.install({ CATALY_INSTALL_MODE: "side", OMP_CATALY_HOME: base });
       expect(r.code).toBe(1);
       expect(protectedSnapshot(paths)).toEqual(before);
@@ -90,7 +89,7 @@ posix.each(["consumer-owner.json", "consumer-installed.json", "consumer-journal.
     mkdirSync(paths.root, { recursive: true });
     writeFileSync(join(paths.root, control), "{interrupted\n");
     const alias = join(source.home, "consumer-home");
-    symlinkSync(paths.dori, alias);
+    symlinkSync(paths.cataly, alias);
     const before = protectedSnapshot(paths);
     const checkout = snapshot(source.src);
     expect(source.install({ CATALY_INSTALL_MODE: "side", OMP_CATALY_HOME: alias }).code).toBe(1);
@@ -104,14 +103,13 @@ posix(
   "side path overrides that resolve into the primary consumer home stop before checkout or package changes",
   async () => {
     const source = setup();
-    const { paths, ownedDependency } = await installedConsumer();
+    const { paths } = await installedConsumer();
     const before = protectedSnapshot(paths);
     const checkout = snapshot(source.src);
     const overrides: Record<string, string>[] = [
-      { OMP_CATALY_HOME: join(paths.dori, "experiment") },
+      { OMP_CATALY_HOME: join(paths.cataly, "experiment") },
       { CATALY_SRC: paths.live },
-      { OMP_ULW_SRC: ownedDependency },
-      { OMP_CATALY_BIN_DIR: join(paths.dori, "bin") },
+      { OMP_CATALY_BIN_DIR: join(paths.cataly, "bin") },
     ];
     for (const override of overrides) {
       const r = source.install({ ...consumerEnv(paths), CATALY_INSTALL_MODE: "side", ...override });
@@ -143,32 +141,3 @@ posix("side config and wrapper symlinks cannot redirect generated files into the
   }
   expect(existsSync(join(source.root, "bun.log"))).toBe(false);
 });
-
-posix.each(["config", "retained"])(
-  "a side %s ULW alias into the consumer home holds before source changes",
-  async (choice) => {
-    const source = setup();
-    const { paths } = await installedConsumer();
-    const options = consumerEnv(paths);
-    const alias = join(source.root, "consumer-ulw");
-    const protectedUlw = join(paths.dori, "source-ulw-fixture");
-    mkdirSync(protectedUlw);
-    writeFileSync(join(protectedUlw, "index.ts"), "export default () => {};\n");
-    writeFileSync(join(protectedUlw, "presets.ts"), "export {};\n");
-    symlinkSync(protectedUlw, alias);
-    mkdirSync(options.OMP_CATALY_HOME);
-    const config = join(options.OMP_CATALY_HOME, "config.json");
-    const configBytes = JSON.stringify({ ompUlwPath: choice === "config" ? join(alias, "index.ts") : "" });
-    writeFileSync(config, configBytes);
-    if (choice === "retained") symlinkSync(alias, join(options.OMP_CATALY_HOME, ".omp-cataly-ulw"));
-    const before = protectedSnapshot(paths);
-    const checkout = snapshot(source.src);
-    source.upstreamCommit("pending upstream\n");
-    const r = source.install({ ...options, CATALY_INSTALL_MODE: "side", OMP_ULW_SRC: "" });
-    expect(r.code).toBe(1);
-    expect(protectedSnapshot(paths)).toEqual(before);
-    expect(snapshot(source.src)).toBe(checkout);
-    expect(readFileSync(config, "utf8")).toBe(configBytes);
-    expect(existsSync(join(source.root, "bun.log"))).toBe(false);
-  },
-);

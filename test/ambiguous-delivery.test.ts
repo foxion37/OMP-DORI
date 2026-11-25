@@ -51,13 +51,14 @@ function addLane(d: Deps, key: string, id: string): void {
   d.store.saveLane({
     key,
     sessionRef: href(id),
-    paneId: id,
-    tabId: "",
     brief: "/dev/null",
     cwd: "/",
     status: "working",
     createdAt: 0,
     lastActivityAt: 0,
+    progressAt: 0,
+    noticeId: `notice-${key}`,
+    progressEpoch: 0,
     nudges: 0,
     log: [],
   });

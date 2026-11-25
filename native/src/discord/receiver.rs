@@ -81,8 +81,15 @@ fn identity() -> Option<String> {
     Some(format!("{}:{start_ticks}", boot.trim()))
 }
 
-/// Without procfs the TS start identity comes from `ps`; fail closed rather than publish another format.
-#[cfg(not(target_os = "linux"))]
+/// discord-ask-receiver.ts reads `processStart(pid)` off Linux: on macOS the start token alone, an absolute start time
+/// to the microsecond. It carries no boot id, as there; a reused PID still starts at another time.
+#[cfg(target_os = "macos")]
+fn identity() -> Option<String> {
+    super::darwin::start(std::process::id())
+}
+
+/// No process start reader on other hosts: fail closed rather than publish another format.
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 fn identity() -> Option<String> {
     None
 }
@@ -324,5 +331,24 @@ mod tests {
             r#"{"version":1,"pid":7,"start":"boot:9","tokenDigest":"ab","apiBase":"https://discord.com/api/v10","owner":"10","explicit":["20"],"watched":["20","21"],"expiresAt":5}"#
         );
         assert_eq!(unique(&[id(2), id(1), id(2)]), vec![id(2), id(1)]);
+    }
+
+    /// discord-ask-receiver.ts finds the route only while this start equals its `identity(pid)`: `${bootId}:${start}`
+    /// on Linux, `processStart(pid)` elsewhere. Needs `bun`, so Linux runs it with `cargo test -- --ignored`.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg_attr(
+        not(target_os = "macos"),
+        ignore = "runs the TypeScript readers with bun"
+    )]
+    #[test]
+    fn identity_matches_typescript() {
+        let ts = crate::discord::darwin::typescript_process(std::process::id());
+        let start = ts["start"].as_str().unwrap();
+        let expected = if cfg!(target_os = "linux") {
+            format!("{}:{start}", ts["bootId"].as_str().unwrap())
+        } else {
+            start.to_owned()
+        };
+        assert_eq!(identity(), Some(expected));
     }
 }

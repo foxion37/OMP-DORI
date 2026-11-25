@@ -18,7 +18,7 @@ Required remote CI may be pending for review; all three jobs must pass before me
 - Copied/adapted third-party code or prompt text (or none):
 - Upstream URL, file paths, immutable revision and applicable file/component license:
 - Destination paths, modifications and retained copyright/permission/modified-copy notice paths:
-- Dependency/SDK/ULW changes: component-specific license/notice paths retained in redistributed
+- Dependency/SDK changes: component-specific license/notice paths retained in redistributed
   material (or none):
 - Concept-only references: source/revision and independently written work (or none):
 
@@ -30,8 +30,7 @@ Give actual commands/results and revisions, or links to those runs. Do not relab
 or combined partial counts as a full rerun.
 
 For each run, record the source/head and base SHAs, observed native OMP version/source SHA,
-ULW base SHA and overlay identity (`patchSha256` and `resultTree`), OS/architecture, exact
-command, and actual receipt link or sanitized output. Separate intended pins from identities actually observed; explain unknown
+OS/architecture, exact command, and actual receipt link or sanitized output. Separate intended pins from identities actually observed; explain unknown
 or N/A when an identity was not observed or a component was not exercised. Describe the
 runtime/fixture setup and separately label provider/service calls as synthetic, loopback, or
 live; a genuine runtime fixture does not prove live-provider behavior. Name unverified

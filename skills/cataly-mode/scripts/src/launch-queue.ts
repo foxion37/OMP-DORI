@@ -139,8 +139,7 @@ export const startQueued = async (
     });
     const { predecessors, reasons } = await prerequisites(deps, entry, true);
     if (reasons.length) return queueHeld(reasons);
-    // Older reservations without a cwd retain the start-time default.
-    const cwd = entry.input.cwd ?? deps.config.defaultCwd;
+    const { cwd } = entry.input;
 
     // Different keys share the same pane budget. Hold admission through creation, not agent startup.
     const admission = await withLaunchLock(deps, ".queue-capacity", async () => {
@@ -179,7 +178,7 @@ export const startQueued = async (
     queue.write({ ...starting, status: "started" });
     return {
       code: /^STARTUP_(OK|DONE)/.test(launched.startup) ? 0 : 3,
-      lines: [...opened.warnings, `QUEUE_STARTED ${key} pane=${launched.lane.pane}`, launched.startup],
+      lines: [...opened.warnings, `QUEUE_STARTED ${key} pane=${launched.lane.sessionRef?.id}`, launched.startup],
     };
   });
   if (!held.ok) throw new QueueError(`queue ${key} held: ${held.holder}`);

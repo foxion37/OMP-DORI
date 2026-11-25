@@ -1,8 +1,7 @@
 //! `registry.ts`, `lane-state.ts` and the execution half of `lane-run.ts`, read and written in their exact formats.
 //!
 //! Lane rows are `<state>/lanes/<key>.json` (`JSON.stringify(lane, null, 1)`, temp `<path>.<pid>.tmp` + rename, under
-//! the `<path>.lock` writer lock). Legacy rows carrying only `pane`/`tab` still load as herdr refs, which every caller
-//! treats as the removed runtime. Tern pane rows are `<state>/sessions/<encodeURIComponent(id)>.json`, written only by
+//! the `<path>.lock` writer lock). Tern pane rows are `<state>/sessions/<encodeURIComponent(id)>.json`, written only by
 //! the extension. Execution events append to `<state>/lanes/<key>/reports.jsonl`.
 
 use std::fs::{self, OpenOptions};
@@ -13,12 +12,10 @@ use std::time::Duration;
 
 use anyhow::{Context as _, Result, anyhow, bail};
 
-use super::json::Json;
 use super::lock::take_lock;
-use super::util::{RECORD_LIMIT, iso, private_dirs, read_limited, replace_file, safe_int};
+use crate::json::Json;
+use crate::util::{RECORD_LIMIT, iso, private_dirs, read_limited, replace_file, safe_int};
 
-/// `RESERVED_LANE_KEY`.
-pub(super) const RESERVED_LANE_KEY: &str = "lead";
 const REGISTRY_WAIT: Duration = Duration::from_secs(5);
 const REGISTRY_RETRY: Duration = Duration::from_millis(10);
 
@@ -55,21 +52,6 @@ impl<'a> SessionRef<'a> {
 }
 
 impl Lane {
-    /// `upgradeLane`: an older row gains `sessionRef` from its `pane`/`tab`.
-    fn upgrade(mut raw: Json) -> Self {
-        if !raw.truthy("sessionRef") && raw.truthy("pane") {
-            let mut reference = vec![
-                ("runtime", Json::string("herdr")),
-                ("id", raw.get("pane").cloned().unwrap_or(Json::Null)),
-            ];
-            if raw.truthy("tab") {
-                reference.push(("container", raw.get("tab").cloned().unwrap_or(Json::Null)));
-            }
-            raw.set("sessionRef", Json::object(reference));
-        }
-        Self(raw)
-    }
-
     pub(super) fn key(&self) -> &str {
         self.0.str("key").unwrap_or_default()
     }
@@ -193,7 +175,7 @@ impl Registry {
         };
         let raw: Json = serde_json::from_slice(&bytes)
             .with_context(|| format!("unreadable lane record {}", path.display()))?;
-        Ok(Some(Lane::upgrade(raw)))
+        Ok(Some(Lane(raw)))
     }
 
     /// `Registry.read`.
@@ -240,7 +222,7 @@ impl Registry {
 
     fn write_now(&self, lane: &Lane) -> Result<()> {
         let path = self.path(lane.key());
-        let temporary = super::util::sibling(&path, &format!(".{}.tmp", std::process::id()));
+        let temporary = crate::util::sibling(&path, &format!(".{}.tmp", std::process::id()));
         replace_file(&path, &temporary, &lane.0.pretty1())
     }
 
@@ -251,7 +233,7 @@ impl Registry {
         change: impl FnOnce(Option<Lane>) -> Result<Option<Lane>> + Send,
     ) -> Result<Option<Lane>> {
         fs::create_dir_all(&self.dir)?;
-        let lock_path = super::util::sibling(&self.path(key), ".lock");
+        let lock_path = crate::util::sibling(&self.path(key), ".lock");
         let deadline = tokio::time::Instant::now() + REGISTRY_WAIT;
         let lock = loop {
             match take_lock(&lock_path, false)? {
@@ -321,14 +303,6 @@ pub(super) fn pane_state(state: &Path, pane: &str) -> Option<Json> {
         .join(format!("{}.json", encode_uri_component(pane)));
     let bytes = read_limited(&path, RECORD_LIMIT).ok()?;
     serde_json::from_slice(&bytes).ok()
-}
-
-/// `PaneState.role`, with the legacy `dori` alias.
-pub(super) fn pane_role(pane: &Json) -> Option<&str> {
-    match pane.str("role") {
-        Some("dori") => Some("cataly"),
-        role => role,
-    }
 }
 
 /// A JS number field read as a safe integer.
@@ -475,7 +449,7 @@ fn run_context(state: &Path, lane: &Lane, run: Option<&str>) -> Result<Option<Co
         }
     }
     Ok(run
-        .filter(|run| super::util::is_uuid(run, true))
+        .filter(|run| crate::util::is_uuid(run, true))
         .and_then(|run| contexts.into_iter().find(|(id, _)| id == run))
         .map(|(_, context)| context))
 }
@@ -511,7 +485,7 @@ pub(super) fn record_execution(
         return Ok(());
     };
     let run = lane.0.str("runId");
-    if !is_request_id(request) || !run.is_some_and(|run| super::util::is_uuid(run, true)) {
+    if !is_request_id(request) || !run.is_some_and(|run| crate::util::is_uuid(run, true)) {
         bail!("invalid launch identity for {}", lane.key());
     }
     let previous = run_context(state, lane, run)?;
@@ -594,18 +568,5 @@ mod tests {
         assert!(is_request_id("telegram:-100:5"));
         assert!(is_request_id("slack:C01:1.2"));
         assert!(!is_request_id("slack:c01:1.2"));
-    }
-
-    #[test]
-    fn legacy_rows_gain_a_session_ref() {
-        let lane = Lane::upgrade(
-            serde_json::from_str(r#"{"key":"ab","pane":"w1:p2","tab":"t"}"#).unwrap(),
-        );
-        let reference = lane.session_ref().unwrap();
-        assert_eq!(
-            (reference.runtime(), reference.id()),
-            (Some("herdr"), Some("w1:p2"))
-        );
-        assert_eq!(lane.status(), "working");
     }
 }

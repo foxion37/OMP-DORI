@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { join } from "node:path";
 
 import { type MonitorExit, Monitors } from "../monitor";
 import { type FakePi, load, until, useConfig } from "./fake-pi";
@@ -168,7 +167,7 @@ describe("Monitors", () => {
 describe("monitor tool", () => {
   let cataly: FakePi;
   beforeEach(async () => {
-    useConfig(join(import.meta.dir, "fake-ulw.ts"));
+    useConfig();
     cataly = await load({ session: { id: "cataly", entries: [] }, flags: { "cataly-role": "cataly" } });
     await cataly.emit("session_start");
   });

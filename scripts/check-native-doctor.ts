@@ -24,21 +24,14 @@ const home = process.argv[2];
 if (!home || !isAbsolute(home))
   throw new Error("Provide the absolute home containing the prepared pinned native source");
 const root = resolve(import.meta.dir, "..");
-const expected = readSourceBundle(root, true).lock;
+const expected = readSourceBundle(root).lock;
 const env = { HOME: home, PATH: process.env["PATH"] ?? "", LANG: "C.UTF-8", TERM: "dumb" };
-const compatibility = process.env["CATALY_TEST_COMPAT_ULW_ENTRY"];
-if (!compatibility || !isAbsolute(compatibility))
-  throw new Error("Prepare the explicit ULW compatibility fixture first");
 const packageHome = mkdtempSync(join(tmpdir(), "cataly-native-release-"));
 try {
   const paths = consumerPaths(home, join(packageHome, "cataly"));
   const files = sourceManifest(root).files.filter((file) => publicReleasePath(file.path));
   const template = releaseFixture(files);
-  const manifest = validateReleaseManifest({
-    ...template,
-    requirements: { ...template.requirements, omp: expected.nativeVersion },
-    ompUlw: { ...template.ompUlw, commit: readSourceBundle(root).lock.commit },
-  });
+  const manifest = validateReleaseManifest({ ...template, requirements: { omp: expected.nativeVersion } });
   const release = releasePath(paths, manifest);
   for (const file of files) {
     const to = join(release, file.path);
@@ -89,7 +82,6 @@ try {
         defaultCwd: root,
         leadPane: "",
         agentCommand,
-        ompUlwPath: compatibility,
         doctor: { ignore: ["runtime"] },
       });
       writeFileSync(config, body);

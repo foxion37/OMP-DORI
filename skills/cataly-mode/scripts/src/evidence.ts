@@ -83,7 +83,7 @@ const fold = (records: Iterable<Evidenced>): { seen: Map<string, string | null>;
   return { seen, clock };
 };
 
-/** When the lane's evidence last changed. Records without `evidenceRefs` (all legacy ones) never move it. */
+/** When the lane's evidence last changed. Records without `evidenceRefs` never move it. */
 export const evidenceClock = (records: Iterable<Evidenced>): EvidenceClock => fold(records).clock;
 
 /** The refs that would move the clock if recorded after `records`. */

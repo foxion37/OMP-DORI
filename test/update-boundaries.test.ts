@@ -1,11 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, realpathSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, realpathSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { dirname, join } from "node:path";
 import { loadUpdateConfig } from "../src/update/load.ts";
 import { CatalyUpdater } from "../src/update/controller.ts";
 import { isolatedEnv } from "../src/update/environment.ts";
-import { restoreUpdate, snapshotUpdate } from "../src/update/recovery.ts";
 import { candidateReport } from "../src/update/report.ts";
 import { parseReview, readPortResult } from "../src/update/review.ts";
 import { assertCatalyScope, assertSource, sourceManifest } from "../src/update/source.ts";
@@ -48,75 +47,17 @@ describe("Cataly candidate boundaries", () => {
     expect(parseReview(line({ ...unknown, verdict: "reject" }), hash).verdict).toBe("reject");
   });
 
-  it("changed code and ULW drift invalidate source binding; missing check evidence never becomes ready", async () => {
+  it("changed code and source-bundle pin drift invalidate source binding; missing check evidence never becomes ready", async () => {
     const f = fixture();
     const job = (await f.updater.once("stage")).job!;
     job.sourceHash = sourceManifest(job.candidate).hash;
     expect(() => assertSource(job)).not.toThrow();
     f.write(job.candidate, "src/new-file.ts", "export const newFile = true;\n");
     expect(() => assertSource(job)).toThrow("stale");
-    f.write(job.candidate, "omp-ulw.lock", `${"b".repeat(40)}\n`);
-    expect(() => assertCatalyScope(job.inputs!, sourceManifest(job.candidate))).toThrow("ULW lock/library");
+    f.write(job.candidate, "native-addon/pin.txt", `${"b".repeat(40)}\n`);
+    expect(() => assertCatalyScope(job.inputs!, sourceManifest(job.candidate))).toThrow("source-bundle pin");
     job.phase = "ready";
     expect(() => candidateReport(f.updater.context, job)).toThrow("lacks passed checks");
-  });
-
-  it("opaque local ULW source is admitted, carried, covered and recovered; mutations and unseen installs hold", async () => {
-    const f = fixture();
-    const libraryFile = "ref/omp-ulw/runtime.ts";
-    const bytes = "export const pinnedRuntime = 'unchanged';\n";
-    f.write(f.localSource, libraryFile, bytes);
-    const excluded = [
-      "ref/omp-ulw/.git/config",
-      "ref/omp-ulw/node_modules/private/index.js",
-      "ref/omp-ulw/auth/token.json",
-    ];
-    for (const path of excluded) f.write(f.localSource, path, "must not enter the candidate\n");
-    const job = (await f.updater.once("stage")).job!;
-    expect(job.inputs!.local.ulwPresent).toBe(true);
-    expect(job.inputs!.local.files.some((file) => file.path === libraryFile)).toBe(true);
-    expect(job.inputs!.changedPaths).toContain(libraryFile);
-    expect(job.inputs!.changedPaths).toContain("ref/omp-ulw/");
-    expect(readFileSync(join(job.candidate, libraryFile), "utf8")).toBe(bytes);
-    expect(readFileSync(join(job.directory, "inputs/local", libraryFile), "utf8")).toBe(bytes);
-    for (const path of excluded) {
-      expect(existsSync(join(job.candidate, path))).toBe(false);
-      expect(existsSync(join(job.directory, "inputs/local", path))).toBe(false);
-    }
-    expect(() => assertCatalyScope(job.inputs!, sourceManifest(job.candidate))).not.toThrow();
-    job.sourceHash = sourceManifest(job.candidate).hash;
-    expect(() => assertSource(job)).not.toThrow();
-    writeFileSync(
-      join(job.directory, "port-result.json"),
-      JSON.stringify({
-        version: 1,
-        baseHash: job.inputs!.base.hash,
-        localHash: job.inputs!.local.hash,
-        upstreamHash: job.inputs!.incoming.hash,
-        coverage: job
-          .inputs!.changedPaths.filter((path) => path !== libraryFile)
-          .map((path) => ({ path, disposition: "preserved", evidence: "frozen identity" })),
-      }),
-    );
-    expect(() => readPortResult(job)).toThrow("every upstream and local changed path");
-    const snapshot = snapshotUpdate(f.updater.context, job.id, join(f.directory, "library-snapshot"));
-    const restored = restoreUpdate(f.updater.context, snapshot, join(f.directory, "library-restored"));
-    expect(readFileSync(join(restored, "candidate", libraryFile), "utf8")).toBe(bytes);
-    expect(sourceManifest(join(restored, "candidate")).hash).toBe(job.sourceHash);
-    f.write(job.candidate, libraryFile, "export const pinnedRuntime = 'changed';\n");
-    expect(() => assertSource(job)).toThrow("stale");
-    expect(() => assertCatalyScope(job.inputs!, sourceManifest(job.candidate))).toThrow("ULW lock/library");
-
-    const absent = fixture();
-    const withoutLibrary = (await absent.updater.once("stage")).job!;
-    expect(withoutLibrary.inputs!.local.ulwPresent).toBe(false);
-    expect(existsSync(join(withoutLibrary.candidate, "ref/omp-ulw"))).toBe(false);
-    withoutLibrary.sourceHash = sourceManifest(withoutLibrary.candidate).hash;
-    mkdirSync(join(withoutLibrary.candidate, "ref/omp-ulw"), { recursive: true });
-    expect(() => assertSource(withoutLibrary)).toThrow("stale");
-    expect(() => assertCatalyScope(withoutLibrary.inputs!, sourceManifest(withoutLibrary.candidate))).toThrow(
-      "ULW lock/library",
-    );
   });
 
   it("port coverage rejects missing/duplicate input paths rather than accepting a worker success claim", async () => {
@@ -147,20 +88,17 @@ describe("Cataly candidate boundaries", () => {
   it("model capability is separated from checks and parent pane/config identities; links fail before source admission", () => {
     const f = fixture();
     const oldSecret = process.env["UPDATER_FIXTURE_SECRET"];
-    const oldPane = process.env["HERDR_PANE_ID"];
+    const oldPane = process.env["TERN_PANE"];
     process.env["UPDATER_FIXTURE_SECRET"] = "fixture-secret-value";
-    process.env["HERDR_PANE_ID"] = "parent-pane";
+    process.env["TERN_PANE"] = "parent-pane";
     try {
       const updater = new CatalyUpdater({ ...f.config, modelEnv: ["UPDATER_FIXTURE_SECRET"] });
       const model = isolatedEnv(updater.context, join(f.directory, "model-runtime"), "model");
       const check = isolatedEnv(updater.context, join(f.directory, "check-runtime"), "check");
       expect(model["UPDATER_FIXTURE_SECRET"]).toBe("fixture-secret-value");
       expect(check["UPDATER_FIXTURE_SECRET"]).toBeUndefined();
-      expect(model["HERDR_PANE_ID"]).toBeUndefined();
-      expect(model["HC_TERMINAL_ID"]).toBeUndefined();
+      expect(model["TERN_PANE"]).toBeUndefined();
       expect(model["CATALY_RUNTIME"]).toBeUndefined();
-      expect(model["CATALY_HERDR_SESSION"]).toBeUndefined();
-      expect(model["HC_SESSION"]).toBeUndefined();
       expect(check["CATALY_TELEMETRY"]).toBe("0");
       expect(check["DO_NOT_TRACK"]).toBe("1");
       expect(model["HOME"]).not.toBe(check["HOME"]);
@@ -170,8 +108,8 @@ describe("Cataly candidate boundaries", () => {
     } finally {
       if (oldSecret === undefined) delete process.env["UPDATER_FIXTURE_SECRET"];
       else process.env["UPDATER_FIXTURE_SECRET"] = oldSecret;
-      if (oldPane === undefined) delete process.env["HERDR_PANE_ID"];
-      else process.env["HERDR_PANE_ID"] = oldPane;
+      if (oldPane === undefined) delete process.env["TERN_PANE"];
+      else process.env["TERN_PANE"] = oldPane;
     }
   });
 
@@ -245,6 +183,6 @@ describe("Cataly candidate boundaries", () => {
     expect(load({ worker: { ...f.config.worker, cwd: "a\\..\\b" } })).toThrow(
       "worker.cwd must be relative to the isolated candidate",
     );
-    expect(load({ runtime: "hc" })).toThrow('target:"cataly"');
+    expect(load({ runtime: "headless" })).toThrow("update.runtime is unknown");
   });
 });

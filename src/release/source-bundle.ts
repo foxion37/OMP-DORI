@@ -17,8 +17,8 @@ export type SourceBundle = {
   readonly patchSha256: string;
   readonly resultTree: string;
   readonly files: readonly SourceEntry[];
-  readonly nativeVersion?: string;
-  readonly launcher?: string;
+  readonly nativeVersion: string;
+  readonly launcher: string;
 };
 export type BoundBundle = { readonly lock: SourceBundle; readonly patch: string; readonly identity: string };
 const SHA = /^[a-f0-9]{40}$/;
@@ -31,10 +31,9 @@ const safe = (path: unknown): path is string =>
   }) &&
   path.split("/").every((part) => !!part && part !== "." && part !== ".." && part !== ".git");
 
-/** Validate a decoded lock: exact key set, pinned repositories, and a strictly ordered postimage. */
-export function parseSourceBundleLock(path: string, native: boolean, value: unknown): SourceBundle {
-  const keys = ["version", "repository", "commit", "patchSha256", "resultTree", "files"];
-  if (native) keys.push("nativeVersion", "launcher");
+/** Validate a decoded lock: exact key set, pinned repository, and a strictly ordered postimage. */
+export function parseSourceBundleLock(path: string, value: unknown): SourceBundle {
+  const keys = ["version", "repository", "commit", "patchSha256", "resultTree", "files", "nativeVersion", "launcher"];
   keys.sort();
   const lock = value as SourceBundle;
   if (
@@ -45,14 +44,12 @@ export function parseSourceBundleLock(path: string, native: boolean, value: unkn
     !SHA.test(lock.commit) ||
     !SHA.test(lock.resultTree) ||
     !HASH.test(lock.patchSha256) ||
-    lock.repository !==
-      (native ? "https://github.com/can1357/oh-my-pi.git" : "https://github.com/dbc-hbin/omp-ulw.git") ||
+    lock.repository !== "https://github.com/can1357/oh-my-pi.git" ||
     !Array.isArray(lock.files) ||
     !lock.files.length ||
-    (native &&
-      (typeof lock.nativeVersion !== "string" ||
-        !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(lock.nativeVersion) ||
-        !safe(lock.launcher)))
+    typeof lock.nativeVersion !== "string" ||
+    !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(lock.nativeVersion) ||
+    !safe(lock.launcher)
   )
     throw new Error(`Invalid source bundle lock: ${path}`);
   let previous = "";
@@ -71,11 +68,10 @@ export function parseSourceBundleLock(path: string, native: boolean, value: unkn
   return lock;
 }
 /** Bind the patch bytes as well as the upstream and postimage identities before touching a checkout. */
-export function readSourceBundle(source: string, native = false): BoundBundle {
-  const name = native ? "native-omp" : "omp-ulw.overlay";
-  const path = join(source, `${name}.lock`);
-  const value = parseSourceBundleLock(path, native, readJson(path));
-  const patch = join(source, native ? "native-omp.patch" : "omp-ulw.patch");
+export function readSourceBundle(source: string): BoundBundle {
+  const path = join(source, "native-omp.lock");
+  const value = parseSourceBundleLock(path, readJson(path));
+  const patch = join(source, "native-omp.patch");
   if (!regularFile(patch) || digest(readFileSync(patch)) !== value.patchSha256)
     throw new Error(`Source bundle patch digest differs: ${patch}`);
   return { lock: value, patch, identity: digest(Buffer.concat([readFileSync(path), readFileSync(patch)])) };
@@ -184,13 +180,12 @@ export function assertSourceBundle(checkout: string, bundle: BoundBundle, home: 
     git(["diff-files", "--ignore-submodules=none", "--name-only"]) !== ""
   )
     throw new Error("Bound source checkout differs from its upstream, patch or resulting tree");
-  const nativeExport = bundle.lock.nativeVersion && assertNativeExport(checkout, false);
+  const nativeExport = assertNativeExport(checkout, false);
   for (const path of git(["ls-files", "--others", "--directory", "-z"]).split("\0").filter(Boolean)) {
     if (
-      bundle.lock.nativeVersion &&
-      (path.split("/").includes("node_modules") ||
-        /^packages\/natives\/native\/pi_natives\.[a-z0-9-]+\.node$/.test(path) ||
-        (nativeExport && path === "packages/coding-agent/export-assets/"))
+      path.split("/").includes("node_modules") ||
+      /^packages\/natives\/native\/pi_natives\.[a-z0-9-]+\.node$/.test(path) ||
+      (nativeExport && path === "packages/coding-agent/export-assets/")
     )
       continue;
     throw new Error(`Bound source has an unexpected untracked path: ${path}`);

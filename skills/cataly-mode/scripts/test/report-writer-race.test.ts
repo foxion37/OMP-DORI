@@ -22,7 +22,6 @@ test.each(["milestone", "done", "blocker"] as const)(
         key,
         title: "race",
         thread: "none",
-        pane: "5007",
         sessionRef: { runtime: "tern", id: "5007" },
         brief: "/b.md",
         done: "file /done.md",

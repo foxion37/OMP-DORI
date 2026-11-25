@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import ts from "typescript";
@@ -16,17 +16,7 @@ afterEach(() => {
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "cataly-ci-fixtures-"));
   roots.push(root);
-  const ulw = join(root, "ref/omp-ulw/index.ts");
-  mkdirSync(dirname(ulw), { recursive: true });
-  writeFileSync(ulw, 'throw new Error("fixture source was executed");\n');
-  const compat = join(root, "compat.ts");
-  writeFileSync(compat, 'throw new Error("fixture source was executed");\n');
-  return {
-    root,
-    ulw,
-    compat,
-    env: { CATALY_TEST_OMP_ROOT: nativeHost, CATALY_TEST_COMPAT_ULW_ENTRY: compat },
-  };
+  return { root, env: { CATALY_TEST_OMP_ROOT: nativeHost } };
 }
 
 test.each([
@@ -46,30 +36,10 @@ test.each([
   },
 );
 
-test("the prerequisite check accepts files and the actual exact native host without executing fixture code", async () => {
+test("the prerequisite check accepts the actual exact native host", async () => {
   const f = fixture();
-  const before = readFileSync(f.ulw, "utf8");
-  await checkTestFixtures(f.root, f.env);
-  expect(readFileSync(f.ulw, "utf8")).toBe(before);
-  expect(readFileSync(f.compat, "utf8")).toBe('throw new Error("fixture source was executed");\n');
+  expect((await checkTestFixtures(f.root, f.env)).native.root).toBe(realpathSync(nativeHost));
 });
-
-test.each(["missing-ulw", "directory-ulw", "missing-compat", "relative-compat", "directory-compat"])(
-  "%s cannot become a successful full gate with skipped fixture tests",
-  async (kind) => {
-    const f = fixture();
-    if (kind === "missing-ulw" || kind === "directory-ulw") {
-      rmSync(f.ulw);
-      if (kind === "directory-ulw") mkdirSync(f.ulw);
-    } else if (kind === "relative-compat") {
-      f.env.CATALY_TEST_COMPAT_ULW_ENTRY = "compat.ts";
-    } else {
-      rmSync(f.compat);
-      if (kind === "directory-compat") mkdirSync(f.compat);
-    }
-    await expect(checkTestFixtures(f.root, f.env)).rejects.toThrow("existing absolute fixture file");
-  },
-);
 
 test.each([undefined, "relative/native"])("an absent or relative native host is refused: %j", async (host) => {
   const f = fixture();
@@ -161,7 +131,7 @@ test("a missing public native API fails with its exact resolved module and featu
 
 test("the real prerequisite CLI exits nonzero without a successful marker for missing prerequisites", () => {
   const child = Bun.spawnSync([process.execPath, join(source, "scripts/check-test-fixtures.ts")], {
-    env: { ...process.env, CATALY_TEST_COMPAT_ULW_ENTRY: "relative.ts" },
+    env: { ...process.env, CATALY_TEST_OMP_ROOT: "relative/native" },
     stdin: "ignore",
   });
   expect(child.exitCode).toBe(1);

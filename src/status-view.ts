@@ -1,8 +1,10 @@
-// The lane board `cataly status` prints: open lanes first, the longest without progress on top, closed lanes folded into
-// one line each, every line within WIDTH terminal columns except a key, ref, link or id wider than that, kept whole.
+// The lane board `cataly harness status` prints: open lanes first, the longest without progress on top, closed lanes
+// folded into one line each, every line within WIDTH terminal columns except a key, ref, link or id wider than that,
+// kept whole.
 import { ageText, fitEnd, hhmm, indented, oneLine, padCols, WIDTH, wrap } from "./fit.ts";
-import { progressOf, waitingOn, waitingSinceOf, waitingTarget } from "./progress.ts";
-import { refText } from "./refs.ts";
+import { waitingOn, waitingSinceOf, waitingTarget } from "./progress.ts";
+import { shortRef } from "./refs.ts";
+import type { SessionRef } from "./runtime/types.ts";
 import type { Lane } from "./store-types.ts";
 
 /** Columns the progress field and the start of the last entry need beside a lane's name; fewer moves them below it. */
@@ -26,20 +28,16 @@ function tailOf(l: Lane, cols: number): string {
 }
 
 /**
- * `key  status  runtime  ref  progress <age> (<since>)  <tail>`. The key and the ref are never cut (keys share
- * prefixes, and a cut one names no lane a command can take): their columns are as wide as the widest open lane's, and
- * the rest is cut to the line. When they leave less than BODY_MIN columns (WAITING_MIN for a waiting lane, so its
- * target and time are never cut off the line's end), the rest goes on an indented line below. A waiting target the line
- * cut follows whole on one indented line: a cut link or job id names nothing to check.
+ * `key  status  ref  progress <age> (<since>)  <tail>`. The ref names its runtime once, as its prefix (`tern:42`,
+ * `headless:3f2a9c1d`), a headless id cut to the unique prefix commands resolve (shortRef). The key and the ref are
+ * otherwise never cut (keys share prefixes, and a cut one names no lane a command can take): their columns are as wide
+ * as the widest open lane's, and the rest is cut to the line. When they leave less than BODY_MIN columns (WAITING_MIN
+ * for a waiting lane, so its target and time are never cut off the line's end), the rest goes on an indented line
+ * below. A waiting target the line cut follows whole on one indented line: a cut link or job id names nothing to check.
  */
-function laneLine(l: Lane, now: number, cols: { key: number; ref: number }): string[] {
-  const since = progressOf(l);
-  const id = [
-    padCols(l.key, cols.key),
-    padCols(l.status, 8),
-    padCols(l.sessionRef.runtime, 5),
-    padCols(refText(l.sessionRef), cols.ref),
-  ].join(" ");
+function laneLine(l: Lane, now: number, ref: string, cols: { key: number; ref: number }): string[] {
+  const since = l.progressAt;
+  const id = [padCols(l.key, cols.key), padCols(l.status, 8), padCols(ref, cols.ref)].join(" ");
   const progress = padCols(`progress ${ageText(now - since)} (${hhmm(since)})`, 23);
   const body = (room: number) => fitEnd(`${progress} ${tailOf(l, room - 24)}`.trimEnd(), room);
   const room = WIDTH - Bun.stringWidth(id) - 1;
@@ -59,13 +57,15 @@ function closedLine(status: string, lanes: readonly Lane[], now: number): string
   return fitEnd(`${status} ${lanes.length} (latest ${latest.key}, ${ageText(now - at)} ago)`, WIDTH);
 }
 
-export function laneBoard(lanes: readonly Lane[], now: number): string[] {
+/** `known`: every ref a shortened one is resolved against (knownRefs), so each ref shown names exactly its session. */
+export function laneBoard(lanes: readonly Lane[], now: number, known: readonly SessionRef[]): string[] {
   const open = lanes
     .filter((l) => l.status === "working" || l.status === "waiting" || l.status === "ready")
-    .sort((a, b) => progressOf(a) - progressOf(b));
-  const widest = (cols: (l: Lane) => string) => Math.max(0, ...open.map((l) => Bun.stringWidth(cols(l))));
-  const cols = { key: widest((l) => l.key), ref: widest((l) => refText(l.sessionRef)) };
-  const lines = open.flatMap((l) => laneLine(l, now, cols));
+    .sort((a, b) => a.progressAt - b.progressAt);
+  const rows = open.map((l) => ({ l, ref: shortRef(l.sessionRef, known) }));
+  const widest = (texts: readonly string[]) => Math.max(0, ...texts.map((t) => Bun.stringWidth(t)));
+  const cols = { key: widest(open.map((l) => l.key)), ref: widest(rows.map((r) => r.ref)) };
+  const lines = rows.flatMap((r) => laneLine(r.l, now, r.ref, cols));
   for (const status of ["lost", "done"]) {
     const closed = lanes.filter((l) => l.status === status);
     if (closed.length) lines.push(closedLine(status, closed, now));

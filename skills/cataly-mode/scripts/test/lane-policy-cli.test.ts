@@ -22,14 +22,14 @@ beforeEach(async () => {
   writeLanePolicy(policy);
   binding = policyBinding(policy);
   config = join(state.dir, "config.json");
-  writeFileSync(config, JSON.stringify({ stateDir: state.dir, ompUlwPath: "", agentCommand: ["omp"] }));
+  writeFileSync(config, JSON.stringify({ stateDir: state.dir, agentCommand: ["omp"] }));
   await new Registry(state.dir).create({
     key: "demo",
     title: "test",
     brief: "/test/brief.md",
     done: "file /test/done",
     thread: "none",
-    pane: "w:p1",
+    sessionRef: { runtime: "tern", id: "1" },
     cwd: state.dir,
     openedAt: new Date(NOW).toISOString(),
   });
@@ -99,7 +99,7 @@ test("a policy-bound lane cannot grant its own exception", async () => {
   expect(checkPolicyCommand(binding, "sudo true", NOW)).toContain("BLOCKED");
 });
 
-test.each(["omp-dori:lane-policy", "omp-cataly:lane-policy"])(
+test.each(["omp-cataly:lane-policy"])(
   "a resumed %s policy transcript cannot grant exceptions without a launch environment",
   async (customType) => {
     checkPolicyCommand(binding, "sudo true", NOW);

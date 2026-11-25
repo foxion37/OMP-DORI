@@ -39,8 +39,6 @@ export type SourceManifest = {
   readonly hash: string;
   readonly files: readonly SourceEntry[];
   readonly excluded: readonly string[];
-  /** Source snapshots bind even an empty or absent opaque local ULW library; application-data manifests omit this. */
-  readonly ulwPresent?: boolean;
 };
 export type UpdateInputs = {
   readonly baseUpstream: string;
@@ -106,7 +104,7 @@ export type PortResult = {
 };
 export type PreActionNotice = {
   readonly job: string;
-  readonly action: "main-publication" | "cataly-replacement" | "dori-replacement";
+  readonly action: "main-publication" | "cataly-replacement";
   readonly intentHash: string;
   readonly commandIndex: number;
   state: "sending" | "accepted" | "failed" | "ambiguous";

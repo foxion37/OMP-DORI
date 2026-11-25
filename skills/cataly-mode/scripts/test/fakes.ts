@@ -33,7 +33,7 @@ export const nativeLane = (
   w: World,
   n: number,
   patch: Partial<FakeSession> = {},
-): Pick<Lane, "pane" | "sessionRef" | "session" | "sessionFile"> => {
+): Pick<Lane, "sessionRef" | "session" | "sessionFile"> => {
   const id = sid(n);
   const session: FakeSession = {
     status: "idle",
@@ -48,7 +48,6 @@ export const nativeLane = (
   };
   w.sessions[id] = session;
   return {
-    pane: id,
     sessionRef: href(id),
     ...(session.sessionId === undefined ? {} : { session: session.sessionId }),
     ...(session.sessionFile === undefined ? {} : { sessionFile: session.sessionFile }),
@@ -121,6 +120,12 @@ export const withState = (): TestState => {
   const dir = mkdtempSync(join(tmpdir(), "cataly-test-"));
   return { dir, done: () => rmSync(dir, { recursive: true, force: true }) };
 };
+
+/** On Windows, `inbound telegram` refuses before reading any other argument. */
+export const refusedOnWindows = (args: readonly string[], err: string): string =>
+  process.platform === "win32" && args[0] === "inbound" && args[1] === "telegram"
+    ? "Telegram intake is not supported on Windows"
+    : err;
 
 /** Runtimes whose only runtime is the world's fake headless supervisor. */
 export const fakeRuntimes = (w: World, stateDir: string): ChosenRuntimes => {

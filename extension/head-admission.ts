@@ -2,11 +2,11 @@ import { isAbsolute } from "node:path";
 import { routeNativeHead } from "../skills/cataly-mode/scripts/src/messenger/native-routing.ts";
 import { isHeadAdmissionProtocol } from "../skills/cataly-mode/scripts/src/messenger/head-admission-protocol.ts";
 import type { HeadReply, HeadRequest, HeadResult } from "../skills/cataly-mode/scripts/src/messenger/head-admission.ts";
-import { MONITOR_MESSAGE, SESSION_WIRE } from "../skills/cataly-mode/scripts/src/session-compat.ts";
+import { MONITOR_MESSAGE } from "../skills/cataly-mode/scripts/src/session-compat.ts";
 import { hasHeadReceipt, headReceipt } from "./head-receipt.ts";
 
 type Head = { id: string; file: string; entries(): readonly unknown[]; ensureOnDisk(): Promise<void> };
-type AdmissionDetails = { ompDoriAdmission: { identity: string; fingerprint: string } };
+type AdmissionDetails = { ompCatalyAdmission: { identity: string; fingerprint: string } };
 type Binding = {
   source: number;
   session: string;
@@ -109,7 +109,7 @@ export class HeadAdmissions {
         : { outcome: "unresolved" };
     if (request.headFile !== head.file) return { outcome: "unresolved" };
     if (decision?.action === "reject" || (!decision && !accepts)) {
-      this.reject({ ompDoriAdmission: { identity: request.identity, fingerprint: request.fingerprint } });
+      this.reject({ ompCatalyAdmission: { identity: request.identity, fingerprint: request.fingerprint } });
       await head.ensureOnDisk();
       const rejected = await headReceipt(head.file, request.identity, request.fingerprint);
       return rejected ? { ...rejected, headFile: head.file, headPid: process.pid } : { outcome: "unresolved" };
@@ -126,7 +126,7 @@ export class HeadAdmissions {
       this.changed(this.#pending.size);
       const delivered = Promise.resolve(
         binding.deliver(request.content, {
-          ompDoriAdmission: { identity: request.identity, fingerprint: request.fingerprint },
+          ompCatalyAdmission: { identity: request.identity, fingerprint: request.fingerprint },
         }),
       ).then(() => pending.promise);
       // Stop releases the receipt wait even during async delivery; its later rejection remains observed.
@@ -143,19 +143,11 @@ export class HeadAdmissions {
       event as {
         message?: {
           customType?: string;
-          details?: {
-            ompCatalyAdmission?: { identity?: string; fingerprint?: string };
-            ompDoriAdmission?: { identity?: string; fingerprint?: string };
-          };
+          details?: { ompCatalyAdmission?: { identity?: string; fingerprint?: string } };
         };
       } | null
     )?.message;
-    const admission =
-      message?.customType === SESSION_WIRE.monitorMessage
-        ? message.details?.ompDoriAdmission
-        : message?.customType === MONITOR_MESSAGE
-          ? message.details?.ompCatalyAdmission
-          : undefined;
+    const admission = message?.customType === MONITOR_MESSAGE ? message.details?.ompCatalyAdmission : undefined;
     if (typeof admission?.identity !== "string") return;
     const pending = this.#pending.get(admission.identity);
     if (!pending || pending.fingerprint !== admission.fingerprint) return;

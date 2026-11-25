@@ -95,7 +95,7 @@ export async function probeNativeCli(
         prefix = [bound];
         nativeEntry = receipt.entry;
         if (managedConsumer) consumerSource = source;
-        revision = readSourceBundle(source, true).lock.commit;
+        revision = readSourceBundle(source).lock.commit;
       } catch {
         return {
           ...physical,

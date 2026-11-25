@@ -11,10 +11,16 @@ mod discord_split;
 mod frames;
 #[cfg(unix)]
 mod harness;
+#[cfg(unix)]
+mod headless;
+#[cfg(unix)]
+mod json;
 mod omp;
 #[cfg(unix)]
 mod routing;
 mod rpc;
+#[cfg(unix)]
+mod util;
 
 #[derive(Debug, Parser)]
 #[command(version, about = "Cataly Native controller for stock OMP")]
@@ -67,6 +73,13 @@ enum Command {
     #[cfg(unix)]
     #[command(hide = true)]
     Routing,
+    /// Supervise one reserved headless lane, lead or duty OMP session; reads its start record from stdin.
+    #[cfg(unix)]
+    #[command(hide = true)]
+    HeadlessHost {
+        /// The reservation directory `<state>/headless/<uuid>`.
+        dir: PathBuf,
+    },
 }
 
 #[derive(Serialize)]
@@ -147,6 +160,8 @@ async fn main() -> Result<()> {
         Command::DiscordPresence => Box::pin(discord::presence()).await?,
         #[cfg(unix)]
         Command::Routing => routing::run()?,
+        #[cfg(unix)]
+        Command::HeadlessHost { dir } => headless::run(&dir).await?,
     }
     Ok(())
 }

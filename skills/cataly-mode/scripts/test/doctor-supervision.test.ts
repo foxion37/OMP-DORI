@@ -126,7 +126,7 @@ test.each([true, false])(
         {
           check: "supervision",
           severity: "INFO",
-          detail: "not supervised (adopted/legacy lanes): adopted; configured ceilings do not apply",
+          detail: "not supervised (adopted lanes): adopted; configured ceilings do not apply",
         },
       ]);
       expect(result.exitCode).toBe(0);

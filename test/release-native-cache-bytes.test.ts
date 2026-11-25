@@ -9,7 +9,7 @@ import { reportNativeCache } from "../src/release/native-cache.ts";
 const posix = test.skipIf(process.platform === "win32");
 
 posix("exclusive bytes include directories and internal hardlinks once, but not externally shared files", () => {
-  const home = realpathSync(mkdtempSync(join(tmpdir(), "dori-cache-bytes-")));
+  const home = realpathSync(mkdtempSync(join(tmpdir(), "cataly-cache-bytes-")));
   try {
     const entry = join(home, ".cache/omp-cataly", `native-${process.platform}-${process.arch}-${"a".repeat(64)}`);
     const child = join(entry, "child");

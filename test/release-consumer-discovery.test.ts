@@ -20,11 +20,8 @@ const posix = test.skipIf(process.platform === "win32");
 
 posix("isolated discovery follows the active release through interrupted activation and rollback", async () => {
   const f = fixture(true);
-  const native = join(f.root, "native");
-  mkdirSync(native);
-  writeFileSync(
-    join(native, "omp"),
-    `#!${process.execPath}
+  // Each release's own launcher reports the extension and discovery overlay the wrapper selected for it.
+  const launcher = `#!${process.execPath}
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 const args = process.argv.slice(2);
@@ -34,27 +31,24 @@ const overlay = readFileSync(configs.at(-1), "utf8");
 const directory = JSON.parse(overlay.match(/^    - (.+)$/m)[1]);
 console.log(JSON.stringify({
   payload: readFileSync(join(dirname(extension), "payload.txt"), "utf8"),
-  skill: readFileSync(join(directory, "omp-dori-mode/SKILL.md"), "utf8")
+  skill: readFileSync(join(directory, "omp-cataly-mode/SKILL.md"), "utf8")
 }));
-`,
-    { mode: 0o755 },
-  );
+`;
   const previous = process.env["PATH"];
-  process.env["PATH"] = `${native}:${previous ?? ""}`;
   try {
-    const first = f.release("first\n");
+    const first = f.release("first\n", launcher);
     const one = await installBundle(f.paths, first.bundle, undefined);
-    const second = f.release("second\n");
+    const second = f.release("second\n", launcher);
     const two = await installBundle(f.paths, second.bundle, one);
     const launch = (marker: string): void => {
-      const result = Bun.spawnSync([join(f.paths.dori, "bin/omp")], {
+      const result = Bun.spawnSync([join(f.paths.cataly, "bin/omp")], {
         env: { HOME: f.paths.home, PATH: previous },
       });
       expect(result.exitCode, result.stderr.toString()).toBe(0);
       const observed = JSON.parse(result.stdout.toString());
       expect(observed.payload).toBe(`${marker}\n`);
       expect(observed.skill).toContain(marker);
-      expect(observed.skill).toContain("name: omp-dori-mode");
+      expect(observed.skill).toContain("name: omp-cataly-mode");
     };
     launch("second");
     replacePointer(f.paths.live, releasePath(f.paths, two.current), releasePath(f.paths, one.current));
@@ -89,7 +83,7 @@ posix.each(["bytes", "file symlink", "link target", "mode"] as const)(
         f.paths.root,
         "consumer-discovery",
         basename(releasePath(f.paths, installed.current)),
-        "skills/omp-dori-mode",
+        "skills/omp-cataly-mode",
       );
       const skill = join(skillDir, "SKILL.md");
       const modified = `${readFileSync(skill, "utf8")}owner change\n`;

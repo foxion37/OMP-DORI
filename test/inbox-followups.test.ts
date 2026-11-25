@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { main } from "../src/cli.ts";
 import { dutyTick } from "../src/duty.ts";
 import { flushInbox } from "../src/inbox.ts";
-import { formatRef, type SessionRef } from "../src/runtime/types.ts";
+import { formatRef } from "../src/runtime/types.ts";
 import { captureIo, PANE, setup } from "./inbox-setup.ts";
 import { href } from "./fake.ts";
 
@@ -11,16 +11,14 @@ import { href } from "./fake.ts";
 const REF = href(PANE);
 const SHOWN = formatRef(REF);
 
-describe("a legacy typed entry (#108 1)", () => {
-  test("forwarded by an older binary from a herdr pane to an idle native lane, it is held instead of submitted", async () => {
+describe("a typed entry in a native inbox (#108 1)", () => {
+  test("an idle native lane has no terminal input to submit, so it is held instead of submitted", async () => {
     const s = setup();
-    const old: SessionRef = { runtime: "herdr", id: "w1:p2" };
-    s.d.store.saveInbox(old, [
+    s.d.store.saveInbox(REF, [
       { at: s.w.clock, from: "cli", text: "half typed", attempt: { at: s.w.clock + 1, state: "typed" } },
     ]);
-    await Bun.write(`${s.d.store.inboxPath(old)}.forward`, `${SHOWN}\n`);
 
-    expect(await flushInbox(s.d, old)).toBe("held");
+    expect(await flushInbox(s.d, REF)).toBe("held");
     expect(s.d.store.queued(REF).map((msg) => msg.attempt?.state)).toEqual(["ambiguous"]);
     expect(s.pane.received).toEqual([]);
   });

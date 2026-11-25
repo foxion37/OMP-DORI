@@ -19,10 +19,10 @@ test("a Linux process table whose working directories cannot be read is unavaila
 const posix = test.skipIf(process.platform === "win32");
 
 posix("when no working directory can be read, the report says so for every identity", () => {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "dori-native-cwd-")));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "cataly-native-cwd-")));
   roots.push(root);
   const home = join(root, "home");
-  const f = overlayFixture(join(root, "source"), join(root, "upstream"), true, `unused ${root}`);
+  const f = overlayFixture(join(root, "source"), join(root, "upstream"), `unused ${root}`);
   const receipt = nativeCacheFixture(f.source, home, f.checkout);
   rmSync(f.source, { recursive: true });
 
@@ -36,10 +36,10 @@ posix("when no working directory can be read, the report says so for every ident
 
 test("a live process whose working directory cannot be read is reported by pid; an exited one is not", async () => {
   if (process.platform !== "linux") return;
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "dori-native-cwd-")));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "cataly-native-cwd-")));
   roots.push(root);
   const home = join(root, "home");
-  const f = overlayFixture(join(root, "source"), join(root, "upstream"), true, `hidden ${root}`);
+  const f = overlayFixture(join(root, "source"), join(root, "upstream"), `hidden ${root}`);
   const receipt = nativeCacheFixture(f.source, home, f.checkout);
   rmSync(f.source, { recursive: true });
   // Not dumpable, so even its own user cannot read its /proc cwd; it works inside the cache entry.

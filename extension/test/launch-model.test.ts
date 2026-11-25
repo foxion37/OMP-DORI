@@ -10,7 +10,7 @@ const exact = { provider: "subscription", id: "exact" };
 test("rpc-ui binds the native catalog proof to the launch and guards the first goal turn", async () => {
   const keys = ["CATALY_CONFIG", "CATALY_STATE_DIR", "CATALY_HEADLESS_ID"];
   const previous = keys.map((key) => process.env[key]);
-  const stateDir = useConfig("");
+  const stateDir = useConfig();
   const refId = "00000000-0000-4000-8000-000000000001";
   const sessionId = "headless-launch";
   const settings: FakeOptions = {
@@ -109,7 +109,7 @@ for (const [name, options, status, thinking] of [
   test(`native launch guard: ${name}`, async () => {
     const keys = ["CATALY_CONFIG", "CATALY_STATE_DIR", "CATALY_HEADLESS_ID"];
     const previous = keys.map((key) => process.env[key]);
-    const stateDir = useConfig(join(import.meta.dir, "fake-ulw.ts"));
+    const stateDir = useConfig();
     process.env.CATALY_HEADLESS_ID = "00000000-0000-4000-8000-000000000002";
     const selector = "selector" in options ? options.selector : "subscription/exact";
     const settings: FakeOptions = {
@@ -175,7 +175,7 @@ for (const boundary of ["session", "provider"] as const) {
         const home = mkdtempSync(join(tmpdir(), "cataly-native-launch-"));
         const config = join(home, "config.json");
         try {
-          writeFileSync(config, JSON.stringify({ stateDir: join(home, "state"), ompUlwPath: "" }));
+          writeFileSync(config, JSON.stringify({ stateDir: join(home, "state") }));
           const fixture = join(import.meta.dir, "../../test/fixtures/omp-native-host/launch-model.ts");
           const child = Bun.spawn([process.execPath, "--no-env-file", fixture, boundary, availability], {
             cwd: home,

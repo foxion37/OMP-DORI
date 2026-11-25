@@ -24,7 +24,7 @@ try {
     console.log("install.sh [--version vX.Y.Z] [--from DIST] [--home PATH]\nCATALY_RELEASE selects an explicit tag. Releases run on headless OMP. No services are started.");
     process.exit(0);
   }
-  const version = args.values.version ?? process.env.CATALY_RELEASE ?? process.env.DORI_RELEASE;
+  const version = args.values.version ?? process.env.CATALY_RELEASE;
   if (version !== undefined && !/^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)) fail("Select an exact --version vX.Y.Z");
   if (args.values.from !== undefined && !args.values.from.trim()) fail("--from requires a directory");
   const atLeast = (text, wanted) => {
@@ -36,12 +36,12 @@ try {
   const linux = process.platform === "linux" && process.arch === "x64";
   const darwin = process.platform === "darwin" && process.arch === "arm64";
   if (!linux && !darwin) fail(`Unsupported host: ${process.platform}/${process.arch}/headless`);
-  const installMode = process.env.CATALY_INSTALL_MODE ?? process.env.DORI_INSTALL_MODE;
+  const installMode = process.env.CATALY_INSTALL_MODE;
   const mode = installMode ?? (darwin ? "side" : "primary");
   if (mode !== "primary" && mode !== "side") fail("CATALY_INSTALL_MODE must be primary or side");
   if (args.values.home !== undefined && !args.values.home.trim()) fail("--home requires a directory");
-  const currentPrimary = resolve(homedir(), ".cataly"), historicalPrimary = resolve(homedir(), ".dori");
-  const explicitHome = args.values.home ?? (mode === "side" ? (process.env.OMP_CATALY_HOME ?? process.env.OMP_DORI_HOME) : undefined);
+  const primaryHome = resolve(homedir(), ".cataly");
+  const explicitHome = args.values.home ?? (mode === "side" ? process.env.OMP_CATALY_HOME : undefined);
   const physical = (path) => {
     const suffix = [];
     let ancestor = path;
@@ -50,43 +50,28 @@ try {
   };
   const stat = (path) => lstatSync(path, { throwIfNoEntry: false });
   let home, configPath, configEntry, config = {};
-  const selectHome = () => {
-    const selectedHome = explicitHome ?? (mode === "side" ? join(homedir(), ".omp-cataly") : currentPrimary);
+  const resolveSelectedHome = () => {
+    const selectedHome = explicitHome ?? (mode === "side" ? join(homedir(), ".omp-cataly") : primaryHome);
     if (!isAbsolute(selectedHome)) fail("--home / OMP_CATALY_HOME must be an absolute installation home");
     home = resolve(selectedHome);
+  };
+  resolveSelectedHome();
+  const selectHome = () => {
+    resolveSelectedHome();
     const actualHome = physical(home);
-    for (const protectedHome of [currentPrimary, historicalPrimary]) {
-      const actualPrimary = physical(protectedHome);
-      const withinPrimary = relative(actualPrimary, actualHome);
-      const containsPrimary = relative(actualHome, actualPrimary);
-      const inside = (rel) => !isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${sep}`);
-      if ((installMode === "side" || home !== protectedHome) && (inside(withinPrimary) || inside(containsPrimary)))
-        fail(`Side installation home must be outside ${protectedHome} and must not contain it`);
-    }
-    const isPrimary = home === currentPrimary || home === historicalPrimary;
+    const actualPrimary = physical(primaryHome);
+    const withinPrimary = relative(actualPrimary, actualHome);
+    const containsPrimary = relative(actualHome, actualPrimary);
+    const inside = (rel) => !isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${sep}`);
+    if ((installMode === "side" || home !== primaryHome) && (inside(withinPrimary) || inside(containsPrimary)))
+      fail(`Side installation home must be outside ${primaryHome} and must not contain it`);
+    const isPrimary = home === primaryHome;
     const source = join(home, "src");
     const sourceStat = stat(source);
-    if (stat(join(home, ".omp-cataly")) || stat(join(home, ".omp-dori")) || stat(join(home, ".git")) ||
+    if (stat(join(home, ".omp-cataly")) || stat(join(home, ".git")) ||
       (sourceStat && (!sourceStat.isSymbolicLink() ||
         dirname(resolve(home, readlinkSync(source))) !== join(home, "releases/releases"))))
       fail(`Source-owned installation at ${home}; choose another home`);
-    for (const [name, target] of [
-      ["cataly", "skills/cataly-mode/scripts/src/cli.ts"], ["cataly-harness", "src/cli.ts"],
-      ["dori", "skills/dori-mode/scripts/src/cli.ts"], ["dori-harness", "src/cli.ts"],
-      ["omp", null], ["omp-cataly", null], ["omp-dori", null],
-    ]) {
-      const path = join(home, "bin", name), entry = stat(path);
-      const consumerOwner = stat(join(home, "releases/consumer-owner.json"));
-      const managedSide = !isPrimary && consumerOwner && (stat(join(home, "releases/consumer-references.json")) ||
-        stat(join(home, "releases/consumer-references-pending.json")));
-      const actual = entry?.isSymbolicLink() ? resolve(dirname(path), readlinkSync(path)) : undefined;
-      const managedNative = name === "omp" && isPrimary && consumerOwner && actual &&
-        /^[a-f0-9]{40}-[a-f0-9]{16}\/scripts\/consumer\/omp$/.test(relative(join(home, "releases/releases"), actual));
-      const oldName = { cataly: "dori", "cataly-harness": "dori-harness", "omp-cataly": "omp-dori" }[name];
-      const compatibility = oldName && consumerOwner && actual === join(home, "bin", oldName);
-      if (entry && !managedSide && !managedNative && !compatibility && (!target || actual !== join(source, target)))
-        fail(`Unmanaged wrapper at ${path}; choose another home`);
-    }
     configPath = join(home, "config.json");
     configEntry = stat(configPath);
     if (configEntry) {
@@ -96,30 +81,39 @@ try {
       if (!object(config)) fail("Preserved config must be an object");
     }
   };
+  // An earlier version's wrappers are removed by the bridge below, so the early check accepts exactly those; the
+  // check after the bridge is strict.
+  const checkWrappers = (early = false) => {
+    const isPrimary = home === primaryHome;
+    const source = join(home, "src");
+    // A target only an omp-dori installer made: the bridge removes it.
+    const previous = /(?:^|\/)(?:bin\/(?:dori|dori-harness|omp-dori)$|skills\/dori-mode\/)/;
+    for (const [name, target] of [
+      ["cataly", "skills/cataly-mode/scripts/src/cli.ts"], ["cataly-harness", "src/cli.ts"],
+      ["omp", null], ["omp-cataly", null],
+    ]) {
+      const path = join(home, "bin", name), entry = stat(path);
+      const consumerOwner = stat(join(home, "releases/consumer-owner.json"));
+      const managedSide = !isPrimary && consumerOwner && (stat(join(home, "releases/consumer-references.json")) ||
+        stat(join(home, "releases/consumer-references-pending.json")));
+      const actual = entry?.isSymbolicLink() ? resolve(dirname(path), readlinkSync(path)) : undefined;
+      const managedNative = name === "omp" && isPrimary && consumerOwner && actual &&
+        /^[a-f0-9]{40}-[a-f0-9]{16}\/scripts\/consumer\/omp$/.test(relative(join(home, "releases/releases"), actual));
+      const old = early && entry?.isSymbolicLink() && previous.test(readlinkSync(path));
+      if (entry && !managedSide && !managedNative && !old && (!target || actual !== join(source, target)))
+        fail(`Unmanaged wrapper at ${path}; choose another home`);
+    }
+  };
+  // A home an earlier version wrote is converted in place by the bridge below; validate it afterwards too.
+  const checkPreserved = () => {
+    selectHome();
+    checkWrappers();
+    if (config.runtime !== undefined && config.runtime !== "tern") fail("Preserved config runtime must be tern when present");
+    if (config.sessionRuntime !== undefined && !["headless", "tern"].includes(config.sessionRuntime))
+      fail("Preserved config sessionRuntime must be headless or tern when present");
+  };
   selectHome();
-  // The upgrade guard; the target release's updater repeats it with lane records before activation.
-  const legacyMessage = (roles) => [
-    "This Cataly home still uses the herdr/hc terminal runtime, which this version removed.",
-    "1. Close every herdr/hc lane (`cataly status` lists them) with your previous Cataly version.",
-    `2. Remove "runtime" (if it names herdr or hc) and "sessionRuntime" from ${configPath}.`,
-    "3. Run this command again. Cataly state and OMP sessions are kept; lanes reopen on headless.",
-    ...(roles ? ["Retire the historical roles with your previous Cataly version (cataly update --retire-legacy-roles)."] : []),
-  ].join("\n");
-  if (["hc", "herdr"].includes(config.runtime) || ["hc", "herdr"].includes(config.sessionRuntime))
-    fail(legacyMessage(false));
-  if (config.runtime !== undefined && config.runtime !== "tern") fail("Preserved config runtime must be tern when present");
-  if (config.sessionRuntime !== undefined && !["headless", "tern"].includes(config.sessionRuntime))
-    fail("Preserved config sessionRuntime must be headless or tern when present");
-  const rolesPath = join(home, "roles.json");
-  const rolesEntry = stat(rolesPath);
-  if (rolesEntry) {
-    if (!rolesEntry.isFile() || rolesEntry.uid !== process.getuid() || (rolesEntry.mode & 0o022) || rolesEntry.size > 4 * 1024 * 1024)
-      fail("Unsafe historical roles.json");
-    const roles = JSON.parse(readFileSync(rolesPath, "utf8"));
-    // A running harness registers `headless:` or `tern:` refs here; any other ref is a historical herdr/hc role.
-    if (!object(roles) || Object.values(roles).some((ref) => typeof ref !== "string" || !/^(headless|tern):/.test(ref)))
-      fail(legacyMessage(true));
-  }
+  checkWrappers(true);
   if (!atLeast(Bun.version, [1, 4, 4])) fail("Bun 1.4.4+ is required");
   if (!Bun.which("git")) fail("git is required; install it before Cataly");
   const fetchBytes = async (url, limit) => {
@@ -168,15 +162,15 @@ try {
   };
   checksum("release-manifest.json", metadata);
   const manifest = JSON.parse(metadata.toString("utf8"));
-  if (!object(manifest) || manifest.version !== 1 || manifest.product !== "omp-dori" ||
+  if (!object(manifest) || manifest.version !== 2 || manifest.product !== "cataly" ||
     !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(manifest.releaseVersion) ||
     manifest.tag !== `v${manifest.releaseVersion}` || (version && manifest.tag !== version) ||
     !/^[a-f0-9]{40}$/.test(manifest.commit) || !/^[a-f0-9]{40}$/.test(manifest.tree) ||
-    !object(manifest.archive) || manifest.archive.name !== `omp-dori-${manifest.tag}.tar.gz` ||
-    manifest.archive.root !== `omp-dori-${manifest.releaseVersion}` || !object(manifest.source) ||
-    manifest.source.version !== 1 || manifest.source.ulwPresent !== false || !Array.isArray(manifest.source.files) ||
+    !object(manifest.archive) || manifest.archive.name !== `cataly-${manifest.tag}.tar.gz` ||
+    manifest.archive.root !== `cataly-${manifest.releaseVersion}` || !object(manifest.source) ||
+    manifest.source.version !== 1 || !Array.isArray(manifest.source.files) ||
     !manifest.source.files.length || !Array.isArray(manifest.source.excluded) ||
-    (manifest.source.excluded.length && JSON.stringify(manifest.source.excluded) !== '["ref/omp-ulw"]')) fail("Invalid public release manifest");
+    manifest.source.excluded.length) fail("Invalid public release manifest");
   if (release) {
     if (manifest.tag !== release.tag_name || manifest.prerelease !== release.prerelease) fail("Published release identity differs");
     const ref = await json(`/git/ref/tags/${encodeURIComponent(manifest.tag)}`);
@@ -190,7 +184,7 @@ try {
   }
   const safe = (path) => typeof path === "string" && path.length > 0 && !/[\x00-\x20\x7f\\:]/.test(path) &&
     path.split("/").every((part) => part && part !== "." && part !== "..");
-  const privateName = /^(?:\.git|node_modules|\.(?:omp-)?(?:cataly|dori)|\.omp|\.omo|\.cache|\.DS_Store|\.env|auth\.json|credentials\.json)$/;
+  const privateName = /^(?:\.git|node_modules|\.(?:omp-)?cataly|\.omp|\.omo|\.cache|\.DS_Store|\.env|auth\.json|credentials\.json)$/;
   const runtimeName = /^(?:config\.json|state|sessions|auth|bin|cache|tmp|globalextensions|ref|\.qa-home|evidence)$/;
   const expected = new Map();
   for (const entry of manifest.source.files) {
@@ -200,7 +194,7 @@ try {
         /^\.env\.(?!example$|sample$)/.test(part) || /\.(?:pem|key|p12|pfx|tmp)$/.test(part))) fail("Unsafe public source entry");
     expected.set(entry.path, entry);
   }
-  if (hash(JSON.stringify({ files: manifest.source.files, ulwPresent: false })) !== manifest.source.hash) fail("Source manifest hash differs");
+  if (hash(JSON.stringify({ files: manifest.source.files })) !== manifest.source.hash) fail("Source manifest hash differs");
   const archive = await asset(manifest.archive.name, max);
   checksum(manifest.archive.name, archive);
   if (archive.length !== manifest.archive.bytes || hash(archive) !== manifest.archive.sha256) fail("Release archive SHA256/size differs");
@@ -235,9 +229,8 @@ try {
   }
   if (!ended || files.length !== expected.size) fail("Release archive omits manifest source");
   const nativeFile = files.find((file) => file.path === "release-headless.json");
-  const native19 = (version) => typeof version === "string" && /^19\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version);
   const omp = manifest.requirements?.omp;
-  if (!nativeFile || (omp !== "18.20.0" && !native19(omp)))
+  if (!nativeFile || typeof omp !== "string" || !/^19\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(omp))
     fail(`Release ${manifest.tag} has no bound headless profile; this installer installs only headless releases`);
   const native = new Set();
   const capabilities = JSON.parse(decoder.decode(nativeFile.bytes));
@@ -254,18 +247,6 @@ try {
     native.add(profile);
   }
   if (!native.has(`${process.platform}/${process.arch}/headless`)) fail("Release does not support this host");
-  // Bootstrapping an older tag runs that tag's updater, which cannot enforce newer protocol retention itself.
-  for (const name of ["consumer-installed.json", "consumer-journal.json"]) {
-    const path = join(home, "releases", name);
-    const entry = stat(path);
-    if (!entry) continue;
-    if (!entry.isFile() || entry.uid !== process.getuid() || (entry.mode & 0o022)) fail("Unsafe consumer release receipt");
-    const receipt = JSON.parse(readFileSync(path, "utf8"));
-    const selected = name === "consumer-journal.json" ? [receipt.before?.current, receipt.after?.current] : [receipt.current];
-    for (const current of selected)
-      if (current && native19(current.requirements?.omp) && !native19(omp))
-        fail("Install cannot downgrade the bound runtime protocol; use rollback with its required tools");
-  }
   temporary = mkdtempSync(join(realpathSync(tmpdir()), "cataly-bootstrap-"));
   const extracted = join(temporary, "source"), dist = join(temporary, "dist");
   mkdirSync(extracted, { mode: 0o700 }); mkdirSync(dist, { mode: 0o700 });
@@ -276,10 +257,22 @@ try {
   writeFileSync(join(dist, "release-manifest.json"), metadata, { flag: "wx", mode: 0o600 });
   writeFileSync(join(dist, "SHA256SUMS"), sumsBytes, { flag: "wx", mode: 0o600 });
   writeFileSync(join(dist, manifest.archive.name), archive, { flag: "wx", mode: 0o600 });
+  // The one-way bridge from previous installations, shipped by this release. It runs from the extracted source, which
+  // is the version being installed: first the import, before the installer reads the preserved configuration, then,
+  // after a successful install, the cleanup and the handover of a managed deployment.
+  const bridge = join(extracted, "scripts/previous-install/cli.ts");
+  const bridged = lstatSync(bridge, { throwIfNoEntry: false })?.isFile() === true;
+  const bridgeRun = (phase) => Bun.spawnSync(
+    [process.execPath, bridge, phase, "--home", home, "--mode", mode, ...(phase === "retire" ? ["--source", join(home, "src")] : [])],
+    { stdin: "inherit", stdout: "inherit", stderr: "inherit" });
+  if (bridged) {
+    const imported = bridgeRun("import");
+    if (imported.exitCode !== 0) fail(`Import of the previous installation into ${home} held; nothing was installed`);
+  }
+  checkPreserved();
   const env = { ...process.env };
-  for (const prefix of ["CATALY", "DORI"])
-    for (const key of ["HOME", "CONFIG", "STATE_DIR", "RUNTIME", "CMD", "AGENT_CMD", "AGENT_ARGV", "OMP_ULW_PATH", "MANAGED_STARTUP"])
-      delete env[`${prefix}_${key}`];
+  for (const key of ["HOME", "CONFIG", "STATE_DIR", "RUNTIME", "CMD", "AGENT_CMD", "AGENT_ARGV", "MANAGED_STARTUP"])
+    delete env[`CATALY_${key}`];
   env.CATALY_HOME = home;
   env.CATALY_CONFIG = configPath;
   const childArgs = [process.execPath, join(extracted, "src/release/cli.ts"),
@@ -287,6 +280,8 @@ try {
   const child = Bun.spawn(childArgs,
     { stdin: "inherit", stdout: "inherit", stderr: "inherit", env });
   process.exitCode = await child.exited;
+  if (process.exitCode === 0 && bridged && bridgeRun("retire").exitCode !== 0)
+    console.error(`Previous installation cleanup held for ${home}; the next install retries`);
 } catch (error) {
   console.error(`Cataly bootstrap held: ${error instanceof Error ? error.message : String(error)}`);
   process.exitCode = 1;

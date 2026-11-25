@@ -18,15 +18,9 @@ import { saveJson } from "./state.ts";
 import type { SourceEntry, SourceManifest, UpdateJob } from "./types.ts";
 
 function publicManifest(stored: SourceManifest): SourceManifest {
-  const files = stored.files.filter((file) => file.path !== "ref/omp-ulw" && !file.path.startsWith("ref/omp-ulw/"));
+  const files = stored.files;
   if (!files.length) throw new UpdateError("public source export is empty");
-  return {
-    version: 1,
-    hash: digest(JSON.stringify({ files, ulwPresent: false })),
-    files,
-    excluded: stored.ulwPresent ? ["ref/omp-ulw"] : [],
-    ulwPresent: false,
-  };
+  return { version: 1, hash: digest(JSON.stringify({ files })), files, excluded: [] };
 }
 
 /** Publication has exactly one source of paths: the checked manifest, never a Git index, ignore rule or source walk. */
@@ -143,22 +137,21 @@ export async function publicCommit(
   process: PublicationProcess,
   job: UpdateJob,
   manifest: SourceManifest,
-  intent: Pick<PublicationRecord, "expectedMain" | "basis" | "branch">,
+  intent: Pick<PublicationRecord, "expectedMain" | "basis">,
 ): Promise<{ readonly commit: string; readonly tree: string }> {
   const source = materializePublic(job, manifest);
   const treeHash = await publicTree(process, source, manifest);
   if (!sameManifest(sourceManifest(source), manifest))
     throw new UpdateError("public export changed while writing Git objects");
   assertSource(job);
-  const { expectedMain, basis, branch } = intent;
-  const brand = branch === `refs/heads/dori-update/${job.id}` ? "Dori" : "Cataly";
+  const { expectedMain, basis } = intent;
   const message = [
-    `Port ${brand} upstream ${job.upstream.slice(0, 12)} to OMP`,
+    `Port Cataly upstream ${job.upstream.slice(0, 12)} to OMP`,
     "",
     `Upstream-Commit: ${job.upstream}`,
     `Upstream-Base: ${job.baseUpstream}`,
-    `${brand}-Source-SHA256: ${job.sourceHash}`,
-    `${brand}-Export-SHA256: ${manifest.hash}`,
+    `Cataly-Source-SHA256: ${job.sourceHash}`,
+    `Cataly-Export-SHA256: ${manifest.hash}`,
     ...(basis.kind === "initial-source" ? ["Initial-Source-Basis: historical-replay"] : []),
     "",
   ].join("\n");

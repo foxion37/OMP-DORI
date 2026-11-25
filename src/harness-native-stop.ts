@@ -11,8 +11,7 @@ import {
 import { recordStoppedLead } from "./harness-native-resume.ts";
 import type { Deps } from "./harness.ts";
 import { retireTerminalRoles } from "./harness-terminal-roles.ts";
-import { nonEmpty, pendingLead } from "./inbox-files.ts";
-import { hasInboxForward } from "./inbox-forward.ts";
+import { pendingLead } from "./inbox-files.ts";
 import { inboxSealed, lockInboxFiles, lockRoute, sealNativeInbox } from "./inbox-spool.ts";
 import { Refusal } from "./refusal.ts";
 import { refText, sameSession } from "./refs.ts";
@@ -89,7 +88,6 @@ export async function stopNativeHarness(d: Deps): Promise<void> {
         const queue = lockInboxFiles(root, binding.ref, d.now());
         if (!queue) throw new Refusal("inbox flush is in progress; retry after it settles");
         unlock.push(queue);
-        if (hasInboxForward(root, binding.ref)) throw new Refusal("inbox routing is unresolved");
         const entry = laneEntry(rt.stateDir, binding.ref);
         const receipt = entry?.reservation.role === role && readPrivate<StopReceipt>(join(entry.dir, "stopped.json"));
         if (receipt) {
@@ -103,7 +101,7 @@ export async function stopNativeHarness(d: Deps): Promise<void> {
           stopped.add(role);
         }
         const pending = d.store.queued(binding.ref).length > 0 || d.store.mergePending(binding.ref);
-        if (nonEmpty(`${d.store.inboxPath(binding.ref)}.merging`) || (pending && !stopped.has(role)))
+        if (pending && !stopped.has(role))
           throw new Refusal(
             `pending inbox entries; let duty flush or inspect cataly harness inbox list ${refText(binding.ref)}`,
           );

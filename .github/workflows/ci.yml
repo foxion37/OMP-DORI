@@ -23,11 +23,11 @@ jobs:
         with:
           fixtures: all
       - run: bun run ci
-      - name: Verify bound native session ownership and ULW code-mode bridges
+      - name: Verify bound native session ownership
         timeout-minutes: 20
         run: |
           set -euo pipefail
-          smoke="$RUNNER_TEMP/ulw-native-compatibility"
+          smoke="$RUNNER_TEMP/native-compatibility"
           mkdir -m 700 "$smoke" "$smoke/home"
           native=$(bun scripts/source-dependencies.ts native "$GITHUB_WORKSPACE" "$smoke/home")
           bun scripts/source-dependencies.ts assert-native "$GITHUB_WORKSPACE" "$smoke/home"
@@ -41,8 +41,3 @@ jobs:
               bun test --timeout 15000 packages/coding-agent/test/agent-session-next-turn-ownership.test.ts
           )
           bun scripts/check-native-doctor.ts "$smoke/home"
-          for check in code-mode-host-check code-mode-task-host-check; do
-            env -i HOME="$smoke/home" LANG=C.UTF-8 \
-              PATH="$native/bin:$(dirname "$(command -v bun)"):/usr/bin:/bin" \
-              bun "$GITHUB_WORKSPACE/ref/omp-ulw/tests/$check.ts"
-          done

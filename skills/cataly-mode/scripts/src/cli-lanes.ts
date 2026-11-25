@@ -79,7 +79,7 @@ const launch: Command = async ({ key, opt, need, ceiling, strings, values, deps 
   if (opt("expires-hours") !== undefined) die("--expires-hours requires --after");
   const r = await launchLane(deps, input);
   for (const warning of r.warnings) console.error(warning);
-  console.log(`LAUNCHED ${r.lane.key} pane=${r.lane.pane} tab=${r.lane.tab ?? "?"}`);
+  console.log(`LAUNCHED ${r.lane.key} pane=${r.lane.sessionRef?.id} tab=${r.lane.sessionRef?.container ?? "?"}`);
   console.log(r.startup);
   process.exit(r.startup.startsWith("STARTUP_OK") || r.startup.startsWith("STARTUP_DONE") ? 0 : 3);
 };
@@ -95,7 +95,7 @@ const adopt: Command = async ({ key, opt, need, values, deps }) => {
     ...(thread !== undefined ? { thread } : {}),
     pane: need("pane"),
   });
-  console.log(`ADOPTED ${l.key} pane=${l.pane} thread=${l.thread}`);
+  console.log(`ADOPTED ${l.key} pane=${l.sessionRef?.id} thread=${l.thread}`);
 };
 
 const close: Command = async ({ key, opt, strings, values, lane, deps }) => {

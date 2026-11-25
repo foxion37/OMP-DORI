@@ -151,7 +151,7 @@ test("a thinking record must name the request's own effort suffix before it sele
 });
 
 test("unsafe typed launch text is held without a send or an unhandled delivery error", async () => {
-  const { result, world } = await launch("subscription/exact", { modelReadback: matched }, "ulw $(work)");
+  const { result, world } = await launch("subscription/exact", { modelReadback: matched }, "go $(work)");
   expect(result.startup).toStartWith("STARTUP_MODEL_HOLD");
   expect(result.startup).toContain("refusing to send text");
   expect(sent(world)).toEqual([]);

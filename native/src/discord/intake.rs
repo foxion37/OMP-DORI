@@ -16,7 +16,7 @@ use super::{
 };
 use crate::harness::discord::{Origin, Worker};
 use crate::routing::ask;
-pub(super) mod migration;
+pub(super) mod cursor_file;
 
 const PAGE: u8 = 100;
 const PAGE_LIMIT: usize = 20;
@@ -24,7 +24,7 @@ const PAGE_LIMIT: usize = 20;
 pub(super) struct Poll<'a> {
     pub(super) seconds: u64,
     pub(super) gateway: bool,
-    pub(super) legacy: Option<&'a Path>,
+    pub(super) imported: Option<&'a Path>,
     pub(super) discovery: Option<(&'a mut Discovery, &'a Routes)>,
 }
 
@@ -60,12 +60,12 @@ impl Intake<'_, '_> {
         let Poll {
             seconds: poll_seconds,
             gateway,
-            legacy,
+            imported,
             mut discovery,
         } = settings;
         for &channel in channels {
             if discovery.as_ref().is_none_or(|(d, _)| d.readable(channel)) {
-                self.seed(channel, legacy).await?;
+                self.seed(channel, imported).await?;
             }
         }
         println!(
@@ -120,7 +120,7 @@ impl Intake<'_, '_> {
             });
             for (channel, route) in exact.chain(discovered) {
                 if !self
-                    .process_channel(channel, route, legacy, gateway || poll_seconds > 0)
+                    .process_channel(channel, route, imported, gateway || poll_seconds > 0)
                     .await?
                 {
                     return Ok(());
@@ -139,7 +139,7 @@ impl Intake<'_, '_> {
         &mut self,
         channel: Snowflake,
         route: Option<(Snowflake, &Routes)>,
-        legacy: Option<&Path>,
+        imported: Option<&Path>,
         continuous: bool,
     ) -> Result<bool> {
         let allowed = || route.is_none_or(|(_, routes)| routes.contains(channel));
@@ -150,7 +150,7 @@ impl Intake<'_, '_> {
         let cursor = match (self.worker.cursor(origin)?, route) {
             (Some(cursor), _) => cursor,
             (None, Some((startup, _))) => {
-                let cursor = self.initial_cursor(channel, legacy)?.unwrap_or(startup);
+                let cursor = self.initial_cursor(channel, imported)?.unwrap_or(startup);
                 self.worker.advance(self.origin(channel, cursor))?;
                 cursor
             }
@@ -183,7 +183,7 @@ impl Intake<'_, '_> {
             }
             let origin = self.origin(channel, id);
             if self.inbox.settled(channel, id)? {
-                self.confirm(origin, &mut committed, legacy, queued)?;
+                self.confirm(origin, &mut committed, imported, queued)?;
                 continue;
             }
             if let Some(state) = self.ask_state
@@ -199,7 +199,7 @@ impl Intake<'_, '_> {
                     },
                 )?
             {
-                self.confirm(origin, &mut committed, legacy, queued)?;
+                self.confirm(origin, &mut committed, imported, queued)?;
                 continue;
             }
             match self
@@ -207,7 +207,7 @@ impl Intake<'_, '_> {
                 .run_message(&mut self.transport, origin, text.trim(), &mut self.stop)
                 .await
             {
-                Ok(true) => self.confirm(origin, &mut committed, legacy, queued)?,
+                Ok(true) => self.confirm(origin, &mut committed, imported, queued)?,
                 Ok(false) => return Ok(false),
                 Err(error) if continuous => {
                     eprintln!("DISCORD_LANE_HELD channel={channel} request={id}: {error:#}");
@@ -220,20 +220,20 @@ impl Intake<'_, '_> {
             self.confirm(
                 self.origin(channel, backlog.highest),
                 &mut committed,
-                legacy,
+                imported,
                 false,
             )?;
         }
         Ok(true)
     }
 
-    async fn seed(&self, channel: Snowflake, legacy: Option<&Path>) -> Result<()> {
+    async fn seed(&self, channel: Snowflake, imported: Option<&Path>) -> Result<()> {
         if self
             .worker
             .cursor(self.origin(channel, Snowflake::FLOOR))?
             .is_none()
         {
-            let latest = match self.initial_cursor(channel, legacy)? {
+            let latest = match self.initial_cursor(channel, imported)? {
                 Some(cursor) => cursor,
                 None => self
                     .transport
@@ -251,9 +251,9 @@ impl Intake<'_, '_> {
     fn initial_cursor(
         &self,
         channel: Snowflake,
-        legacy: Option<&Path>,
+        imported: Option<&Path>,
     ) -> Result<Option<Snowflake>> {
-        if let Some(cursor) = migration::read(legacy, channel)? {
+        if let Some(cursor) = cursor_file::read(imported, channel)? {
             return Ok(Some(cursor));
         }
         Ok(self
@@ -266,11 +266,11 @@ impl Intake<'_, '_> {
         &self,
         origin: Origin,
         committed: &mut Snowflake,
-        legacy: Option<&Path>,
+        imported: Option<&Path>,
         queued: bool,
     ) -> Result<()> {
         if origin.message > *committed {
-            migration::write(legacy, origin.channel, origin.message)?;
+            cursor_file::write(imported, origin.channel, origin.message)?;
             self.worker.advance(origin)?;
             *committed = origin.message;
         }

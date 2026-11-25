@@ -3,10 +3,10 @@ import { runDuty, runLoop } from "../cli-loops.ts";
 import { defaultDeps } from "../harness.ts";
 import { hooksSettled } from "../hooks.ts";
 import type { HeadlessObservation, HeadlessRequest, NativeLoopRole } from "./headless-protocol.ts";
-import type { HostStart, Reservation } from "./headless-record.ts";
+import { type HostStart, type Reservation, serveHost } from "./headless-record.ts";
 
-/** The detached broker is itself the plain loop process. No shell, terminal or OMP child is involved. */
-export class NativeLoop {
+/** The detached host is itself the plain loop process. No shell, terminal or OMP child is involved. */
+class NativeLoop {
   readonly closedSessionId = undefined;
   private readonly stop = new AbortController();
   private running: Promise<number> | undefined;
@@ -64,4 +64,16 @@ export class NativeLoop {
       recent: [],
     };
   }
+}
+
+// `bun headless-loop.ts <dir>`: the Bun host for `duty-loop` and `hourly-loop`; agent roles run `cataly headless-host`.
+if (import.meta.main) {
+  const dir = process.argv[2];
+  if (dir)
+    await serveHost(dir, (reservation) => {
+      const { role } = reservation;
+      if (role !== "duty-loop" && role !== "hourly-loop")
+        throw new Error("headless-loop.ts serves duty-loop and hourly-loop; agent roles run on the native binary");
+      return new NativeLoop(reservation, role);
+    });
 }

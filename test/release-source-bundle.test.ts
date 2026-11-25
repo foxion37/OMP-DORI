@@ -1,34 +1,30 @@
 import { expect, test } from "bun:test";
-import { existsSync, readFileSync, readlinkSync, writeFileSync } from "node:fs";
+import { readFileSync, readlinkSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { automaticUpdate } from "../src/release/automatic.ts";
 import { installBundle, rollbackRelease } from "../src/release/install.ts";
 import { validateReleaseManifest } from "../src/release/manifest.ts";
-import {
-  resolveConsumerOmpCommand,
-  resolveConsumerOmpUlwPath,
-  resolveProcessOmpUlwPath,
-} from "../src/release/runtime.ts";
+import { nativeDirectory } from "../src/release/native.ts";
+import { resolveConsumerOmpCommand } from "../src/release/runtime.ts";
 import { releasePath } from "../src/release/state.ts";
 import { isPolicyLaneCommand } from "../skills/cataly-mode/scripts/src/lane-policy-launch.ts";
 import { fixture } from "./release-consumer-setup.ts";
-import { bundledRelease } from "./release-source-bundle-setup.ts";
-import { fixtureGit } from "./source-bundle-setup.ts";
+import { boundRelease, releaseDist } from "./release-native-recovery-setup.ts";
 
 // POSIX-only: release installation refuses non-private directories by POSIX mode bits.
 const posix = test.skipIf(process.platform === "win32");
 
 posix(
-  "consumer install, update and reuse select each loaded release's bound overlay without rewriting config",
+  "consumer install, update and reuse select each loaded release's bound native source without rewriting config",
   async () => {
     const f = fixture();
-    const first = bundledRelease(f, "first");
+    const first = boundRelease(f, "first");
     const one = await installBundle(f.paths, first.bundle, undefined);
     const config = readFileSync(f.paths.config);
     const configured = JSON.parse(config.toString());
     const sourceOne = releasePath(f.paths, one.current);
     const omp = resolveConsumerOmpCommand(["omp", "{prompt}"], { home: f.paths.home, sourceRoot: sourceOne });
-    expect(omp[0]).toBe(readlinkSync(join(f.paths.dori, "bin/omp")));
+    expect(omp[0]).toBe(readlinkSync(join(f.paths.cataly, "bin/omp")));
     expect(omp).toEqual([
       join(sourceOne, "scripts/consumer/omp"),
       "--no-extensions",
@@ -36,60 +32,57 @@ posix(
       join(sourceOne, "extension"),
       "{prompt}",
     ]);
-    expect(configured.agentCommand[0]).toBe(join(f.paths.dori, "bin/omp"));
+    expect(configured.agentCommand[0]).toBe(join(f.paths.cataly, "bin/omp"));
     expect(
       isPolicyLaneCommand(
-        resolveConsumerOmpCommand([join(f.paths.dori, "bin/omp"), "--cataly-role", "lane", "{prompt}"], {
+        resolveConsumerOmpCommand([join(f.paths.cataly, "bin/omp"), "--cataly-role", "lane", "{prompt}"], {
           home: f.paths.home,
           sourceRoot: sourceOne,
         }),
       ),
     ).toBe(true);
-    const second = bundledRelease(f, "second", first.source);
+    const second = boundRelease(f, "second");
     const two = await installBundle(f.paths, second.bundle, one);
     const sourceTwo = releasePath(f.paths, two.current);
-    const effective = (sourceRoot: string) =>
-      resolveConsumerOmpUlwPath(configured.ompUlwPath, { home: f.paths.home, sourceRoot });
-    expect(effective(sourceOne)).toBe(join(first.dependency, "index.ts"));
-    expect(effective(sourceTwo)).toBe(join(second.dependency, "index.ts"));
-    expect(readFileSync(effective(sourceOne), "utf8")).toContain('selected = "first"');
-    expect(readFileSync(effective(sourceTwo), "utf8")).toContain('selected = "second"');
-    expect(fixtureGit(first.dependency, "rev-parse", "HEAD")).toBe(one.current.ompUlw.commit);
+    const bound = (sourceRoot: string) =>
+      readFileSync(join(nativeDirectory(sourceRoot, f.paths.home), "source/index.ts"));
+    expect(readlinkSync(join(f.paths.cataly, "bin/omp"))).toBe(join(sourceTwo, "scripts/consumer/omp"));
+    expect(bound(sourceOne).toString()).toContain('selected = "first"');
+    expect(bound(sourceTwo).toString()).toContain('selected = "second"');
     expect(await installBundle(f.paths, second.bundle, two)).toEqual(two);
     expect(readFileSync(f.paths.config)).toEqual(config);
     expect(resolveConsumerOmpCommand(["/owner/custom-omp"], { home: f.paths.home, sourceRoot: sourceTwo })).toEqual([
       "/owner/custom-omp",
     ]);
     const rolled = await rollbackRelease(f.paths, two);
-    expect(effective(sourceOne)).toBe(join(first.dependency, "index.ts"));
+    expect(readlinkSync(join(f.paths.cataly, "bin/omp"))).toBe(join(sourceOne, "scripts/consumer/omp"));
     expect(readFileSync(f.paths.config)).toEqual(config);
-    writeFileSync(join(second.dependency, "index.ts"), "owner edit\n");
-    expect(() => effective(sourceTwo)).toThrow();
-    await expect(installBundle(f.paths, second.bundle, rolled)).rejects.toThrow();
+    writeFileSync(join(nativeDirectory(sourceTwo, f.paths.home), "source/index.ts"), "owner edit\n");
+    await expect(installBundle(f.paths, second.bundle, rolled)).rejects.toThrow("source checkout differs");
     expect(readlinkSync(f.paths.live)).toBe(sourceOne);
   },
 );
 
 posix.each(["19.0.0", "19.1.2"])(
-  "bound OMP %s installs and rolls back to retained 18.20.0 without a stock fallback",
+  "bound OMP %s installs and rolls back to retained 19.0.1 without a stock fallback",
   async (version) => {
     const f = fixture();
-    const prior = bundledRelease(f, "prior");
+    const prior = boundRelease(f, "prior");
     const one = await installBundle(f.paths, prior.bundle, undefined);
-    const next = bundledRelease(f, "next", undefined, version);
+    const next = boundRelease(f, "next", undefined, { version });
     const two = await installBundle(f.paths, next.bundle, one);
     expect(two.current.requirements.omp).toBe(version);
     const source = releasePath(f.paths, two.current);
-    expect(readlinkSync(join(f.paths.dori, "bin/omp"))).toBe(join(source, "scripts/consumer/omp"));
+    expect(readlinkSync(join(f.paths.cataly, "bin/omp"))).toBe(join(source, "scripts/consumer/omp"));
     expect(resolveConsumerOmpCommand(["omp"], { home: f.paths.home, sourceRoot: source })[0]).toBe(
       join(source, "scripts/consumer/omp"),
     );
     const rolled = await rollbackRelease(f.paths, two);
-    expect(rolled.current.requirements.omp).toBe("18.20.0");
-    expect(readlinkSync(join(f.paths.dori, "bin/omp"))).toBe(
+    expect(rolled.current.requirements.omp).toBe("19.0.1");
+    expect(readlinkSync(join(f.paths.cataly, "bin/omp"))).toBe(
       join(releasePath(f.paths, one.current), "scripts/consumer/omp"),
     );
-    expect(rolled.previous).toBeUndefined();
+    expect(rolled.previous).toEqual(two.current);
     expect(readFileSync(join(releasePath(f.paths, two.current), "native-omp.lock"), "utf8")).toContain(
       `"nativeVersion":"${version}"`,
     );
@@ -100,24 +93,8 @@ posix.each(["20.0.0", "19.0.0-beta.1", "19.01.0", "19.0.0;echo injected"])(
   "unreviewed native runtime %s is rejected",
   (version) => {
     const f = fixture();
-    const release = bundledRelease(f, "reviewed", undefined, "19.0.0").bundle.manifest;
-    expect(() =>
-      validateReleaseManifest({ ...release, requirements: { ...release.requirements, omp: version } }),
-    ).toThrow("supported runtime");
-  },
-);
-
-posix(
-  "rollback to a genuine older archive keeps its no-lock protocol instead of requiring new source locks",
-  async () => {
-    const f = fixture();
-    const old = await installBundle(f.paths, f.release("older").bundle, undefined);
-    const next = bundledRelease(f, "newer");
-    const state = await installBundle(f.paths, next.bundle, old);
-    expect(existsSync(join(f.paths.dori, "bin/omp"))).toBe(true);
-    const restored = await rollbackRelease(f.paths, state);
-    expect(restored.current.requirements.omp).toBe("18.18.8");
-    expect(existsSync(join(f.paths.dori, "bin/omp"))).toBe(false);
+    const release = boundRelease(f, "reviewed", undefined, { version: "19.0.0" }).bundle.manifest;
+    expect(() => validateReleaseManifest({ ...release, requirements: { omp: version } })).toThrow("supported runtime");
   },
 );
 
@@ -129,12 +106,19 @@ const onReleaseHost = test.skipIf(
 );
 
 onReleaseHost.each(["manual", "automatic"] as const)(
-  "%s consumer update leaves a terminal-only release, and rollback to it is refused",
+  "%s consumer update leaves a release without this host's profile, and rollback to it is refused",
   async (mode) => {
     const f = fixture(true);
-    const old = bundledRelease(f, "terminal");
+    const other =
+      process.platform === "linux" ? { platform: "darwin", arch: "arm64" } : { platform: "linux", arch: "x64" };
+    const foreign = JSON.stringify({ version: 1, profiles: [{ ...other, runtime: "headless" }] });
+    const old = boundRelease(f, "foreign", undefined, {
+      populateSource: (source) => writeFileSync(join(source, "release-headless.json"), foreign),
+    });
+    const oldDist = releaseDist(join(f.root, "dist-foreign"), old.bundle);
     const before = await installBundle(f.paths, old.bundle, undefined);
-    const candidate = bundledRelease(f, "native", undefined, "19.0.1", true);
+    const bound = boundRelease(f, "native");
+    const candidate = { ...bound, dist: releaseDist(join(f.root, "dist-native"), bound.bundle) };
     const saved = readFileSync(f.paths.config);
     const tools = "/usr/bin:/bin";
     const cli = (...args: string[]) =>
@@ -168,25 +152,10 @@ onReleaseHost.each(["manual", "automatic"] as const)(
     const rollback = cli("rollback", "--version", before.current.tag);
     expect(rollback.exitCode).toBe(2);
     expect(rollback.stderr.toString()).toContain(`does not support ${process.platform}/${process.arch}/headless`);
-    const downgrade = cli("install", "--from", old.dist);
+    const downgrade = cli("install", "--from", oldDist);
     expect(downgrade.exitCode).toBe(2);
-    expect(downgrade.stderr.toString()).toContain("cannot downgrade");
+    expect(downgrade.stderr.toString()).toContain(`does not support ${process.platform}/${process.arch}/headless`);
     expect(readlinkSync(f.paths.live)).toBe(retained);
     expect(readFileSync(f.paths.config)).toEqual(saved);
   },
 );
-
-test("a managed process selects its prepared default but retains an explicit external ULW path", () => {
-  const before = process.env["CATALY_OMP_ULW_PATH"];
-  try {
-    process.env["CATALY_OMP_ULW_PATH"] = "/prepared/omp-ulw/index.ts";
-    expect(resolveProcessOmpUlwPath("", "/home/fixture")).toBe("/prepared/omp-ulw/index.ts");
-    expect(resolveProcessOmpUlwPath(join("/home/fixture", ".dori", "omp-ulw", "index.ts"), "/home/fixture")).toBe(
-      "/prepared/omp-ulw/index.ts",
-    );
-    expect(resolveProcessOmpUlwPath("/owner/custom-ulw/index.ts", "/home/fixture")).toBe("/owner/custom-ulw/index.ts");
-  } finally {
-    if (before === undefined) delete process.env["CATALY_OMP_ULW_PATH"];
-    else process.env["CATALY_OMP_ULW_PATH"] = before;
-  }
-});

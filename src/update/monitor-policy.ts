@@ -3,7 +3,7 @@ import type { MonitorSpec } from "./deployment-types.ts";
 const record = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-/** Normalize only explicit policy; legacy persistent specs retain their original shape. */
+/** Normalize only explicit policy; persistent specs without a mode retain their original shape. */
 export function monitorPolicy(
   value: Record<string, unknown>,
 ): Pick<MonitorSpec, "mode" | "restart" | "silentAfterMin"> {
@@ -19,7 +19,7 @@ export function monitorPolicy(
   if (
     mode !== "daemon" &&
     value["restart"] !== undefined &&
-    value["restart"] !== "on-failure" // legacy once-mode retry, admitted separately from daemon policy
+    value["restart"] !== "on-failure" // once-mode retry, admitted separately from daemon policy
   )
     throw new Error("restart requires daemon mode");
   const restart =

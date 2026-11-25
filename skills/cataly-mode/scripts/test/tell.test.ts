@@ -101,23 +101,19 @@ test("a gone session, an approval-held session or a blocked agent takes nothing:
   expect(accepted).toEqual([]);
 });
 
-test("a paused, sessionless, unconfirmed or legacy-runtime lane is refused before any delivery", async () => {
+test("a paused, sessionless or unconfirmed lane is refused before any delivery", async () => {
   const live = lane();
   expect(await told({ ...live, status: "paused" }, "go on")).toEqual({
     line: "TELL_FAILED tell-lane delivery=failed: the lane is paused; resume it first; nothing was sent",
     code: 2,
   });
-  const { pane: _pane, sessionRef: _ref, session: _session, sessionFile: _file, ...sessionless } = live;
+  const { sessionRef: _ref, session: _session, sessionFile: _file, ...sessionless } = live;
   expect((await told(sessionless, "go on")).line).toBe(
     "TELL_FAILED tell-lane delivery=failed: the lane has no session; nothing was sent",
   );
   const { session: _unbound, ...unconfirmed } = live;
   expect((await told(unconfirmed, "go on")).line).toBe(
     "TELL_FAILED tell-lane delivery=failed: the lane has no confirmed native session; nothing was sent",
-  );
-  const legacy: Lane = { ...live, pane: "t3", sessionRef: { runtime: "hc", id: "t3" } };
-  expect((await told(legacy, "go on")).line).toBe(
-    "TELL_FAILED tell-lane delivery=failed: the lane runs on the removed herdr/hc runtime; nothing was sent",
   );
   expect(world.calls).toEqual([]);
 });

@@ -13,7 +13,7 @@ export const closableLane = (
   n: number,
   cwd: string,
   patch: Partial<FakeSession> = {},
-): Pick<Lane, "pane" | "sessionRef" | "session" | "sessionFile" | "cwd"> => {
+): Pick<Lane, "sessionRef" | "session" | "sessionFile" | "cwd"> => {
   mkdirSync(cwd, { recursive: true });
   Object.defineProperty(w, "procs", {
     configurable: true,

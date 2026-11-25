@@ -181,6 +181,7 @@ export async function serveHost(dir: string, make: (reservation: Reservation) =>
   privateDir(dir);
   const reservation = readPrivate<Reservation>(join(dir, "reservation.json"));
   if (!reservation) throw new Error("headless reservation missing");
+  const host = make(reservation);
   const start = (await Bun.stdin.json()) as HostStart;
   if (!Array.isArray(start.argv) || !object(start.env)) throw new Error("invalid headless start");
   const config = join(dir, "host.yml");
@@ -189,7 +190,6 @@ export async function serveHost(dir: string, make: (reservation: Reservation) =>
   const sockDir = mkdtempSync("/tmp/cataly-rpc-");
   const socket = join(sockDir, "socket");
   const key = createHash("sha256").update(randomUUID()).update(randomUUID()).digest("hex");
-  const host = make(reservation);
   let inFlight = 0;
   const server = Bun.serve({
     unix: socket,

@@ -1,4 +1,3 @@
-import { importLegacyEnvironment } from "../legacy-environment.ts";
 import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
@@ -6,13 +5,12 @@ import { parseArgs } from "node:util";
 import { captureSetupFile } from "../setup-files.ts";
 import { acquireBundle } from "./bundle.ts";
 import { runAutomaticCommand } from "./automatic-cli.ts";
-import { type ReleaseAttempt, referenceRefresh, releaseFailure } from "./completion.ts";
+import { type ReleaseAttempt, releaseFailure } from "./completion.ts";
 import { acquireConsumerLock, consumerPaths, initialize, pointer, realDirectory } from "./files.ts";
 import { installBundle, preflightInstallation, rollbackRelease } from "./install.ts";
 import { runCacheCommand } from "./native-cache-cli.ts";
-import { assertNoLegacyRuntime } from "./legacy-runtime.ts";
 import { prerequisites } from "./provision.ts";
-import { assertReleaseTarget, assertUpdateProtocol } from "./profile.ts";
+import { assertReleaseTarget } from "./profile.ts";
 import { previewConsumerSetup } from "./setup.ts";
 import { consumerReleaseHome } from "./runtime.ts";
 import { hasConsumerState, loadInstalled, recoverInstalled, verifyRelease } from "./state.ts";
@@ -30,8 +28,8 @@ const USAGE = `cataly update <check|install|status|rollback|cache> [--version vX
               Deletion rechecks usage but can race unleased writers or later publication.
               --trust-process PID@START (repeatable) excludes listed unreadable PIDs; --trust-root-cwd treats unreadable root cwd as outside cache
 Default check/install selects the latest stable GitHub release. Explicit tags also allow previews.
-Releases run on headless OMP. A home that still uses herdr/hc stops with upgrade instructions.
---from reads local release assets; first installation may still fetch the exact public omp-ulw pin.
+Releases run on headless OMP.
+--from reads local release assets; first installation may still fetch the exact bound native OMP source.
 Activation holds while Cataly is live. Stop Cataly yourself before installing or rolling back.`;
 
 const identity = (manifest: ReleaseManifest) => ({
@@ -42,7 +40,6 @@ const identity = (manifest: ReleaseManifest) => ({
 });
 
 export async function runConsumerUpdate(argv: string[]): Promise<number> {
-  importLegacyEnvironment();
   if (argv[0] === "auto") return runAutomaticCommand(argv.slice(1));
   let releaseLock: (() => void) | undefined;
   let attempt: ReleaseAttempt | undefined;
@@ -100,23 +97,14 @@ export async function runConsumerUpdate(argv: string[]): Promise<number> {
     const paths = consumerPaths(homedir(), selected);
     for (const dir of [paths.cataly, paths.root]) realDirectory(dir);
     if (command === "cache") return runCacheCommand(paths, args.values, installedHome);
-    if (
-      !hasConsumerState(paths) &&
-      [".omp-cataly", ".omp-dori"].some((name) => lstatSync(join(paths.cataly, name), { throwIfNoEntry: false }))
-    )
+    if (!hasConsumerState(paths) && lstatSync(join(paths.cataly, ".omp-cataly"), { throwIfNoEntry: false }))
       throw new Error("Unmanaged source installation; use a separate release home or the documented stopped migration");
-    if (command !== "status")
-      assertNoLegacyRuntime({ stateDir: join(paths.cataly, "state"), configPath: paths.config, home: paths.home });
     prerequisites(false);
     const config = command === "status" ? undefined : captureSetupFile(paths.config);
     const checkBundle = (bundle: Awaited<ReturnType<typeof acquireBundle>>, tools: boolean): void => {
       if (!config) throw new Error("A release selection requires a configuration snapshot");
       const { manifest, files } = bundle;
-      assertReleaseTarget(
-        paths,
-        { manifest, bytes: (path) => files.find((file) => file.path === path)?.bytes },
-        config,
-      );
+      assertReleaseTarget({ manifest, bytes: (path) => files.find((file) => file.path === path)?.bytes }, config);
       prerequisites(tools);
     };
     const checkRollback = (previous: ReleaseManifest | undefined): void => {
@@ -125,7 +113,6 @@ export async function runConsumerUpdate(argv: string[]): Promise<number> {
         throw new Error("--version differs from the retained previous release");
       const source = verifyRelease(paths, previous);
       assertReleaseTarget(
-        paths,
         {
           manifest: previous,
           bytes: (path) =>
@@ -174,10 +161,7 @@ export async function runConsumerUpdate(argv: string[]): Promise<number> {
             ...(args.values.from ? { from: args.values.from } : {}),
           })
         : undefined;
-    if (bundle) {
-      assertUpdateProtocol(loadInstalled(paths)?.current, bundle.manifest);
-      checkBundle(bundle, !args.values.preview);
-    }
+    if (bundle) checkBundle(bundle, !args.values.preview);
     if (args.values.preview && bundle) {
       const release = identity(bundle.manifest);
       const configuration = previewConsumerSetup(paths, bundle, config!);
@@ -194,19 +178,17 @@ export async function runConsumerUpdate(argv: string[]): Promise<number> {
     if (command === "status") {
       if (before) verifyRelease(paths, before.current);
       if (before?.previous) verifyRelease(paths, before.previous);
-      const references = referenceRefresh(paths, before);
       console.log(
         JSON.stringify(
           {
             installed: before ? identity(before.current) : null,
             previous: before?.previous ? identity(before.previous) : null,
-            references,
           },
           null,
           2,
         ),
       );
-      return references ? 3 : 0;
+      return 0;
     }
     preflightInstallation(paths);
     if (!bundle) checkRollback(before?.previous);
@@ -221,7 +203,7 @@ export async function runConsumerUpdate(argv: string[]): Promise<number> {
           commit: after.current.commit,
           sourceHash: after.current.source.hash,
           previous: after.previous?.tag ?? null,
-          cli: `${paths.cataly}/bin/${after.current.source.files.some((file) => file.path === "release-headless.json") || paths.layout === "cataly" ? "cataly" : "dori"}`,
+          cli: `${paths.cataly}/bin/cataly`,
           config: paths.config,
         },
         null,

@@ -15,7 +15,7 @@ export const linux = { platform: "linux", arch: "x64", runtime: "headless" } as 
 export const darwin = { platform: "darwin", arch: "arm64", runtime: "headless" } as const;
 
 export function fixture(profile: typeof linux | typeof darwin) {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "dori-bootstrap-")));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "cataly-bootstrap-")));
   roots.push(root);
   const bin = join(root, "bin"),
     home = join(root, "home"),
@@ -36,42 +36,36 @@ export function fixture(profile: typeof linux | typeof darwin) {
 import { parseArgs } from "node:util";
 const args = parseArgs({ args: process.argv.slice(3), strict: true, options: { from: { type: "string" }, version: { type: "string" }, home: { type: "string" } } });
 writeFileSync(process.env.BOOTSTRAP_RESULT, JSON.stringify({ command: process.argv[2], home: args.values.home,
-  env: { home: process.env.CATALY_HOME ?? process.env.DORI_HOME, config: process.env.CATALY_CONFIG ?? process.env.DORI_CONFIG, state: process.env.DORI_STATE_DIR ?? null,
-    runtime: process.env.CATALY_RUNTIME ?? process.env.DORI_RUNTIME ?? null, cmd: process.env.DORI_CMD ?? null, agent: process.env.DORI_AGENT_CMD ?? null,
-    argv: process.env.DORI_AGENT_ARGV ?? null, ulw: process.env.DORI_OMP_ULW_PATH ?? null, startup: process.env.DORI_MANAGED_STARTUP ?? null } }));
+  env: { home: process.env.CATALY_HOME, config: process.env.CATALY_CONFIG, state: process.env.CATALY_STATE_DIR ?? null,
+    runtime: process.env.CATALY_RUNTIME ?? null, cmd: process.env.CATALY_CMD ?? null, agent: process.env.CATALY_AGENT_CMD ?? null,
+    argv: process.env.CATALY_AGENT_ARGV ?? null, startup: process.env.CATALY_MANAGED_STARTUP ?? null } }));
 `;
   const base = {
-    version: 1,
-    product: "omp-dori",
+    version: 2,
+    product: "cataly",
     releaseVersion: "1.2.3",
     tag: "v1.2.3",
     commit: "a".repeat(40),
     tree: "b".repeat(40),
     prerelease: false,
   };
-  /** `headless` undefined builds a historical terminal-only release, which this installer refuses. */
-  const assets = (headless?: unknown, omp = headless === undefined ? "18.18.8" : "18.20.0") => {
+  /** `headless` undefined omits the bound profile file, which this installer refuses. */
+  const assets = (headless?: unknown, omp = "19.0.1") => {
     const native = headless === undefined ? undefined : JSON.stringify(headless);
     const files = [
       ...(native === undefined ? [] : [{ path: "release-headless.json", sha256: digest(native), executable: false }]),
       { path: "src/release/cli.ts", sha256: digest(cli), executable: false },
     ];
     const bytes = archive([
-      ...(native === undefined ? [] : [{ name: "omp-dori-1.2.3/release-headless.json", bytes: native }]),
-      { name: "omp-dori-1.2.3/src/release/cli.ts", bytes: cli },
+      ...(native === undefined ? [] : [{ name: "cataly-1.2.3/release-headless.json", bytes: native }]),
+      { name: "cataly-1.2.3/src/release/cli.ts", bytes: cli },
     ]);
-    const name = "omp-dori-v1.2.3.tar.gz";
+    const name = "cataly-v1.2.3.tar.gz";
     const metadata = JSON.stringify({
       ...base,
       requirements: { omp },
-      archive: { name, root: "omp-dori-1.2.3", sha256: digest(bytes), bytes: bytes.length },
-      source: {
-        version: 1,
-        files,
-        excluded: [],
-        ulwPresent: false,
-        hash: digest(JSON.stringify({ files, ulwPresent: false })),
-      },
+      archive: { name, root: "cataly-1.2.3", sha256: digest(bytes), bytes: bytes.length },
+      source: { version: 1, files, excluded: [], hash: digest(JSON.stringify({ files })) },
     });
     writeFileSync(join(dist, "release-manifest.json"), metadata);
     writeFileSync(join(dist, "SHA256SUMS"), `${digest(metadata)}  release-manifest.json\n${digest(bytes)}  ${name}\n`);
@@ -97,7 +91,6 @@ writeFileSync(process.env.BOOTSTRAP_RESULT, JSON.stringify({ command: process.ar
       cmd: null,
       agent: null,
       argv: null,
-      ulw: null,
       startup: null,
     },
   });

@@ -41,7 +41,7 @@ test("reopening a completed predecessor during the live Done check keeps the dep
   const cwd = f.deps.config.defaultCwd;
   writeFileSync(sessionFile, `${JSON.stringify({ type: "session", id: session, cwd })}\n`);
   // A headless lane reopens only from its recorded (now gone) native session.
-  const closed = { ...f.prior, session, sessionFile, cwd, pane: sid(9), sessionRef: href(sid(9)) };
+  const closed = { ...f.prior, session, sessionFile, cwd, sessionRef: href(sid(9)) };
   await f.deps.registry.write(closed);
   await enqueueLaunch(f.deps, f.input, [closed.key]);
   const deps = {

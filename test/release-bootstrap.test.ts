@@ -12,16 +12,14 @@ posix.each([
 ] as const)("default bootstrap selects the supported installation on $platform", (profile, folder) => {
   const f = fixture(profile);
   const result = f.run([], {
-    DORI_HOME: join(f.root, "foreign"),
-    DORI_CONFIG: join(f.root, "foreign-config"),
-    DORI_STATE_DIR: join(f.root, "foreign-state"),
-    DORI_RUNTIME: "herdr",
-    CATALY_RUNTIME: "hc",
-    DORI_CMD: "foreign-command",
-    DORI_AGENT_CMD: "foreign-agent",
-    DORI_AGENT_ARGV: '["/foreign/omp"]',
-    DORI_OMP_ULW_PATH: "/foreign/ulw/index.ts",
-    DORI_MANAGED_STARTUP: "1",
+    CATALY_HOME: join(f.root, "foreign"),
+    CATALY_CONFIG: join(f.root, "foreign-config"),
+    CATALY_STATE_DIR: join(f.root, "foreign-state"),
+    CATALY_RUNTIME: "tern",
+    CATALY_CMD: "foreign-command",
+    CATALY_AGENT_CMD: "foreign-agent",
+    CATALY_AGENT_ARGV: '["/foreign/omp"]',
+    CATALY_MANAGED_STARTUP: "1",
   });
   expect(result.exitCode, result.stderr.toString()).toBe(0);
   expect(f.selected()).toEqual(f.expected(join(f.home, folder)));
@@ -30,14 +28,14 @@ posix.each([
 
 posix("explicit home wins over side environment and leaves primary and global files untouched", () => {
   const f = fixture(darwin);
-  const primary = join(f.home, ".dori"),
-    global = join(f.home, ".agents/skills/dori-mode");
+  const primary = join(f.home, ".cataly"),
+    global = join(f.home, ".agents/skills/cataly-mode");
   mkdirSync(primary);
   mkdirSync(dirname(global), { recursive: true });
   writeFileSync(join(primary, "sentinel"), "primary");
   writeFileSync(global, "global");
   const selected = join(f.root, "selected");
-  const result = f.run(["--home", selected], { DORI_INSTALL_MODE: "side", OMP_DORI_HOME: join(f.root, "other") });
+  const result = f.run(["--home", selected], { CATALY_INSTALL_MODE: "side", OMP_CATALY_HOME: join(f.root, "other") });
   expect(result.exitCode, result.stderr.toString()).toBe(0);
   expect(f.selected()).toEqual(f.expected(selected));
   expect(readFileSync(join(primary, "sentinel"), "utf8")).toBe("primary");
@@ -47,7 +45,7 @@ posix("explicit home wins over side environment and leaves primary and global fi
 posix("side mode honors its home environment", () => {
   const f = fixture(linux),
     selected = join(f.root, "side");
-  const result = f.run([], { DORI_INSTALL_MODE: "side", OMP_DORI_HOME: selected });
+  const result = f.run([], { CATALY_INSTALL_MODE: "side", OMP_CATALY_HOME: selected });
   expect(result.exitCode, result.stderr.toString()).toBe(0);
   expect(f.selected()).toEqual(f.expected(selected));
 });
@@ -60,13 +58,13 @@ posix("an explicit primary home overrides the Darwin side default", () => {
   expect(f.selected()).toEqual(f.expected(selected));
 });
 
-test.each([".dori", ".cataly"])("side home resolving under %s is rejected before assets are read", (name) => {
+test("a side home resolving under the primary home is rejected before assets are read", () => {
   const f = fixture(linux);
-  const primary = join(f.home, name);
+  const primary = join(f.home, ".cataly");
   mkdirSync(primary);
   symlinkSync(primary, join(f.root, "alias"));
   rmSync(f.dist, { recursive: true });
-  const result = f.run(["--home", join(f.root, "alias", "nested")], { DORI_INSTALL_MODE: "side" });
+  const result = f.run(["--home", join(f.root, "alias", "nested")], { CATALY_INSTALL_MODE: "side" });
   expect(result.exitCode).not.toBe(0);
   expect(result.stderr.toString()).toContain(`outside ${primary}`);
   expect(existsSync(join(primary, "nested"))).toBe(false);
@@ -82,8 +80,8 @@ test.each(["home", "parent"] as const)("side %s containing primary is rejected b
   expect(existsSync(join(selected, "src"))).toBe(false);
 });
 
-posix.each([[["--runtime", "herdr"]], [["--retire-legacy-roles"]], [["--legacy-session", "original"]]])(
-  "removed option %p is rejected before assets are read",
+posix.each([[["--runtime", "tern"]], [["--session", "original"]]])(
+  "unknown option %p is rejected before assets are read",
   (args: string[]) => {
     const f = fixture(linux);
     rmSync(f.dist, { recursive: true });
@@ -93,15 +91,15 @@ posix.each([[["--runtime", "herdr"]], [["--retire-legacy-roles"]], [["--legacy-s
   },
 );
 
-posix.each([".omp-dori", ".git", "src/.git", "bin/dori", "bin/omp"])(
+posix.each([".omp-cataly", ".git", "src/.git", "bin/cataly", "bin/omp"])(
   "source-owned or custom wrapper %s is held before assets are read",
   (path) => {
     const f = fixture(linux),
-      target = join(f.home, ".dori", path);
+      target = join(f.home, ".cataly", path);
     mkdirSync(dirname(target), { recursive: true });
     writeFileSync(target, "existing");
     rmSync(f.dist, { recursive: true });
-    const result = f.run(["--home", join(f.home, ".dori")]);
+    const result = f.run(["--home", join(f.home, ".cataly")]);
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr.toString()).toMatch(/Source-owned|Unmanaged wrapper/);
     expect(readFileSync(target, "utf8")).toBe("existing");
@@ -114,13 +112,12 @@ posix.each([
   { value: { version: 1, profiles: [darwin, darwin] }, error: "duplicate release capability" },
   { value: { version: 1, profiles: [darwin, { ...linux, extra: true }] }, error: "Invalid release capability" },
   { value: { version: 1, profiles: [{ ...darwin, platform: ["darwin"] }] }, error: "Invalid release capability" },
-  { value: { version: 1, profiles: [{ ...darwin, runtime: "hc" }] }, error: "Invalid or duplicate release capability" },
   {
-    value: { version: 1, profiles: [{ ...linux, runtime: "herdr" }] },
+    value: { version: 1, profiles: [{ ...darwin, runtime: "tern" }] },
     error: "Invalid or duplicate release capability",
   },
   { value: { version: 1, profiles: [linux] }, error: "Release does not support this host" },
-] as const)("rejects historical, unsupported or malformed capabilities before extraction", ({ value, error }) => {
+] as const)("rejects missing, unsupported or malformed capabilities before extraction", ({ value, error }) => {
   const f = fixture(darwin);
   f.assets(value);
   const result = f.run();
@@ -131,7 +128,7 @@ posix.each([
 
 posix("archive checksum mismatch prevents executing the extracted consumer", () => {
   const f = fixture(linux);
-  writeFileSync(join(f.dist, "omp-dori-v1.2.3.tar.gz"), "tampered");
+  writeFileSync(join(f.dist, "cataly-v1.2.3.tar.gz"), "tampered");
   const result = f.run();
   expect(result.exitCode).not.toBe(0);
   expect(result.stderr.toString()).toContain("Release checksum differs");
@@ -143,8 +140,8 @@ test.each(["flag", "environment"] as const)("bootstrap rejects a relative %s hom
   const f = fixture(linux);
   rmSync(f.dist, { recursive: true });
   const result = f.run(kind === "flag" ? ["--home", "relative-home"] : [], {
-    DORI_INSTALL_MODE: "side",
-    OMP_DORI_HOME: "relative-home",
+    CATALY_INSTALL_MODE: "side",
+    OMP_CATALY_HOME: "relative-home",
   });
   expect(result.exitCode).not.toBe(0);
   expect(result.stderr.toString()).toContain("must be an absolute installation home");

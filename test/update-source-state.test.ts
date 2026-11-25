@@ -130,8 +130,8 @@ test("source recovery distinguishes completed pre-effect holds from effectful or
     expect(sourceRecoveryPending({ ...f.job, deployment: { ...record, status, step: "done" } })).toBe(false);
   for (const step of ["prepare", "stop"] as const) {
     expect(sourceRecoveryPending({ ...f.job, deployment: { ...record, status: "held", step } })).toBe(false);
-    // A stop receipt is the headless forward-stop effect; a UI exit receipt marks a terminal-era journal.
-    for (const receipt of ["stopRequestedAt", "nativeExitObservedAt", "nativeUiExitRequestedAt"] as const)
+    // A stop receipt is the headless forward-stop effect.
+    for (const receipt of ["stopRequestedAt", "nativeExitObservedAt"] as const)
       expect(
         sourceRecoveryPending({
           ...f.job,

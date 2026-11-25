@@ -11,9 +11,10 @@ type Fixture = Awaited<ReturnType<typeof headlessDeployment>>;
 
 /** The installed release's own `cataly harness <args>`, exactly as the managed controller runs it. */
 async function harness(f: Fixture, args: readonly string[], extra: Record<string, string> = {}) {
+  const toolchain = { ...f.toolchain, extensionSource: f.oldSource };
   const env = {
-    ...actorEnv(f.config, f.toolchain),
-    CATALY_AGENT_ARGV: JSON.stringify(managedOmpCommand(f.toolchain, f.oldSource)),
+    ...actorEnv(f.config, toolchain),
+    CATALY_AGENT_ARGV: JSON.stringify(managedOmpCommand(toolchain, f.oldSource)),
     ...extra,
   };
   const proc = Bun.spawn([process.execPath, join(f.oldSource, "src/cli.ts"), ...args], {

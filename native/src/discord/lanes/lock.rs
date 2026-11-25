@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context as _, Result, anyhow};
 use serde::{Deserialize, Serialize};
 
-use super::util::{iso, now_ms, parse_iso, remove_any, sibling, uuid};
+use crate::util::{iso, now_ms, parse_iso, remove_any, sibling, uuid};
 
 /// `LOCK_STALE_MS`.
 pub(super) const LOCK_STALE_MS: i64 = 2 * 60_000;
@@ -94,7 +94,7 @@ fn inspect(path: &Path) -> Result<Option<Seen>> {
     let raw = if meta.is_dir() {
         None
     } else {
-        match super::util::read_limited(path, 64 * 1024) {
+        match crate::util::read_limited(path, 64 * 1024) {
             Ok(bytes) => Some(bytes),
             Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(error.into()),
@@ -157,7 +157,7 @@ pub(in crate::discord) fn take_lock(
         let local = owner.as_ref().is_some_and(|owner| owner.host == host);
         let owner_pid = owner
             .as_ref()
-            .and_then(|owner| super::util::safe_int(owner.pid));
+            .and_then(|owner| crate::util::safe_int(owner.pid));
         let dead = local && !alive(owner_pid);
         let kept = keep_live_owner && local && !dead;
         if !dead && (kept || now - since < LOCK_STALE_MS) {
@@ -198,7 +198,7 @@ pub(in crate::discord) fn take_lock(
 
 /// `String(n)` for the integral pids a lock record carries.
 fn js_number(value: f64) -> String {
-    super::util::safe_int(value).map_or_else(|| value.to_string(), |n| i64::to_string(&n))
+    crate::util::safe_int(value).map_or_else(|| value.to_string(), |n| i64::to_string(&n))
 }
 
 impl Lock {
@@ -263,7 +263,7 @@ mod tests {
         assert!(
             raw["nonce"]
                 .as_str()
-                .is_some_and(|n| super::super::util::is_uuid(n, true))
+                .is_some_and(|n| crate::util::is_uuid(n, true))
         );
         let held = take_lock(&path, true).unwrap().unwrap_err();
         assert!(

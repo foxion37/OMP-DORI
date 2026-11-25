@@ -62,13 +62,12 @@ for (const status of ["working", "paused", "done-claimed", "legacy"])
     }
   });
 
-test("source idle ignores closed history and the reserved lead, but holds unreadable lanes", async () => {
+test("source idle ignores closed history but holds unreadable lanes", async () => {
   const f = await idleFixture();
   try {
     const lanes = join(f.config.deployment.stateDir, "lanes");
     mkdirSync(lanes, { recursive: true });
     writeFileSync(join(lanes, "old.json"), JSON.stringify({ key: "old", status: "closed" }));
-    writeFileSync(join(lanes, "lead.json"), JSON.stringify({ key: "lead", status: "working" }));
     expect((await sourceIdleNow(f.config, f.runtime)).receivers).toBe(1);
     writeFileSync(join(lanes, "broken.json"), "{");
     await expect(sourceIdleNow(f.config, f.runtime)).rejects.toThrow("unreadable lane");

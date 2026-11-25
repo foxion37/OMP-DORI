@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use super::util::has_control;
+use crate::util::has_control;
 
 #[derive(Debug, PartialEq, Eq)]
 pub(super) struct WakeCommand {
@@ -75,7 +75,7 @@ pub(super) fn wake_command(template: &[String]) -> Option<WakeCommand> {
     let word = |at: usize| template.get(at).map_or("", String::as_str);
     let end = if omp_executable(executable) {
         1
-    } else if (bin == "omp-cataly" || bin == "omp-dori") && word(1) == "omp" {
+    } else if bin == "omp-cataly" && word(1) == "omp" {
         2
     } else if source_omp(template) {
         if word(3) == "--preload" { 6 } else { 4 }
@@ -121,7 +121,7 @@ pub(super) fn wake_command(template: &[String]) -> Option<WakeCommand> {
         if flag == "--model" && value == Some("{model}") {
             continue;
         }
-        if (flag == "--cataly-role" || flag == "--dori-role") && value == Some("lane") {
+        if flag == "--cataly-role" && value == Some("lane") {
             continue;
         }
         let value =
@@ -148,7 +148,7 @@ pub(super) fn wake_command(template: &[String]) -> Option<WakeCommand> {
 /// fails the headless direct-launcher rule.
 pub(super) fn headless_argv(command: &WakeCommand) -> Option<Vec<String>> {
     let bin = basename(command.launch.first()?);
-    (bin != "omp-cataly" && bin != "omp-dori").then_some(command.launch.clone())
+    (bin != "omp-cataly").then_some(command.launch.clone())
 }
 
 #[cfg(test)]

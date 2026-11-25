@@ -8,13 +8,10 @@ import type { DiscordInbound } from "../../skills/cataly-mode/scripts/src/messen
 import type { DiscordInboundQueue } from "../../skills/cataly-mode/scripts/src/messenger/discord-inbound-queue.ts";
 import { discordSourceFingerprint } from "../../skills/cataly-mode/scripts/src/messenger/discord-source-fingerprint.ts";
 import type { HeadInput, HeadReply } from "../../skills/cataly-mode/scripts/src/messenger/head-admission.ts";
-import {
-  HEAD_ADMISSION_PROTOCOL,
-  LEGACY_HEAD_ADMISSION_PROTOCOL,
-} from "../../skills/cataly-mode/scripts/src/messenger/head-admission-protocol.ts";
+import { HEAD_ADMISSION_PROTOCOL } from "../../skills/cataly-mode/scripts/src/messenger/head-admission-protocol.ts";
 import { headUnresolved } from "../../skills/cataly-mode/scripts/src/messenger/head-admission-state.ts";
 
-const admissionMode = () => process.env["CATALY_MONITOR_ADMISSION"] ?? process.env["DORI_MONITOR_ADMISSION"];
+const admissionMode = () => process.env["CATALY_MONITOR_ADMISSION"];
 
 /** One IPC exchange, never an inferred acknowledgement from stdout or process exit. */
 const exchange = (input: HeadInput, signal?: AbortSignal): Promise<HeadReply> => {
@@ -22,11 +19,7 @@ const exchange = (input: HeadInput, signal?: AbortSignal): Promise<HeadReply> =>
   const send = process.send?.bind(process);
   if (!send || !process.connected) return Promise.reject(headUnresolved());
   const request = randomUUID();
-  const protocol =
-    process.env["CATALY_MONITOR_ADMISSION_PROTOCOL"] === LEGACY_HEAD_ADMISSION_PROTOCOL ||
-    (process.env["CATALY_MONITOR_ADMISSION"] === undefined && process.env["DORI_MONITOR_ADMISSION"] === "1")
-      ? LEGACY_HEAD_ADMISSION_PROTOCOL
-      : HEAD_ADMISSION_PROTOCOL;
+  const protocol = HEAD_ADMISSION_PROTOCOL;
   return new Promise((resolve, reject) => {
     const cleanup = () => {
       process.off("message", answer);

@@ -79,7 +79,7 @@ const isReceipt = (value: unknown): value is PurposeReceipt => {
     : typeof purpose === "string" && oneLine(purpose) && isPurpose(result) && result.purpose === purpose;
 };
 
-/** Legacy maps are read; writes atomically preserve notes and receipts in the same private file. */
+/** Writes atomically preserve notes and receipts in the same private file. */
 export class DiscordChannels {
   readonly path: string;
   constructor(readonly stateDir: string) {
@@ -102,27 +102,20 @@ export class DiscordChannels {
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
       throw new ChannelPurposeError(`${this.path} must hold one JSON object`);
     const record = parsed as Record<string, unknown>;
-    let notes: Record<string, unknown>;
-    let receipts: Record<string, unknown>;
-    if (Object.hasOwn(record, "version")) {
-      const { version, notes: savedNotes, receipts: savedReceipts } = record;
-      if (
-        version !== 1 ||
-        Object.keys(record).length !== 3 ||
-        typeof savedNotes !== "object" ||
-        savedNotes === null ||
-        Array.isArray(savedNotes) ||
-        typeof savedReceipts !== "object" ||
-        savedReceipts === null ||
-        Array.isArray(savedReceipts)
-      )
-        throw new ChannelPurposeError(`${this.path} has an invalid purpose state; repair it before retrying`);
-      notes = savedNotes as Record<string, unknown>;
-      receipts = savedReceipts as Record<string, unknown>;
-    } else {
-      notes = record;
-      receipts = {};
-    }
+    const { version, notes: savedNotes, receipts: savedReceipts } = record;
+    if (
+      version !== 1 ||
+      Object.keys(record).length !== 3 ||
+      typeof savedNotes !== "object" ||
+      savedNotes === null ||
+      Array.isArray(savedNotes) ||
+      typeof savedReceipts !== "object" ||
+      savedReceipts === null ||
+      Array.isArray(savedReceipts)
+    )
+      throw new ChannelPurposeError(`${this.path} has an invalid purpose state; repair it before retrying`);
+    const notes = savedNotes as Record<string, unknown>;
+    const receipts = savedReceipts as Record<string, unknown>;
     for (const [id, entry] of Object.entries(notes))
       if (!isDiscordSnowflake(id) || !isPurpose(entry))
         throw new ChannelPurposeError(`${this.path}: entry ${JSON.stringify(id)} is not a channel purpose`);

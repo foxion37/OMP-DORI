@@ -28,7 +28,6 @@ const LEAD = `headless:${sid(1)}`;
 const lane = (key: string, status: LaneStatus, n: number): Lane => ({
   key,
   status,
-  pane: sid(n),
   sessionRef: href(sid(n)),
   title: key,
   thread: "none",
@@ -193,9 +192,7 @@ test("a journal-done lane whose session is gone is finished in both checks: not 
   expect(result.lines.some((l) => l.startsWith("VANISHED"))).toBe(false);
   expect(result.lines).toContain("DRIFT n=0");
   expect(result.lines).toContain(`PANES lead=${LEAD} leadState=live registeredLive=0 vanished=0 unregistered=0`);
-  expect(result.lines).toContain(
-    "MONITORS cleanupCandidates=1 deliveryPaused=0 expired=0 (from metadata; liveness unverified)",
-  );
+  expect(result.lines).toContain("MONITORS cleanupCandidates=1 (from metadata; liveness unverified)");
   expect(result.lines).toContain('STOP in the owner session only: monitor({"op":"stop","name":"reported-watch"})');
 });
 
@@ -232,10 +229,7 @@ test("boot prints the runtime and where its choice came from as its first line",
 });
 
 test("a runtime choice that fails is printed first as RUNTIME unavailable and fails boot", async () => {
-  for (const [value, reason] of [
-    ["tmux", "tmux"],
-    ["herdr", "still uses the herdr/hc terminal runtime"],
-  ] as const) {
+  for (const [value, reason] of [["tmux", "tmux"]] as const) {
     const result = await bootCheck(choosing(newWorld(), { CATALY_RUNTIME: value }));
     expect(result.lines[0]).toStartWith("RUNTIME unavailable: ");
     expect(result.lines[0]).toContain(reason);

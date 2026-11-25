@@ -7,8 +7,9 @@ import type { VerifiedBundle } from "../src/release/bundle.ts";
 import { saveJson } from "../src/release/files.ts";
 import { installBundle, rollbackRelease } from "../src/release/install.ts";
 import { headlessReleaseProfiles, nativeMetadata } from "../src/release/capabilities.ts";
+import { nativeDirectory } from "../src/release/native.ts";
 import { loadInstalled, releasePath } from "../src/release/state.ts";
-import { portableFixture as fixture } from "./release-consumer-setup.ts";
+import { fixture } from "./release-consumer-setup.ts";
 import { boundRelease } from "./release-native-recovery-setup.ts";
 
 // POSIX-only: release installation refuses non-private directories by POSIX mode bits.
@@ -27,7 +28,7 @@ posix.each([false, true])(
     const f = fixture(side);
     const one = await installBundle(f.paths, stable(f.release("one").bundle), undefined);
     const config = readFileSync(f.paths.config);
-    writeFileSync(join(f.paths.dori, "auth.json"), "owner auth\n", { mode: 0o600 });
+    writeFileSync(join(f.paths.cataly, "auth.json"), "owner auth\n", { mode: 0o600 });
     const candidate = stable(boundRelease(f, "two").bundle);
     const marker = candidate.files.find((file) => file.path === nativeMetadata)?.bytes;
     expect(
@@ -44,7 +45,7 @@ posix.each([false, true])(
     expect(readlinkSync(f.paths.live)).toBe(source);
     expect(loadInstalled(f.paths)?.previous).toEqual(one.current);
     expect(readFileSync(f.paths.config)).toEqual(config);
-    expect(readFileSync(join(f.paths.dori, "auth.json"), "utf8")).toBe("owner auth\n");
+    expect(readFileSync(join(f.paths.cataly, "auth.json"), "utf8")).toBe("owner auth\n");
     expect(readAutomaticState(f.paths)).toMatchObject({ enabled: true, outcome: "installed", nextCheck: 10_000 + DAY });
     await automaticUpdate(f.paths, { now: 10_000 + DAY - 1, acquire, checkTools });
     expect(checks).toBe(1);
@@ -81,10 +82,10 @@ posix("preview and older releases are never automatically selected", async () =>
   }
 });
 
-posix("a live lane or Dori session holds automatic activation without signalling it", async () => {
+posix("a live lane or Cataly session holds automatic activation without signalling it", async () => {
   const f = fixture();
   const one = await installBundle(f.paths, f.release("one").bundle, undefined);
-  const sessions = join(f.paths.dori, "state/sessions");
+  const sessions = join(f.paths.cataly, "state/sessions");
   mkdirSync(sessions, { recursive: true, mode: 0o700 });
   saveJson(join(sessions, "lane.json"), { role: "lane", pid: process.pid });
   let calls = 0;
@@ -103,7 +104,7 @@ posix("a session appearing during the network check holds activation", async () 
   const one = await installBundle(f.paths, f.release("one").bundle, undefined);
   const candidate = stable(boundRelease(f, "two").bundle);
   const acquire = async () => {
-    const directory = join(f.paths.dori, "state/sessions");
+    const directory = join(f.paths.cataly, "state/sessions");
     mkdirSync(directory, { recursive: true, mode: 0o700 });
     saveJson(join(directory, "lane.json"), { role: "lane", pid: process.pid });
     return candidate;
@@ -133,7 +134,7 @@ posix("rollback pauses automatic updates until explicitly resumed", async () => 
   expect(loadInstalled(f.paths)?.current).toEqual(candidate.manifest);
 });
 
-posix.each(["source", "dependency", "metadata"])(
+posix.each(["source", "native", "metadata"])(
   "tampered %s fails closed even when updates are disabled",
   async (kind) => {
     const f = fixture();
@@ -143,7 +144,11 @@ posix.each(["source", "dependency", "metadata"])(
       const path = join(releasePath(f.paths, one.current), "payload.txt");
       chmodSync(path, 0o600);
       writeFileSync(path, "tampered");
-    } else if (kind === "dependency") writeFileSync(join(f.ownedDependency, "index.ts"), "tampered");
+    } else if (kind === "native")
+      writeFileSync(
+        join(nativeDirectory(releasePath(f.paths, one.current), f.paths.home), "source/index.ts"),
+        "tampered",
+      );
     else saveJson(join(f.paths.root, "consumer-automatic.json"), { version: 1, enabled: "no", nextCheck: 0 });
     await expect(
       automaticUpdate(f.paths, {
@@ -157,12 +162,11 @@ posix.each(["source", "dependency", "metadata"])(
   },
 );
 
-posix.each(["ulw", "native"])("explicit %s overrides are preserved without an automatic check", async (kind) => {
+posix("an explicit native command override is preserved without an automatic check", async () => {
   const f = fixture();
   const one = await installBundle(f.paths, f.release("one").bundle, undefined);
   const config = JSON.parse(readFileSync(f.paths.config, "utf8"));
-  if (kind === "ulw") config.ompUlwPath = "/owner/ulw/index.ts";
-  else config.agentCommand = ["/owner/omp", "--cataly-role", "lane"];
+  config.agentCommand = ["/owner/omp", "--cataly-role", "lane"];
   saveJson(f.paths.config, config);
   const bytes = readFileSync(f.paths.config);
   expect(
@@ -178,7 +182,7 @@ posix.each(["ulw", "native"])("explicit %s overrides are preserved without an au
   expect(readFileSync(f.paths.config)).toEqual(bytes);
 });
 
-posix.each(["OMP_ULW_SRC", "OMP_ULW_REF", "OMP_ULW_REPO", "CATALY_OMP", "CATALY_AGENT_ARGV", "CATALY_OMP_ULW_PATH"])(
+posix.each(["CATALY_OMP", "CATALY_AGENT_ARGV"])(
   "explicit %s environment selection suppresses automatic updates",
   async (name) => {
     const f = fixture();

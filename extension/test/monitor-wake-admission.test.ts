@@ -42,7 +42,7 @@ test("a failed routine-only delivery wakes for its failure report", async () => 
 for (const line of ["LANE_WATCH_READY", "WARN disk"] as const) {
   for (const ending of ["session_switch", "session_shutdown"] as const) {
     test(`${ending} cancels an admitted batch containing ${line} without waking`, async () => {
-      const root = useConfig(join(import.meta.dir, "fake-ulw.ts"));
+      const root = useConfig();
       const pi = await load({ session: { id: "s1", entries: [] }, flags: { "cataly-role": "cataly" } });
       await pi.emit("session_start");
       mkdirSync(join(root, "owes"), { recursive: true, mode: 0o700 });

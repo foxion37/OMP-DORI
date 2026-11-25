@@ -5,7 +5,7 @@ export const RESUME_FLAG =
   /^(?:--resume|--continue|--session|--restore|--fork|--from-claude|--from-codex|-r|-c)(?:=|$)/;
 const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*\/[^\s/{}*?[\],][^\s{}*?[\],]*$/;
 const OWNED_FLAG =
-  /^(?:--system-prompt|--append-system-prompt|--system-prompt-template|--profile|--alias|-e|--extensions?|--trusted-extension|--hook|--(?:cataly|dori)-(?:role|launch-model|monitor-bootstrap|lane-receiver))(?:=|$)/;
+  /^(?:--system-prompt|--append-system-prompt|--system-prompt-template|--profile|--alias|-e|--extensions?|--trusted-extension|--hook|--cataly-(?:role|launch-model|monitor-bootstrap|lane-receiver))(?:=|$)/;
 
 export const isNativeOwnedFlag = (arg: string): boolean => OWNED_FLAG.test(arg);
 

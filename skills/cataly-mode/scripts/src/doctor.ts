@@ -1,12 +1,12 @@
 import { join } from "node:path";
-import { type BootLane, type Manifest, finished, readMonitorManifests, terminalMonitorDirs } from "./boot-monitors.ts";
+import { type BootLane, type Manifest, finished, readMonitorManifests } from "./boot-monitors.ts";
 import type { CatalyConfig } from "./config.ts";
 import type { DoctorCheck } from "./doctor-config.ts";
 import { doctorProvenance } from "./doctor-provenance.ts";
 import { monitorFilterFindings, monitorRuntimeFindings } from "./doctor-monitors.ts";
 import type { FlowDeps } from "./done-flow.ts";
 import type { PaneState } from "./lane-state.ts";
-import { hasTerminalScope, leadAddress } from "./lead-ref.ts";
+import { leadAddress } from "./lead-ref.ts";
 import { Lessons } from "./lessons.ts";
 import { LANE_KEY } from "./registry.ts";
 import { Reports, reportScope } from "./reports.ts";
@@ -39,7 +39,7 @@ export const doctorLocal = (
     findings.push({
       check: "supervision",
       severity: "INFO",
-      detail: `not supervised (adopted/legacy lanes): ${adopted.map((lane) => lane.key).join(", ")}; configured ceilings do not apply`,
+      detail: `not supervised (adopted lanes): ${adopted.map((lane) => lane.key).join(", ")}; configured ceilings do not apply`,
     });
   const unbounded = launched.filter((lane) => {
     // Match Supervision.sweep: only this lane's effective limits can protect it.
@@ -180,20 +180,7 @@ export const doctorCheck = async (
   const env = deps.env ?? process.env;
   const rts = runtimesOf(deps);
   const target = leadAddress(config, env);
-  const ref = "ref" in target ? target.ref : undefined;
-  const terminal = hasTerminalScope(rts.choice?.kind, lanes, ref);
-  const { manifests, errors } = readMonitorManifests(
-    config.sessionsDir,
-    terminal ? terminalMonitorDirs(env) : [],
-    join(config.stateDir, "monitors"),
-    terminal,
-  );
-  if (!terminal)
-    findings.push({
-      check: "monitors",
-      severity: "INFO",
-      detail: "legacy terminal diagnostics skipped; no terminal session scope",
-    });
+  const { manifests, errors } = readMonitorManifests(join(config.stateDir, "monitors"));
   if (errors.length)
     findings.push({
       check: "monitors",

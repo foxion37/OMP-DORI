@@ -8,10 +8,10 @@ import {
   pendingQueue,
   queuedRefs,
   readQueue,
+  spooled,
   writeQueue,
 } from "./inbox-files.ts";
-import { mergeForwarded, mergePending } from "./inbox-forward.ts";
-import { destinationOf, lockQueue, mergeOwnSpool, type Queued, queueMessage } from "./inbox-spool.ts";
+import { lockQueue, mergeOwnSpool, type Queued, queueMessage } from "./inbox-spool.ts";
 import type { SessionRef } from "./runtime/types.ts";
 import { RootLaneStore, rootStoreHome } from "./store-lanes.ts";
 import { readRoles, registerRole, removeRoles } from "./store-roles.ts";
@@ -68,7 +68,7 @@ export class Store extends RootLaneStore {
   }
 
   /**
-   * Appends under its lock to the inbox `ref` resolves to (the live redirect of a running migration, inbox-spool.ts),
+   * Appends under its lock to the inbox of `ref` (inbox-spool.ts),
    * or keeps it for the logical lead role (`namedLead`), independent of the current role/session mapping. `recheck`
    * is the sender's name resolved again under the route (a lane or role that switched meanwhile).
    */
@@ -100,19 +100,9 @@ export class Store extends RootLaneStore {
     mergeOwnSpool(this.root, ref);
   }
 
-  /** Where the inbox of `ref` lives now: the session the `.forward` chain of a running migration ends at. */
-  destination(ref: SessionRef): SessionRef {
-    return destinationOf(this.root, ref);
-  }
-
-  /** True when entries wait to be moved into ref's queue: spooled beside it, or in old inboxes forwarded into it. */
+  /** True when entries are spooled beside ref's queue, waiting for the holder of its lock to move them in. */
   mergePending(ref: SessionRef): boolean {
-    return mergePending(this.root, ref);
-  }
-
-  /** Merges old inboxes forwarded into `ref` into its inbox; call it under ref's inbox lock. */
-  mergeForwarded(ref: SessionRef): void {
-    mergeForwarded(this.root, ref);
+    return spooled(this.inboxPath(ref), true).length > 0;
   }
 
   /**

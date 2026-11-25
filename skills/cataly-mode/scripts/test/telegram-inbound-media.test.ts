@@ -7,7 +7,8 @@ import type { TgInbound } from "../src/messenger/telegram-inbound.ts";
 import { Telegram } from "../src/messenger/telegram.ts";
 import { envInt, pollTelegramInbound, telegramInboundLoop } from "../src/messenger/telegram-inbound.ts";
 import { fakeClock, withState } from "./fakes.ts";
-import { telegramTestDirectory, telegramTestStore } from "./telegram-win32-fixtures.ts";
+
+const posix = test.skipIf(process.platform === "win32");
 
 const OWNER = 5250;
 
@@ -42,20 +43,20 @@ const telegramFake = (batches: U[][]) => {
 
 const mk = (http: Http): Telegram => new Telegram(http, fakeClock(0), "T");
 
-test("the store creates its nested state dir", async () => {
+posix("the store creates its nested state dir", async () => {
   const { http } = telegramFake([[{ update_id: 80, message: msg(OWNER, OWNER, "private", "fresh install") }]]);
-  const store = telegramTestStore(join(state.dir, "nested", "deeper"), 900);
+  const store = fileTgInboundStore(join(state.dir, "nested", "deeper"), 900);
   const { inbound: out } = await pollTelegramInbound(mk(http), store, { ownerId: OWNER });
   expect(out.length).toBe(1);
   expect(store.load()?.offset).toBe(81);
 });
 
-test("edited messages arrive as their own edit kind with the edited text", async () => {
+posix("edited messages arrive as their own edit kind with the edited text", async () => {
   const { http, bodies } = telegramFake([
     [{ update_id: 90, edited_message: { ...msg(OWNER, OWNER, "private", "fixed typo"), edit_date: 1730 } }],
     [{ update_id: 91, message: msg(OWNER, OWNER, "private", "fresh after edit") }],
   ]);
-  const store = telegramTestStore(state.dir, 900);
+  const store = fileTgInboundStore(state.dir, 900);
   const { inbound: out } = await pollTelegramInbound(mk(http), store, { ownerId: OWNER });
   expect(out.length).toBe(1);
   expect(out[0]!.kind).toBe("edit");
@@ -67,7 +68,7 @@ test("edited messages arrive as their own edit kind with the edited text", async
   expect(second[0]!.kind).toBe("message");
 });
 
-test("a voice note identifies its media so transcribe can fetch it", async () => {
+posix("a voice note identifies its media so transcribe can fetch it", async () => {
   const { http } = telegramFake([
     [
       {
@@ -81,7 +82,7 @@ test("a voice note identifies its media so transcribe can fetch it", async () =>
       },
     ],
   ]);
-  const store = telegramTestStore(state.dir, 900);
+  const store = fileTgInboundStore(state.dir, 900);
   const { inbound: out } = await pollTelegramInbound(mk(http), store, { ownerId: OWNER });
   expect(out.length).toBe(1);
   expect(out[0]!.kind).toBe("message");
@@ -90,7 +91,7 @@ test("a voice note identifies its media so transcribe can fetch it", async () =>
   expect(store.load()?.offset).toBe(101);
 });
 
-test("a photo with a caption carries both the text and the largest photo", async () => {
+posix("a photo with a caption carries both the text and the largest photo", async () => {
   const { http } = telegramFake([
     [
       {
@@ -105,18 +106,17 @@ test("a photo with a caption carries both the text and the largest photo", async
       },
     ],
   ]);
-  const store = telegramTestStore(state.dir, 900);
+  const store = fileTgInboundStore(state.dir, 900);
   const { inbound: out } = await pollTelegramInbound(mk(http), store, { ownerId: OWNER });
   expect(out.length).toBe(1);
   expect(out[0]!.text).toBe("look at this");
   expect(out[0]!.media).toEqual({ kind: "photo", fileId: "LARGE", messageId: 56 });
 });
 
-test("an unparseable bot cursor warns once across several polls and leaves no saved state", async () => {
-  const directory = telegramTestDirectory(state.dir);
-  using store = fileTgInboundStore(directory, 900);
+posix("an unparseable bot cursor warns once across several polls and leaves no saved state", async () => {
+  const store = fileTgInboundStore(state.dir, 900);
   store.save({ offset: 1, seen: [] });
-  const cursor = join(directory, "telegram-inbound", "900.json");
+  const cursor = join(state.dir, "telegram-inbound", "900.json");
   writeFileSync(cursor, "not-a-number");
   const warns: string[] = [];
   const orig = console.log;
@@ -150,12 +150,12 @@ test("envInt refuses empty, whitespace, 1e3 and 0x10; accepts plain integers", (
   expect(envInt("CATALY_TELEGRAM_GROUP_ID", "0")).toBe(0);
 });
 
-test("one-shot (no --loop) returns after a single bounded poll under continuous traffic", async () => {
+posix("one-shot (no --loop) returns after a single bounded poll under continuous traffic", async () => {
   // Continuous traffic: every poll would return another message if polled again.
   const { http } = telegramFake(
     Array.from({ length: 20 }, (_, i) => [{ update_id: 100 + i, message: msg(OWNER, OWNER, "private", `msg ${i}`) }]),
   );
-  const store = telegramTestStore(state.dir, 900);
+  const store = fileTgInboundStore(state.dir, 900);
   const out: TgInbound[] = [];
   await telegramInboundLoop(
     mk(http),
@@ -169,9 +169,9 @@ test("one-shot (no --loop) returns after a single bounded poll under continuous 
   expect(out[0]!.updateId).toBe(100);
 });
 
-test("--loop re-polls immediately after a productive poll and sleeps only when idle", async () => {
+posix("--loop re-polls immediately after a productive poll and sleeps only when idle", async () => {
   const { http } = telegramFake([[{ update_id: 200, message: msg(OWNER, OWNER, "private", "burst") }], []]);
-  const store = telegramTestStore(state.dir, 900);
+  const store = fileTgInboundStore(state.dir, 900);
   const out: TgInbound[] = [];
   const sleeps: number[] = [];
   const stop = new Error("STOP");

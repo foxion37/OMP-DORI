@@ -1,37 +1,26 @@
 import { expect } from "bun:test";
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  readlinkSync,
-  renameSync,
-  symlinkSync,
-  unlinkSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { installBundle, rollbackRelease } from "../src/release/install.ts";
 import { saveJson } from "../src/release/files.ts";
-import { nativeOmp } from "../src/release/provision.ts";
-import { ompStateDir } from "../src/runtime/omp.ts";
 import { fixture, posix } from "./release-consumer-setup.ts";
 
 posix(
   "an isolated consumer leaves primary discovery untouched and its CLI ignores inherited primary selection",
   async () => {
     const f = fixture(true);
-    const primary = join(f.paths.home, ".dori");
+    const primary = join(f.paths.home, ".cataly");
     mkdirSync(primary);
     writeFileSync(join(primary, "config.json"), "primary config\n");
     const first = await installBundle(f.paths, f.release("first\n").bundle, undefined);
     // The real installed CLI needs the actual shipped entry point, not the payload-only bundle fixture.
     const cli = resolve(import.meta.dir, "../skills/cataly-mode/scripts/src/cli.ts");
-    const wrapper = readFileSync(join(f.paths.dori, "bin/dori"), "utf8");
+    const wrapper = readFileSync(join(f.paths.cataly, "bin/cataly"), "utf8");
     const run = Bun.spawnSync(
       [
         "bash",
         "-c",
-        wrapper.replaceAll(join(f.paths.live, "skills/dori-mode/scripts/src/cli.ts"), cli),
+        wrapper.replaceAll(join(f.paths.live, "skills/cataly-mode/scripts/src/cli.ts"), cli),
         "--",
         "update",
         "status",
@@ -40,10 +29,10 @@ posix(
         env: {
           HOME: f.paths.home,
           PATH: process.env["PATH"],
-          DORI_HOME: primary,
-          DORI_CONFIG: join(primary, "config.json"),
-          DORI_STATE_DIR: join(primary, "state"),
-          DORI_TELEMETRY: "0",
+          CATALY_HOME: primary,
+          CATALY_CONFIG: join(primary, "config.json"),
+          CATALY_STATE_DIR: join(primary, "state"),
+          CATALY_TELEMETRY: "0",
           DO_NOT_TRACK: "1",
         },
       },
@@ -64,7 +53,7 @@ posix(
     const two = await installBundle(f.paths, f.release("second\n").bundle, one);
     const pointer = readlinkSync(f.paths.live);
     const config = readFileSync(f.paths.config);
-    const command = join(f.paths.dori, "bin/dori");
+    const command = join(f.paths.cataly, "bin/cataly");
     writeFileSync(command, "owner wrapper\n");
     await expect(installBundle(f.paths, f.release("third\n").bundle, two)).rejects.toThrow(
       "Consumer reference changed",
@@ -76,123 +65,22 @@ posix(
   },
 );
 
-posix("a side OMP launch bypasses foreign Dori wrappers and clears inherited harness and state selection", async () => {
+posix("an isolated OMP wrapper keeps OMP self-update off, since it is the first omp on the consumer PATH", async () => {
   const f = fixture(true);
-  const foreign = join(f.paths.home, "foreign");
-  const native = join(f.paths.home, "native");
-  mkdirSync(join(foreign, "bin"), { recursive: true });
-  mkdirSync(native);
-  writeFileSync(join(foreign, ".omp-dori"), "side\n");
-  writeFileSync(join(foreign, "bin/omp"), "#!/bin/sh\necho wrong-home\n", { mode: 0o755 });
-  writeFileSync(
-    join(native, "omp"),
-    `#!${process.execPath}\nconsole.log(JSON.stringify({
-    home: process.env.DORI_HOME, config: process.env.DORI_CONFIG, command: process.env.DORI_CMD,
-    state: process.env.DORI_STATE_DIR, runtime: process.env.DORI_RUNTIME,
-    argv: process.env.DORI_AGENT_ARGV, ulw: process.env.DORI_OMP_ULW_PATH, startup: process.env.DORI_MANAGED_STARTUP
-  }));\n`,
-    { mode: 0o755 },
-  );
-  const previous = process.env["PATH"];
-  process.env["PATH"] = `${foreign}/bin:${native}:${previous ?? ""}`;
-  try {
-    await installBundle(f.paths, f.release("first\n").bundle, undefined);
-  } finally {
-    if (previous === undefined) delete process.env["PATH"];
-    else process.env["PATH"] = previous;
-  }
-  const result = Bun.spawnSync([join(f.paths.dori, "bin/omp"), "--version"], {
-    env: {
-      HOME: f.paths.home,
-      PATH: previous,
-      DORI_HOME: foreign,
-      DORI_CMD: "primary-harness",
-      DORI_STATE_DIR: "primary-state",
-      DORI_RUNTIME: "herdr",
-      DORI_AGENT_ARGV: '["/foreign/omp"]',
-      DORI_OMP_ULW_PATH: "/foreign/ulw/index.ts",
-      DORI_MANAGED_STARTUP: "1",
-    },
+  // The release's own launcher, which the wrapper execs as OMP, reports the argv and PATH it received.
+  const launcher = `#!${process.execPath}\nconsole.log(JSON.stringify({ argv: process.argv.slice(2), path: process.env.PATH }));\n`;
+  await installBundle(f.paths, f.release("first\n", launcher).bundle, undefined);
+  const result = Bun.spawnSync([join(f.paths.cataly, "bin/omp"), "--version"], {
+    env: { HOME: f.paths.home, PATH: process.env["PATH"] },
   });
-  expect(result.exitCode).toBe(0);
-  expect(result.stdout.toString(), result.stderr.toString()).toStartWith("{");
-  const observed = JSON.parse(result.stdout.toString());
-  expect(observed).toMatchObject({
-    home: f.paths.dori,
-    config: f.paths.config,
-    command: `'${join(f.paths.dori, "bin/dori-harness")}'`,
-  });
-  expect(observed.state).toBeUndefined();
-  expect(observed.runtime).toBeUndefined();
-  expect(observed.argv).toBeUndefined();
-  expect(observed.ulw).toBeUndefined();
-  expect(observed.startup).toBeUndefined();
-  writeFileSync(f.paths.config, "{}\n");
-  expect(ompStateDir({ CATALY_HOME: f.paths.dori, CATALY_CONFIG: f.paths.config })).toBe(join(f.paths.dori, "state"));
-});
-
-posix(
-  "an isolated OMP launch keeps OMP self-update off, since its wrapper is the first omp on the consumer PATH",
-  async () => {
-    const f = fixture(true);
-    const native = join(f.paths.home, "native");
-    mkdirSync(native);
-    writeFileSync(
-      join(native, "omp"),
-      `#!${process.execPath}\nconsole.log(JSON.stringify({ argv: process.argv.slice(2), path: process.env.PATH }));\n`,
-      { mode: 0o755 },
-    );
-    const previous = process.env["PATH"];
-    process.env["PATH"] = `${native}:${previous ?? ""}`;
-    try {
-      await installBundle(f.paths, f.release("first\n").bundle, undefined);
-    } finally {
-      if (previous === undefined) delete process.env["PATH"];
-      else process.env["PATH"] = previous;
-    }
-    const result = Bun.spawnSync([join(f.paths.dori, "bin/omp"), "--version"], {
-      env: { HOME: f.paths.home, PATH: previous },
-    });
-    expect(result.exitCode, result.stderr.toString()).toBe(0);
-    const { argv, path } = JSON.parse(result.stdout.toString()) as { argv: string[]; path: string };
-    expect(path.split(":")[0]).toBe(join(f.paths.dori, "bin"));
-    const overlays = argv.flatMap((arg, index) => (argv[index - 1] === "--config" ? [arg] : []));
-    expect(overlays).toContain(join(f.paths.dori, "omp.yml"));
-    const merged = Object.assign({}, ...overlays.map((file) => Bun.YAML.parse(readFileSync(file, "utf8")) as object));
-    expect(merged).toMatchObject({ update: { auto: false } });
-  },
-);
-
-posix.each([false, true])("a side home is not a source marker (linked=%s)", (linked) => {
-  const f = fixture();
-  const native = join(f.paths.home, "bin");
-  mkdirSync(native);
-  const command = join(native, "omp");
-  writeFileSync(command, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
-  const marker = join(f.paths.home, ".omp-dori");
-  const profile = join(f.paths.home, "side-profile");
-  if (linked) {
-    mkdirSync(profile);
-    symlinkSync(profile, marker);
-  } else mkdirSync(marker);
-  const previous = process.env["PATH"];
-  process.env["PATH"] = `${native}:${previous ?? ""}`;
-  try {
-    expect(nativeOmp()).toBe(command);
-    if (linked) unlinkSync(marker);
-    else renameSync(marker, profile);
-    const target = linked ? join(f.paths.home, "source-marker") : marker;
-    writeFileSync(target, "side\n");
-    if (linked) symlinkSync(target, marker);
-    expect(nativeOmp()).not.toBe(command);
-    if (linked) {
-      unlinkSync(target);
-      expect(nativeOmp()).not.toBe(command);
-    }
-  } finally {
-    if (previous === undefined) delete process.env["PATH"];
-    else process.env["PATH"] = previous;
-  }
+  expect(result.exitCode, result.stderr.toString()).toBe(0);
+  const { argv, path } = JSON.parse(result.stdout.toString()) as { argv: string[]; path: string };
+  expect(path.split(":")[0]).toBe(join(f.paths.cataly, "bin"));
+  expect(argv.at(-1)).toBe("--version");
+  const overlays = argv.flatMap((arg, index) => (argv[index - 1] === "--config" ? [arg] : []));
+  expect(overlays).toContain(join(f.paths.cataly, "omp.yml"));
+  const merged = Object.assign({}, ...overlays.map((file) => Bun.YAML.parse(readFileSync(file, "utf8")) as object));
+  expect(merged).toMatchObject({ update: { auto: false } });
 });
 
 posix("an interrupted initial reference transaction resumes without taking over changed files", async () => {
@@ -205,14 +93,14 @@ posix("an interrupted initial reference transaction resumes without taking over 
     Object.keys(recorded).map((path) => [
       path,
       {
-        bytes: readFileSync(join(f.paths.dori, path), "utf8"),
+        bytes: readFileSync(join(f.paths.cataly, path), "utf8"),
         executable: path.startsWith("bin/"),
       },
     ]),
   );
   unlinkSync(receipt);
-  for (const path of Object.keys(references).filter((path) => path !== "bin/dori"))
-    unlinkSync(join(f.paths.dori, path));
+  for (const path of Object.keys(references).filter((path) => path !== "bin/cataly"))
+    unlinkSync(join(f.paths.cataly, path));
   saveJson(join(f.paths.root, "consumer-references-pending.json"), { before: {}, references });
   const after = await installBundle(f.paths, bundle, before);
   expect(after).toEqual(before);

@@ -8,7 +8,6 @@ test("an old freshness filter warns about the new wait-ended event", () => {
   const findings = monitorFilterFindings(
     [
       {
-        kind: "omp",
         path: "/fixture",
         data: {
           version: 1,

@@ -34,7 +34,7 @@ export function headlessFixture() {
     PI_CODING_AGENT_DIR: join(home, "omp-data"),
     CATALY_TEST_TRACE: trace,
     CATALY_TEST_SESSION: saved,
-    HERDR_PANE_ID: "w1:p2",
+    CATALY_ASK_LAUNCHED_LANE: "stale",
   };
   const config = {
     ...defaultConfig(home),

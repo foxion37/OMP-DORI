@@ -236,7 +236,7 @@ export class World {
     const selected = opts.runtime ?? "headless";
     return {
       store: new Store(root),
-      runtimes: new Runtimes(selected, (kind) => (kind === "tern" ? terminal : runtime), join(root, "config.json")),
+      runtimes: new Runtimes(selected, (kind) => (kind === "tern" ? terminal : runtime)),
       choice: () => ({ kind: selected, source: selected === "tern" ? "config" : "default" }),
       exec: this.exec,
       now: () => this.clock,

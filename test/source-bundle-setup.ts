@@ -38,9 +38,8 @@ export function fixtureGit(cwd: string, ...argv: string[]): string {
 export function overlayFixture(
   source: string,
   checkout: string,
-  native = false,
   selected = "reviewed-overlay",
-  nativeVersion = "18.20.0",
+  nativeVersion = "19.0.1",
 ) {
   mkdirSync(source, { recursive: true, mode: 0o700 });
   mkdirSync(checkout, { recursive: true, mode: 0o700 });
@@ -50,29 +49,23 @@ export function overlayFixture(
     writeFileSync(full, text, { mode: executable ? 0o755 : 0o600 });
     if (executable) chmodSync(full, 0o755);
   };
-  put(
-    ".gitignore",
-    ["*.node", "node_modules/", ...(native ? ["packages/coding-agent/export-assets/"] : []), ""].join("\n"),
-  );
+  put(".gitignore", ["*.node", "node_modules/", "packages/coding-agent/export-assets/", ""].join("\n"));
   // A real upstream shape: Git's own attribute transform rewrites these bytes on checkout.
   put(".gitattributes", "*.cmd text eol=crlf\n");
   put("crates/pi-shell/tests/fixtures/minimizer/cargo/test-pass.cmd", "@echo off\nrem fixture\n");
   put("index.ts", 'export const selected = "base";\n');
-  put("presets.ts", "export {};\n");
-  if (native) {
-    put("packages/coding-agent/scripts/omp", `#!/bin/sh\nprintf "${nativeVersion}\\n"\n`, true);
-    put("packages/coding-agent/src/cli.ts", `export const version = ${JSON.stringify(nativeVersion)};\n`);
-    put("packages/natives/native/loader-state.js", "export {};\n");
-    const hash = digest(NATIVE_VIEWER_FIXTURE);
-    put(
-      "packages/coding-agent/src/export/html/viewer.generated.json",
-      JSON.stringify({
-        file: `export-viewer-${hash}.js`,
-        integrity: `sha256-${Buffer.from(hash, "hex").toString("base64")}`,
-        size: Buffer.byteLength(NATIVE_VIEWER_FIXTURE),
-      }),
-    );
-  }
+  put("packages/coding-agent/scripts/omp", `#!/bin/sh\nprintf "${nativeVersion}\\n"\n`, true);
+  put("packages/coding-agent/src/cli.ts", `export const version = ${JSON.stringify(nativeVersion)};\n`);
+  put("packages/natives/native/loader-state.js", "export {};\n");
+  const hash = digest(NATIVE_VIEWER_FIXTURE);
+  put(
+    "packages/coding-agent/src/export/html/viewer.generated.json",
+    JSON.stringify({
+      file: `export-viewer-${hash}.js`,
+      integrity: `sha256-${Buffer.from(hash, "hex").toString("base64")}`,
+      size: Buffer.byteLength(NATIVE_VIEWER_FIXTURE),
+    }),
+  );
   fixtureGit(checkout, "init", "--quiet");
   fixtureGit(checkout, "add", ".");
   fixtureGit(checkout, "commit", "--quiet", "-m", "Upstream source fixture");
@@ -82,17 +75,16 @@ export function overlayFixture(
   fixtureGit(checkout, "add", "index.ts");
   const lock: SourceBundle = {
     version: 1,
-    repository: native ? "https://github.com/can1357/oh-my-pi.git" : "https://github.com/dbc-hbin/omp-ulw.git",
+    repository: "https://github.com/can1357/oh-my-pi.git",
     commit,
     patchSha256: digest(patch),
     resultTree: fixtureGit(checkout, "write-tree"),
     files: [{ path: "index.ts", sha256: digest(readFileSync(join(checkout, "index.ts"))), executable: false }],
-    ...(native ? { nativeVersion, launcher: "packages/coding-agent/scripts/omp" } : {}),
+    nativeVersion,
+    launcher: "packages/coding-agent/scripts/omp",
   };
-  const name = native ? "native-omp" : "omp-ulw.overlay";
-  writeFileSync(join(source, `${name}.lock`), `${JSON.stringify(lock)}\n`, { mode: 0o600 });
-  writeFileSync(join(source, native ? "native-omp.patch" : "omp-ulw.patch"), patch, { mode: 0o600 });
-  if (!native) writeFileSync(join(source, "omp-ulw.lock"), `${commit}\n`, { mode: 0o600 });
+  writeFileSync(join(source, "native-omp.lock"), `${JSON.stringify(lock)}\n`, { mode: 0o600 });
+  writeFileSync(join(source, "native-omp.patch"), patch, { mode: 0o600 });
   return { source, checkout, lock, patch, commit, put };
 }
 
@@ -102,9 +94,10 @@ export function nativeCacheFixture(
   home: string,
   upstream: string,
   directory = nativeDirectory(source, home),
+  runtime = process.execPath,
 ): NativeReceipt {
   mkdirSync(directory, { recursive: true, mode: 0o700 });
-  const bundle = readSourceBundle(source, true);
+  const bundle = readSourceBundle(source);
   const checkout = join(directory, "source");
   fixtureGit(directory, "clone", "--quiet", "--no-hardlinks", "--no-checkout", "--", upstream, checkout);
   fixtureGit(checkout, "-c", "advice.detachedHead=false", "checkout", "--quiet", "--detach", bundle.lock.commit);
@@ -113,7 +106,7 @@ export function nativeCacheFixture(
   mkdirSync(join(source, "native-addon"), { recursive: true, mode: 0o700 });
   writeFileSync(join(source, "native-addon/bun.lock"), "isolated identity fixture lock\n", { mode: 0o600 });
   writeFileSync(join(source, "native-addon/package.json"), "{}\n", { mode: 0o600 });
-  const bun = realpathSync(process.execPath);
+  const bun = realpathSync(runtime);
   const launcher = nativeLauncher(source, home, directory, bun);
   writeFileSync(join(directory, "bin/omp"), launcher, { mode: 0o700 });
   symlinkSync(bun, join(directory, "bin/bun"));
@@ -128,7 +121,7 @@ export function nativeCacheFixture(
   const receipt: NativeReceipt = {
     version: 1,
     source,
-    identity: readSourceBundle(source, true).identity,
+    identity: readSourceBundle(source).identity,
     directory,
     omp: join(directory, "bin/omp"),
     ompHash: digest(launcher),

@@ -189,7 +189,7 @@ export async function wakeRemoteSession(deps: FlowDeps, id: string): Promise<Ses
     const lane = (await deps.registry.list()).find((row) => row.session === id);
     if (lane && (statusOf(lane) === "closed" || lane.nativeCloseIntent || lane.hold))
       throw new Error("Closed or held lanes require explicit local reopen");
-    // Registered lanes have their own registry/ref migration contract; never spawn an unbound copy.
+    // Registered lanes keep their own registry and ref contract; never spawn an unbound copy.
     if (lane) throw new Error("Registered lanes must be reconciled with Cataly's native reopen command");
     const file = saved?.["sessionFile"];
     const cwd = saved?.["cwd"];

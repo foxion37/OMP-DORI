@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 
 import { formatRef } from "../../../../src/runtime/types.ts";
 import { monitorPolicy } from "../../../../src/update/monitor-policy.ts";
@@ -8,28 +8,16 @@ import { type Lane, sessionOf, statusOf } from "./registry.ts";
 import type { ProgressState } from "./reports.ts";
 export type Monitor = {
   /** OMP's desired monitor spec; argv stays structured so a quoted argument is never split into lane keys. */
-  readonly name?: string;
+  readonly name: string;
   readonly mode?: "persistent" | "once" | "daemon";
   readonly restart?: "on-failure" | { readonly max: number; readonly backoffSec: number };
   readonly silentAfterMin?: number;
-  readonly argv?: readonly string[];
-  readonly cwd?: string;
+  readonly argv: readonly string[];
+  readonly cwd: string;
   readonly filter?: string;
-  readonly monitorId?: string;
-  readonly sessionId?: string;
-  readonly persistent?: boolean;
-  readonly suspended?: boolean;
-  /** Epoch ms after which the runtime ends the watch on its own. */
-  readonly expiresAt?: number;
-  readonly deliveryPaused?: boolean;
-  readonly description?: string;
-  readonly command?: string;
-  readonly path?: string;
-  readonly target?: string;
 };
 export type Manifest = {
   readonly path: string;
-  readonly kind?: "omp";
   readonly data: { readonly version: number; readonly sessionId: string; readonly monitors: readonly Monitor[] };
 };
 export type BootLane = Lane & { readonly reportState?: ProgressState | undefined };
@@ -39,9 +27,6 @@ export type Cleanup = {
   readonly metadata: string;
   readonly lanes: readonly string[];
   readonly match: readonly string[];
-  readonly suspended: boolean;
-  readonly deliveryPaused: boolean;
-  readonly expiresAt?: number;
   readonly stop: string;
 };
 // The one definition of a finished lane, shared by the VANISHED filter and the cleanup check.
@@ -66,73 +51,39 @@ const mentions = (text: string, value: string | undefined): boolean => {
   );
 };
 
-// Strict: the evidence that ties a watch to a lane is the lane's pane id or its key as a whole argv token of the
-// command or target. A description is prose and a path segment is not the lane ("build/docs/out.log" is not "docs").
-const TIED_FIELDS = ["command", "target"] as const;
-const tokens = (value: unknown): string[] =>
-  typeof value === "string"
-    ? value
-        .split(/\s+/)
-        .map((t) => t.replace(/^['"]+|['"]+$/g, ""))
-        .filter(Boolean)
-    : [];
+// Strict: the evidence that ties a watch to a lane is the lane's pane id or its key as a whole argv word. A path
+// segment is not the lane ("build/docs/out.log" is not "docs").
 // A command's own words (monitor-command.ts) never name its lane: `cataly inbound slack` is not lane "slack".
 const tiedBy = (monitor: Monitor, lane: Lane): string | null => {
   const ref = sessionOf(lane);
-  const panes = [lane.pane, ref?.id, ref ? formatRef(ref) : undefined].filter((id): id is string => !!id);
-  if (Array.isArray(monitor.argv)) {
-    if (panes.some((id) => monitor.argv?.includes(id))) return `${lane.key}:argv:pane`;
-    if (laneWords(monitor.argv, monitor.cwd).includes(lane.key)) return `${lane.key}:argv:key`;
-  }
-  for (const field of TIED_FIELDS) {
-    const words = tokens(monitor[field]);
-    if (panes.some((id) => words.includes(id))) return `${lane.key}:${field}:pane`;
-    if ((field === "command" ? laneWords(monitor.command, monitor.cwd) : words).includes(lane.key))
-      return `${lane.key}:${field}:key`;
-  }
+  const panes = [ref?.id, ref ? formatRef(ref) : undefined].filter((id): id is string => !!id);
+  if (panes.some((id) => monitor.argv.includes(id))) return `${lane.key}:argv:pane`;
+  if (laneWords(monitor.argv, monitor.cwd).includes(lane.key)) return `${lane.key}:argv:key`;
   return null;
 };
 
 export const monitorCleanup = (lanes: readonly BootLane[], manifests: readonly Manifest[]): Cleanup[] => {
   const cleanup: Cleanup[] = [];
-  for (const { path, data, kind } of manifests) {
+  for (const { path, data } of manifests) {
     for (const monitor of data.monitors) {
-      if (kind === "omp" ? !monitor.name : !monitor.persistent || !/^mon_[A-Za-z0-9]+$/.test(monitor.monitorId ?? ""))
-        continue;
-      if (kind !== "omp" && monitor.sessionId !== data.sessionId) continue;
       const tied = lanes.flatMap((lane) => {
         const match = tiedBy(monitor, lane);
         return match ? [{ lane, match }] : [];
       });
       if (!tied.length || tied.some(({ lane }) => !finished(lane))) continue;
       // Any mention of an open lane anywhere in the watch keeps it.
-      const text = [
-        monitor.name,
-        ...(Array.isArray(monitor.argv) ? monitor.argv : []),
-        monitor.cwd,
-        monitor.filter,
-        monitor.description,
-        monitor.command,
-        monitor.path,
-        monitor.target,
-      ]
+      const text = [monitor.name, ...monitor.argv, monitor.cwd, monitor.filter]
         .filter((v) => typeof v === "string")
         .join("\n");
-      if (lanes.some((lane) => !finished(lane) && (mentions(text, lane.key) || mentions(text, lane.pane)))) continue;
-      const monitorId = kind === "omp" ? (monitor.name ?? "") : (monitor.monitorId ?? "");
+      if (lanes.some((lane) => !finished(lane) && (mentions(text, lane.key) || mentions(text, lane.sessionRef?.id))))
+        continue;
       cleanup.push({
-        monitorId,
+        monitorId: monitor.name,
         sessionId: data.sessionId,
         metadata: path,
         lanes: tied.map(({ lane }) => lane.key),
         match: tied.map(({ match }) => match),
-        suspended: Boolean(monitor.suspended),
-        deliveryPaused: monitor.deliveryPaused === true,
-        ...(typeof monitor.expiresAt === "number" ? { expiresAt: monitor.expiresAt } : {}),
-        stop:
-          kind === "omp"
-            ? `monitor(${JSON.stringify({ op: "stop", name: monitorId })})`
-            : `kill_bash(${JSON.stringify({ bash_id: monitorId })})`,
+        stop: `monitor(${JSON.stringify({ op: "stop", name: monitor.name })})`,
       });
     }
   }
@@ -148,102 +99,50 @@ const entries = (dir: string) => {
   }
 };
 
-/** Legacy terminal metadata can live outside the configured session tree. */
-export const terminalMonitorDirs = (env: Readonly<Record<string, string | undefined>>): string[] => {
-  const sessionFile = env["PI_SESSION_FILE"];
-  return [env["PI_SESSION_DIR"], sessionFile && dirname(sessionFile)].flatMap((dir) =>
-    dir ? [join(dir, "extensions", "terminal")] : [],
-  );
-};
-
 // One unreadable file is named in errors and skipped; the other sessions' metadata is still read.
-export const readMonitorManifests = (
-  sessionsDir: string,
-  extraDirs: readonly string[] = [],
-  ompDir?: string,
-  terminalScope = true,
-): { manifests: Manifest[]; errors: string[] } => {
-  const dirs = new Set(extraDirs);
-  if (ompDir !== undefined) dirs.add(ompDir);
+export const readMonitorManifests = (dir: string): { manifests: Manifest[]; errors: string[] } => {
   const manifests: Manifest[] = [];
   const errors: string[] = [];
+  let files: ReturnType<typeof entries>;
   try {
-    if (terminalScope)
-      for (const entry of entries(sessionsDir))
-        if (entry.isDirectory()) dirs.add(join(sessionsDir, entry.name, "extensions", "terminal"));
+    files = entries(dir);
   } catch {
-    errors.push(sessionsDir);
+    return { manifests, errors: [dir] };
   }
-  for (const dir of [...dirs].sort()) {
-    let files: ReturnType<typeof entries>;
+  for (const entry of files) {
+    if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+    const path = join(dir, entry.name);
     try {
-      files = entries(dir);
+      const data = JSON.parse(readFileSync(path, "utf8")) as Manifest["data"];
+      if (
+        (data.version !== 1 && data.version !== 2 && data.version !== 3) ||
+        !Array.isArray(data.monitors) ||
+        typeof data.sessionId !== "string" ||
+        !data.monitors.every((value: unknown) => typeof value === "object" && value !== null && !Array.isArray(value))
+      )
+        throw new Error("invalid monitor metadata");
+      for (const monitor of data.monitors) monitorPolicy(monitor);
+      if (
+        !data.monitors.every(
+          (monitor) =>
+            typeof monitor.name === "string" &&
+            monitor.name.length > 0 &&
+            (data.version >= 2 || monitor.mode === undefined || monitor.mode === "persistent") &&
+            (data.version === 3 ||
+              (monitor.mode !== "daemon" &&
+                (monitor.restart === undefined || monitor.restart === "on-failure") &&
+                monitor.silentAfterMin === undefined)) &&
+            Array.isArray(monitor.argv) &&
+            monitor.argv.length > 0 &&
+            monitor.argv.every((arg: unknown) => typeof arg === "string") &&
+            typeof monitor.cwd === "string" &&
+            (monitor.filter === undefined || typeof monitor.filter === "string"),
+        )
+      )
+        throw new Error("invalid OMP monitor spec");
+      manifests.push({ path, data });
     } catch {
-      errors.push(dir);
-      continue;
-    }
-    for (const entry of files) {
-      if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
-      const path = join(dir, entry.name);
-      try {
-        const data = JSON.parse(readFileSync(path, "utf8")) as Manifest["data"];
-        const omp = dir === ompDir;
-        if (
-          (data.version !== 1 && !(omp && (data.version === 2 || data.version === 3))) ||
-          !Array.isArray(data.monitors) ||
-          typeof data.sessionId !== "string"
-        )
-          throw new Error("invalid monitor metadata");
-        // Shared status/cleanup fields must be typed. Legacy argv retains command-based matching when unusable.
-        if (
-          !data.monitors.every((value: unknown) => {
-            if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-            const monitor = value as Monitor;
-            for (const field of [
-              "name",
-              "cwd",
-              "filter",
-              "monitorId",
-              "sessionId",
-              "description",
-              "command",
-              "path",
-              "target",
-            ] as const)
-              if (monitor[field] !== undefined && typeof monitor[field] !== "string") return false;
-            for (const field of ["persistent", "suspended", "deliveryPaused"] as const)
-              if (monitor[field] !== undefined && typeof monitor[field] !== "boolean") return false;
-            return (
-              monitor.expiresAt === undefined ||
-              (typeof monitor.expiresAt === "number" && Number.isFinite(monitor.expiresAt))
-            );
-          })
-        )
-          throw new Error("invalid monitor entry");
-        if (omp) for (const monitor of data.monitors) monitorPolicy(monitor);
-        if (
-          omp &&
-          !data.monitors.every(
-            (monitor) =>
-              typeof monitor.name === "string" &&
-              monitor.name.length > 0 &&
-              (data.version >= 2 || monitor.mode === undefined || monitor.mode === "persistent") &&
-              (data.version === 3 ||
-                (monitor.mode !== "daemon" &&
-                  (monitor.restart === undefined || monitor.restart === "on-failure") &&
-                  monitor.silentAfterMin === undefined)) &&
-              Array.isArray(monitor.argv) &&
-              monitor.argv.length > 0 &&
-              monitor.argv.every((arg: unknown) => typeof arg === "string") &&
-              typeof monitor.cwd === "string" &&
-              (monitor.filter === undefined || typeof monitor.filter === "string"),
-          )
-        )
-          throw new Error("invalid OMP monitor spec");
-        manifests.push({ path, data, ...(omp ? { kind: "omp" as const } : {}) });
-      } catch {
-        errors.push(path);
-      }
+      errors.push(path);
     }
   }
   return { manifests, errors };

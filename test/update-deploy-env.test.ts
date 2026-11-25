@@ -27,8 +27,7 @@ it("replacement children resolve private Bun and OMP before installed Cataly whi
     writeFileSync(input, "8");
     const code = `console.log(JSON.stringify({
       result: Number(await Bun.file(${JSON.stringify(input)}).text()) * 7,
-      home: process.env.HOME, pane: process.env.HERDR_PANE_ID, workspace: process.env.HERDR_WORKSPACE_ID,
-      namespace: process.env.CATALY_HERDR_SESSION,
+      home: process.env.HOME, pane: process.env.TERN_PANE, runtime: process.env.CATALY_RUNTIME,
       telemetry: process.env.CATALY_TELEMETRY, tracking: process.env.DO_NOT_TRACK,
       leakedCapabilities: Object.keys(process.env).filter(name => /TOKEN|PASSWORD|COOKIE|SUDO|TEST_CONFIG/.test(name))
     }))`;
@@ -76,8 +75,7 @@ it("replacement children resolve private Bun and OMP before installed Cataly whi
     expect(observed["tools"]).toEqual([16, 24]);
     expect(observed["home"]).toBe(config.home);
     expect(observed["pane"]).toBeUndefined();
-    expect(observed["workspace"]).toBeUndefined();
-    expect(observed["namespace"]).toBeUndefined();
+    expect(observed["runtime"]).toBeUndefined();
     expect(observed["telemetry"]).toBe("0");
     expect(observed["tracking"]).toBe("1");
     expect(observed["leakedCapabilities"]).toEqual([]);

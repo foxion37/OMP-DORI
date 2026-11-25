@@ -3,6 +3,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Http, HttpRequest, HttpResponse } from "../src/messenger/http.ts";
 import { Telegram } from "../src/messenger/telegram.ts";
+import { fileTgInboundStore } from "../src/messenger/telegram-inbound-state.ts";
 import {
   ERROR_BACKOFF_CAP_MS,
   pollTelegramInbound,
@@ -10,7 +11,8 @@ import {
   telegramInboundLoop,
 } from "../src/messenger/telegram-inbound.ts";
 import { fakeClock, withState } from "./fakes.ts";
-import { telegramTestStore } from "./telegram-win32-fixtures.ts";
+
+const posix = test.skipIf(process.platform === "win32");
 
 const OWNER = 5250;
 
@@ -45,7 +47,7 @@ const telegramFake = (batches: U[][]) => {
 
 const mk = (http: Http): Telegram => new Telegram(http, fakeClock(0), "T");
 
-test("live-location edit refreshes carry no text and are dropped, not one line each", async () => {
+posix("live-location edit refreshes carry no text and are dropped, not one line each", async () => {
   const realEdit = {
     update_id: 200,
     edited_message: { ...msg(OWNER, OWNER, "private", "moved the pin"), edit_date: 1730 },
@@ -62,14 +64,14 @@ test("live-location edit refreshes carry no text and are dropped, not one line e
   }));
   // One getUpdates response can carry the whole burst, and so can one poll.
   const { http } = telegramFake([[realEdit, ...locEdits]]);
-  const store = telegramTestStore(state.dir, 900);
+  const store = fileTgInboundStore(state.dir, 900);
   const { inbound: out } = await pollTelegramInbound(mk(http), store, { ownerId: OWNER });
   expect(out.length).toBe(1); // the text edit survives
   expect(out[0]!.text).toBe("moved the pin");
   expect(store.load()?.offset).toBe(207); // the location stream was consumed, not replayed
 });
 
-test("transient poll errors retry within the cap instead of the whole loop interval", async () => {
+posix("transient poll errors retry within the cap instead of the whole loop interval", async () => {
   // A single non-retryable poll failure must not silence intake for the --loop interval:
   // the loop-level error backoff is capped so the next poll happens within seconds.
   let calls = 0;
@@ -83,7 +85,7 @@ test("transient poll errors retry within the cap instead of the whole loop inter
   const stop = new Error("STOP");
   await telegramInboundLoop(
     mk(http),
-    async () => telegramTestStore(join(state.dir, "tg-error-backoff"), 900),
+    async () => fileTgInboundStore(join(state.dir, "tg-error-backoff"), 900),
     { ownerId: OWNER },
     60,
     (i) => emitted.push(i),
@@ -101,14 +103,14 @@ test("transient poll errors retry within the cap instead of the whole loop inter
   expect(warnings).toHaveLength(1);
 });
 
-test("--loop re-polls after a poll whose updates were all gate-dropped", async () => {
+posix("--loop re-polls after a poll whose updates were all gate-dropped", async () => {
   // A stranger's message is dropped by the owner gate, but updates came back:
   // more may be waiting, so the next poll must happen before any interval sleep.
   const { http, bodies } = telegramFake([
     [{ update_id: 300, message: msg(999, -1003801002434, "supergroup", "stranger", 3, true) }],
     [],
   ]);
-  const store = telegramTestStore(state.dir, 900);
+  const store = fileTgInboundStore(state.dir, 900);
   const emitted: TgInbound[] = [];
   const sleeps: number[] = [];
   const stop = new Error("STOP");
@@ -131,36 +133,40 @@ test("--loop re-polls after a poll whose updates were all gate-dropped", async (
   expect(sleeps).toEqual([60_000]);
 });
 
-test("activity stays unavailable for a full batch until the backlog is drained", async () => {
-  const { http } = telegramFake([
-    Array.from({ length: 100 }, (_, i) => ({ update_id: 400 + i, message: msg(999, 999, "private", "ignored") })),
-    [],
-  ]);
-  const states: boolean[] = [];
-  const stop = new Error("STOP");
-  await expect(
-    telegramInboundLoop(
-      mk(http),
-      async () => telegramTestStore(join(state.dir, "tg-off-health"), 900),
-      { ownerId: OWNER },
-      1,
-      () => {},
-      () => {},
-      async () => {
-        throw stop;
-      },
-      (available) => states.push(available),
-    ),
-  ).rejects.toBe(stop);
-  expect(states).toEqual([false, true]);
-}, 30_000);
+posix(
+  "activity stays unavailable for a full batch until the backlog is drained",
+  async () => {
+    const { http } = telegramFake([
+      Array.from({ length: 100 }, (_, i) => ({ update_id: 400 + i, message: msg(999, 999, "private", "ignored") })),
+      [],
+    ]);
+    const states: boolean[] = [];
+    const stop = new Error("STOP");
+    await expect(
+      telegramInboundLoop(
+        mk(http),
+        async () => fileTgInboundStore(join(state.dir, "tg-off-health"), 900),
+        { ownerId: OWNER },
+        1,
+        () => {},
+        () => {},
+        async () => {
+          throw stop;
+        },
+        (available) => states.push(available),
+      ),
+    ).rejects.toBe(stop);
+    expect(states).toEqual([false, true]);
+  },
+  30_000,
+);
 
-test("poll errors revoke activity health and a failed healthy observer escapes", async () => {
+posix("poll errors revoke activity health and a failed healthy observer escapes", async () => {
   const states: boolean[] = [];
   const http: Http = async () => ({ status: 401, headers: {}, body: "{}" });
   await telegramInboundLoop(
     mk(http),
-    async () => telegramTestStore(join(state.dir, "tg-off-error"), 900),
+    async () => fileTgInboundStore(join(state.dir, "tg-off-error"), 900),
     { ownerId: OWNER },
     0,
     () => {},
@@ -173,7 +179,7 @@ test("poll errors revoke activity health and a failed healthy observer escapes",
   await expect(
     telegramInboundLoop(
       mk(telegramFake([[]]).http),
-      async () => telegramTestStore(join(state.dir, "tg-off-write"), 900),
+      async () => fileTgInboundStore(join(state.dir, "tg-off-write"), 900),
       { ownerId: OWNER },
       0,
       () => {},
@@ -186,8 +192,8 @@ test("poll errors revoke activity health and a failed healthy observer escapes",
   ).rejects.toBe(failure);
 });
 
-test.each([8, 3_600])("Telegram honors a %is Retry-After floor or stops when it exceeds budget", async (seconds) => {
-  const store = telegramTestStore(join(state.dir, "tg-off-rate"), 900);
+posix.each([8, 3_600])("Telegram honors a %is Retry-After floor or stops when it exceeds budget", async (seconds) => {
+  const store = fileTgInboundStore(join(state.dir, "tg-off-rate"), 900);
   const transportWaits: number[] = [];
   const pollWaits: number[] = [];
   const emitted: string[] = [];
@@ -245,7 +251,7 @@ test.each([8, 3_600])("Telegram honors a %is Retry-After floor or stops when it 
   }
 });
 
-test("a failed cursor save stops before any poll can acknowledge the emitted message", async () => {
+posix("a failed cursor save stops before any poll can acknowledge the emitted message", async () => {
   const { http, bodies } = telegramFake([[{ update_id: 12, message: msg(OWNER, OWNER, "private", "accepted") }]]);
   const emitted: string[] = [];
   const failure = new Error("synthetic write failure");

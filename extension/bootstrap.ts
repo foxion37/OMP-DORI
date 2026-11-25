@@ -10,7 +10,6 @@ type Entry = { type: string; customType?: string; data?: unknown };
 const BOOTSTRAP_ENTRY = "omp-cataly:monitor-bootstrap";
 const INTAKE_ENTRY = "omp-cataly:intake";
 export const MONITOR_BOOTSTRAP_FLAG = "cataly-monitor-bootstrap";
-export const LEGACY_MONITOR_BOOTSTRAP_FLAG = "dori-monitor-bootstrap";
 
 /** Explicit, session-bound, private operator file. This is never inferred from an old model transcript. */
 export function bootstrapMonitors(
@@ -19,7 +18,7 @@ export function bootstrapMonitors(
   sessionId: string,
   previous: ReadonlyMap<string, MonitorSpec>,
 ): boolean {
-  const path = pi.getFlag(MONITOR_BOOTSTRAP_FLAG) ?? pi.getFlag(LEGACY_MONITOR_BOOTSTRAP_FLAG);
+  const path = pi.getFlag(MONITOR_BOOTSTRAP_FLAG);
   if (path === undefined) return false;
   if (typeof path !== "string" || !isAbsolute(path))
     throw new Error("monitor bootstrap needs an absolute private file");

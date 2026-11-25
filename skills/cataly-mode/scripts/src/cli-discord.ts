@@ -1,6 +1,6 @@
 /** `cataly inbound discord`: validates the shared settings, then hands intake to the Rust monitor. */
 import { die } from "./cli-context.ts";
-import { discordNativeBinary } from "./cli-discord-binary.ts";
+import { discordNativeBinary } from "../../../../src/native-binary.ts";
 import { execDiscordMonitor } from "./cli-discord-exec.ts";
 import { runNativeDiscord } from "./cli-discord-native.ts";
 import type { FlowDeps } from "./done-flow.ts";

@@ -35,13 +35,12 @@ const host = async <T>(path: string): Promise<T> => {
 const HEADLESS = "00000000-0000-4000-8000-000000000006";
 const KEY = "native-evidence-lane";
 beforeEach(async () => {
-  const stateDir = useConfig("");
+  const stateDir = useConfig();
   process.env.CATALY_HEADLESS_ID = HEADLESS;
   await new Registry(stateDir).write({
     key: KEY,
     title: "native evidence",
     thread: "none",
-    pane: HEADLESS,
     sessionRef: { runtime: "headless", id: HEADLESS },
     brief: "/brief.md",
     done: "file /done.md",
@@ -227,7 +226,9 @@ const nativeLane = async (cwd = import.meta.dir) => {
       return out.content.map((block) => (block.type === "text" ? block.text : "")).join("\n");
     },
     receipts: () =>
-      session.getBranch().filter((entry) => entry.type === "custom" && entry.customType === "omp-dori:tool-completion"),
+      session
+        .getBranch()
+        .filter((entry) => entry.type === "custom" && entry.customType === "omp-cataly:tool-completion"),
     shutdown: async (): Promise<void> => {
       try {
         await emitSessionShutdownEvent(runner);

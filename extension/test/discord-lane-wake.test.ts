@@ -15,7 +15,7 @@ const posix = test.skipIf(process.platform === "win32");
 const pane = "5002";
 const session = "exact-discord-wake";
 const channel = "900000000000000101";
-const legacy = "900000000000000102";
+const plain = "900000000000000102";
 const input = "900000000000000103";
 const next = "900000000000000104";
 const identity = { owner: "900000000000000105", bot: "900000000000000106" };
@@ -47,7 +47,7 @@ async function withWakeLane(
     CATALY_DISCORD_WAKE_GOAL: process.env.CATALY_DISCORD_WAKE_GOAL,
     CATALY_DISCORD_WAKE_MODEL: process.env.CATALY_DISCORD_WAKE_MODEL,
   };
-  const stateDir = useConfig("");
+  const stateDir = useConfig();
   process.env.TERN_PANE = pane;
   delete process.env.CATALY_HEADLESS_ID;
   process.env.CATALY_DISCORD_WAKE_SESSION = session;
@@ -68,11 +68,11 @@ async function withWakeLane(
       done: "",
       openedAt: "2026-01-01T00:00:00.000Z",
     });
-    for (const message of [legacy, input, next]) {
+    for (const message of [plain, input, next]) {
       inbox.add(
         session,
         { channel, message, reference: null, text: "same body", replyTo: null, attachments: [] },
-        message === legacy ? undefined : { reply: identity },
+        message === plain ? undefined : { reply: identity },
       );
     }
     cataly = await load({
@@ -134,7 +134,7 @@ posix.each([false, true])(
       ]);
       expect(cataly.messages).toEqual([]);
       expect(readPaneState(stateDir, pane)?.goal.status).toBe("paused");
-      expect(inbox.next(session, channel)?.id).toBe(legacy);
+      expect(inbox.next(session, channel)?.id).toBe(plain);
       expect(inbox.next(session, channel, { optedInOnly: true })?.id).toBe(next);
       expect(inbox.nextReply(session, channel)).toEqual(
         reject ? null : { id: input, part: 0, text: "the native answer" },

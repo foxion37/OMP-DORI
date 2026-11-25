@@ -30,6 +30,25 @@ fn attempt<'a>(identity: &'a str, fingerprint: &'a str, source: &'a str) -> Atte
 }
 
 #[test]
+fn a_symlinked_ancestor_opens_but_a_symlinked_queue_directory_does_not() {
+    let real = temp();
+    let link = real.with_extension("link");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    // macOS's $TMPDIR sits under /var -> /private/var.
+    let inbox = Inbox::open(&link.join("queue"), id(1), id(2), Ledger::Forced).unwrap();
+    drop(inbox);
+    assert!(real.join("queue/gateway.sqlite").is_file());
+    std::fs::DirBuilder::new()
+        .mode(0o700)
+        .create(real.join("target"))
+        .unwrap();
+    std::os::unix::fs::symlink(real.join("target"), real.join("aliased")).unwrap();
+    assert!(Inbox::open(&real.join("aliased"), id(1), id(2), Ledger::Forced).is_err());
+    std::fs::remove_file(link).unwrap();
+    std::fs::remove_dir_all(real).unwrap();
+}
+
+#[test]
 fn ledger_lifecycle_matches_head_admission_state() {
     let dir = temp();
     let inbox = Inbox::open(&dir, id(1), id(2), Ledger::Forced).unwrap();

@@ -97,6 +97,8 @@ export function leadHealthWriter(options: {
   readonly healthy: (source: string) => boolean;
   readonly manifest?: (sessionId: string) => object;
   readonly onLead?: (lead: { readonly sessionId: string; readonly pid: number }) => void;
+  /** A lead loaded from such a source writes the previous main's health shape (`presetLoaded`). */
+  readonly previousMain?: (source: string) => boolean;
 }): () => Promise<void> {
   const { config } = options;
   let writing = true;
@@ -119,14 +121,16 @@ export function leadHealthWriter(options: {
             pid: seen.pid,
             sessionId: seen.sessionId,
             role: "cataly",
-            presetLoaded: true,
+            configLoaded: true,
             startedAt: seen.startedAt,
             updatedAt: new Date().toISOString(),
             source,
             extensionHash: digest(readFileSync(join(source, "extension/index.ts"))),
             monitors: runningMonitors(config, { sessionId: seen.sessionId, pid: seen.pid }),
           };
-          saveDeploymentJson(join(config.stateDir, "runtime", `${encodeURIComponent(binding.ref.id)}.json`), health);
+          const { configLoaded, ...shared } = health;
+          const written = options.previousMain?.(source) ? { ...shared, presetLoaded: configLoaded } : health;
+          saveDeploymentJson(join(config.stateDir, "runtime", `${encodeURIComponent(binding.ref.id)}.json`), written);
         }
       } catch {
         // The harness is between incarnations; the next pass observes it again.

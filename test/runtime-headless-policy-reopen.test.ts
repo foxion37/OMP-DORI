@@ -57,7 +57,7 @@ test.skipIf(process.platform === "win32")(
           type: "custom",
           id: "policy",
           parentId: null,
-          customType: "omp-dori:lane-policy",
+          customType: "omp-cataly:lane-policy",
           data: binding,
         })}\n`,
       );

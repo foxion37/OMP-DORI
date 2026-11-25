@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { platform } from "../../../../src/platform/index.ts";
 import type { RuntimeKind } from "../../../../src/runtime/types.ts";
 import { type CgroupMemory, sampleCgroupMemory } from "./cgroup-memory.ts";
 import type { GuardThresholds } from "./config.ts";
@@ -24,9 +25,10 @@ export const sampleHost = async (
   run: Runner,
   dataPath = "/",
   rts: ChosenRuntimes = runtimesFor({}, process.env, run),
-  system: { platform?: NodeJS.Platform; readFile?: (path: string) => string } = {},
+  system: { platform?: NodeJS.Platform; readFile?: (path: string) => string; memFreePct?: () => number } = {},
 ): Promise<HostSample> => {
-  const linux = (system.platform ?? process.platform) === "linux";
+  const os = system.platform ?? process.platform;
+  const linux = os === "linux";
   const readProc = (path: string): string => {
     try {
       return system.readFile ? system.readFile(path) : readFileSync(path, "utf8");
@@ -42,8 +44,11 @@ export const sampleHost = async (
         ? readProc("/proc/loadavg")
         : (await run(["cat", "/proc/loadavg"])).out;
   const load1 = num(loadText.trim().split(/\s+/)[0], 0);
-  const mp = linux ? null : await run(["memory_pressure", "-Q"]);
-  const memInfo = mp?.code === 0 ? "" : linux ? readProc("/proc/meminfo") : (await run(["cat", "/proc/meminfo"])).out;
+  // macOS has one definition, the platform adapter's (kern.memorystatus_level, then free pages, then 0); tests inject
+  // it. Linux reads MemAvailable, and an unreadable or malformed /proc/meminfo keeps the default 100.
+  const darwinMemory = os === "darwin" ? (system.memFreePct ? system.memFreePct() : platform.memFreePct()) : null;
+  const memInfo =
+    darwinMemory !== null ? "" : linux ? readProc("/proc/meminfo") : (await run(["cat", "/proc/meminfo"])).out;
   const kb = (key: string): number | null => {
     const m = new RegExp(`^${key}:\\s+(\\d+)`, "m").exec(memInfo);
     return m ? Number(m[1]) : null;
@@ -51,11 +56,7 @@ export const sampleHost = async (
   const total = kb("MemTotal"),
     available = kb("MemAvailable");
   const memFreePct =
-    mp?.code === 0
-      ? num(/free percentage: (\d+)%/.exec(mp.out)?.[1], 100)
-      : total !== null && total > 0 && available !== null
-        ? Math.round((available / total) * 100)
-        : 100;
+    darwinMemory ?? (total !== null && total > 0 && available !== null ? Math.round((available / total) * 100) : 100);
   const df = await run(["df", "-k", dataPath]);
   const diskFreeGb = num(df.out.split("\n").at(-1)?.trim().split(/\s+/)[3], 0) / 1_048_576;
   const swap = linux ? null : await run(["sysctl", "-n", "vm.swapusage"]);

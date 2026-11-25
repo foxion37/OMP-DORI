@@ -42,9 +42,9 @@ darwin.each(["runtime", "lock"] as const)(
       expect(processExists(pid)).toBe(true);
 
       if (kind === "runtime") {
-        const runtime = join(paths.dori, "state", "runtime");
+        const runtime = join(paths.cataly, "state", "runtime");
         mkdirSync(runtime, { recursive: true, mode: 0o700 });
-        writeFileSync(join(runtime, "witness.json"), JSON.stringify({ ...identity, role: "dori" }));
+        writeFileSync(join(runtime, "witness.json"), JSON.stringify({ ...identity, role: "cataly" }));
         expect(() => assertNoLiveCataly(paths)).toThrow("identity is unavailable");
       } else {
         const lock = join(paths.root, "consumer.lock");

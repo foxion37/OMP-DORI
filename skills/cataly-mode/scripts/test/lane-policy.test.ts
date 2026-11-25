@@ -32,7 +32,7 @@ test("policy is opt-in and config rejects malformed regex policies with the esta
   expect(prepareLanePolicy(state.dir, "demo", undefined)).toBeUndefined();
   expect(readdirSync(state.dir)).toEqual([]);
   const file = join(state.dir, "config.json");
-  writeFileSync(file, JSON.stringify({ ompUlwPath: "", lanePolicy: { denyBash: ["sudo"] } }));
+  writeFileSync(file, JSON.stringify({ lanePolicy: { denyBash: ["sudo"] } }));
   expect((await loadConfig(file, state.dir)).lanePolicy?.denyBash).toEqual(["sudo"]);
   for (const lanePolicy of [
     null,

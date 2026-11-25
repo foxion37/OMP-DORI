@@ -52,7 +52,7 @@ pub async fn run(omp: &Executable<'_>, cwd: &Path, options: Options) -> Result<(
         options.inbox.as_deref().unwrap_or(&state_dir),
         bot,
         owner,
-        Ledger::Legacy,
+        Ledger::Unresolved,
     )?;
     let mut worker = Worker::new(
         omp,
@@ -97,7 +97,7 @@ pub async fn run(omp: &Executable<'_>, cwd: &Path, options: Options) -> Result<(
     let settings = Poll {
         seconds: options.poll_seconds,
         gateway: options.gateway,
-        legacy: options.legacy_cursors.as_deref(),
+        imported: options.import_cursors.as_deref(),
         discovery: discovery.as_mut().map(|d| (d, &routes)),
     };
     let result = {

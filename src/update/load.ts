@@ -13,7 +13,6 @@ const COMMAND_KEYS = ["name", "argv", "timeoutMs", "cwd"] as const;
 const CONFIG_KEYS = [
   "version",
   "target",
-  "runtime",
   "root",
   "remote",
   "ref",
@@ -31,8 +30,8 @@ const CONFIG_KEYS = [
   "promotion",
 ] as const;
 const RESERVED_ENV =
-  /^(?:HOME|PATH|TMP.*|TEMP|XDG_.*|(?:CATALY|DORI)_.*|PI_.*|OMP_.*|BUN_.*|NODE_.*|GIT_.*|GH_.*|GITHUB_.*|SSH_.*|DO_NOT_TRACK)$/;
-const MESSENGER_ENV = /^(?:CATALY|DORI)_(?:SLACK_TOKEN|SLACK_COOKIE|TELEGRAM_TOKEN|DISCORD_TOKEN)$/;
+  /^(?:HOME|PATH|TMP.*|TEMP|XDG_.*|CATALY_.*|PI_.*|OMP_.*|BUN_.*|NODE_.*|GIT_.*|GH_.*|GITHUB_.*|SSH_.*|DO_NOT_TRACK)$/;
+const MESSENGER_ENV = /^CATALY_(?:SLACK_TOKEN|SLACK_COOKIE|TELEGRAM_TOKEN|DISCORD_TOKEN)$/;
 const REPORTER_TOKENS = /\{(?!text\}|job\}|upstream\}|phase\})\w+\}/;
 
 const text = (value: unknown, label: string): string => {
@@ -133,12 +132,7 @@ export function loadUpdateConfig(path: string): UpdateConfig {
   }
   if (!object(raw)) throw new UpdateError("update config must be an object");
   allow(raw, CONFIG_KEYS, "update");
-  // `runtime: "herdr"` was required before the headless-only cutover; existing configs keep it and it is ignored.
-  if (
-    raw["version"] !== 1 ||
-    (raw["target"] !== "cataly" && raw["target"] !== "dori") ||
-    (raw["runtime"] !== undefined && raw["runtime"] !== "herdr")
-  ) {
+  if (raw["version"] !== 1 || raw["target"] !== "cataly") {
     throw new UpdateError('update requires version:1, target:"cataly"');
   }
   const root = canonical(resolve(base, text(raw["root"], "root")));

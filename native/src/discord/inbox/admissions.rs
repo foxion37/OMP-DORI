@@ -8,7 +8,7 @@ use rusqlite::{Connection, OptionalExtension, Row, params};
 use serde::Deserialize;
 
 use super::{Inbox, Snowflake};
-use crate::discord::intake::migration;
+use crate::discord::intake::cursor_file;
 
 pub(in crate::discord) const UNRESOLVED: &str = "HEAD_ADMISSION_UNRESOLVED: Discord head admission is unresolved; the cursor, source and FIFO are retained. Inspect the original native receipt; never replay an attempted input. Stop the original head before explicit abandonment.";
 
@@ -227,10 +227,10 @@ impl Inbox {
         cursor: Snowflake,
     ) -> Result<()> {
         if !self.has_admissions {
-            return migration::write(Some(dir), channel, cursor);
+            return cursor_file::write(Some(dir), channel, cursor);
         }
         assert_clear(&*self.lock()?)?;
-        migration::write(Some(dir), channel, cursor)?;
+        cursor_file::write(Some(dir), channel, cursor)?;
         prune(&*self.lock()?, channel, cursor)
     }
 
@@ -252,9 +252,9 @@ impl Inbox {
             let Some(record) = record else { return Ok(()) };
             let source: Source = serde_json::from_str(&record.source)
                 .context("invalid Discord head admission source")?;
-            let current = migration::read(Some(dir), source.channel)?;
+            let current = cursor_file::read(Some(dir), source.channel)?;
             let cursor = current.map_or(source.message, |current| current.max(source.message));
-            migration::write(Some(dir), source.channel, cursor)?;
+            cursor_file::write(Some(dir), source.channel, cursor)?;
             prune(&*self.lock()?, source.channel, cursor)?;
         }
     }

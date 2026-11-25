@@ -5,27 +5,51 @@ lanes as native OMP sessions, and the two scheduling loops as local processes. N
 terminal server is required. Tern is the optional terminal runtime (a source
 feature outside the consumer release path): it gives sessions, tabs and blocks
 and reports the program in front of a block. Registered sessions keep their
-owning runtime. The herdr and hc runtimes were removed; a home that still uses
-them stops with the [upgrade message](releases.md#upgrading-from-a-terminal-runtime).
-The headless host needs a Unix socket, so on Windows only Tern can run sessions.
+owning runtime. The headless host needs a Unix socket, so on Windows only Tern
+can run sessions.
 
-The [release guide](releases.md) separates current install profiles from the
-historical v0.1.2 preview. Cross-OS CI does not by itself establish live
-consumer support.
+Every headless session has its own detached host process under
+`<state>/headless/<uuid>/`. For the lead, duty and lanes it is the native
+Cataly binary, `cataly headless-host <dir>`: it owns the OMP `rpc-ui` child,
+the owner-only Unix socket the CLI and extension talk to, and the
+`stopped.json` receipt. The two scheduling loops, `duty-loop` and
+`hourly-loop`, are Bun processes (`src/runtime/headless-loop.ts`) with no OMP
+child. The CLI picks the binary in this order, never from the current directory
+or `PATH`:
+
+1. `CATALY_DISCORD_NATIVE_BIN`, when it is an absolute path;
+2. the binaries of the code tree the CLI runs from, same commit by
+   construction: the release-bundled `native-bin/<platform>-<arch>/cataly`,
+   then `target/managed/release/cataly`, which only a managed source
+   deployment writes (it runs `cargo build --locked --release --bin cataly`
+   while preparing the release, before anything stops, and holds when Rust is
+   missing or the build fails). A developer's own `target/release` build is
+   never used; point the override at it instead;
+3. the installed `$CATALY_HOME/bin/cataly-native`, where `CATALY_HOME` defaults
+   to `~/.cataly`.
+
+Without any of them, starting a lane, the lead or duty fails with the
+[reinstall guidance](releases.md#troubleshooting-and-support-reports). A host
+that exits before proving startup is named in the error with its path, so an
+old build without `headless-host` is visible; rebuild or reinstall it. A binary
+built for another `native-omp.lock` refuses the OMP version and reports that
+instead.
+`CATALY_DISCORD_NATIVE_BIN=off` disables only the Discord-native features; the
+headless host still resolves through steps 2 and 3. A Discord lane wake starts
+its host from the running Discord monitor binary itself.
+
+The [release guide](releases.md#support-boundary) lists the current install
+profiles. Cross-OS CI does not by itself establish live consumer support.
 
 The primary installed `cataly` remains the skill CLI. Every root harness command here uses `cataly harness ...`; `cataly-harness ...` after root linking or `bun src/cli.ts ...` are equivalent entrypoints. For example, skill `cataly send discord` posts to a messenger, while `cataly harness send lead` sends to an agent session.
 
-Lead and duty start OMP with role `cataly`; lanes and the built-in reviewer use role `lane`. Managed deployment and source-side wrappers pass a complete JSON string array through `CATALY_AGENT_ARGV`. The harness quotes each argument for shell execution; the skill preserves the selected prefix and configured template suffix for installer-owned defaults, including their lexical and canonical installation paths. Managed commands retain their native config fence, pinned Cataly extension and role-gated ULW selection. Explicit external commands remain intact. Without a managed selection, the harness retains `CATALY_AGENT_CMD` as a user shell command, defaulting to `omp`. The skill configures its own argv template and default model separately; see the [skill configuration reference](../skills/cataly-mode/references/scripts.md#configuration). The extension, pinned public omp-ulw and full sibling source layout must be installed together; the release installer provides that layout because the skill imports these runtime adapters by sibling path.
+Lead and duty start OMP with role `cataly`; lanes and the built-in reviewer use role `lane`. Managed deployment and source-side wrappers pass a complete JSON string array through `CATALY_AGENT_ARGV`. The harness quotes each argument for shell execution; the skill preserves the selected prefix and configured template suffix for installer-owned defaults, including their lexical and canonical installation paths. Managed commands retain their native config fence and pinned Cataly extension. Explicit external commands remain intact. Without a managed selection, the harness retains `CATALY_AGENT_CMD` as a user shell command, defaulting to `omp`. The skill configures its own argv template and default model separately; see the [skill configuration reference](../skills/cataly-mode/references/scripts.md#configuration). The extension and full sibling source layout must be installed together; the release installer provides that layout because the skill imports these runtime adapters by sibling path.
 
-New sessions receive the selected `HOME`, `CATALY_CONFIG`, `CATALY_HOME`, `CATALY_STATE_DIR`, `CATALY_AGENT_ARGV`, `CATALY_OMP_ULW_PATH` and `OMP_ULW_SCOPE_FILE` explicitly, plus their own `CATALY_HEADLESS_ID`. Relative paths become absolute without collapsing symlinks or `..`; empty scope values remain unchanged. Fresh sessions clear `CATALY_MANAGED_STARTUP`. Initial launches, reviewer children and native resume keep this context without forwarding arbitrary parent variables.
-
-Required managed ULW imports may select a dependency directory or its `index.ts` entry. Import and factory failures in either form cancel role requests at both the session and provider boundaries. Ordinary sessions and explicitly configured external overlays retain their existing behavior.
+New sessions receive the selected `HOME`, `CATALY_CONFIG`, `CATALY_HOME`, `CATALY_STATE_DIR` and `CATALY_AGENT_ARGV` explicitly, plus their own `CATALY_HEADLESS_ID`. Relative paths become absolute without collapsing symlinks or `..`. Fresh sessions clear `CATALY_MANAGED_STARTUP`. Initial launches, reviewer children and native resume keep this context without forwarding arbitrary parent variables.
 
 Source installation holds when its selected native executable aliases a wrapper that the chosen install mode will overwrite. File identity checks cover direct paths, symlinks, aliased parents and hard links without reading wrapper contents. Explicit overrides are checked before their version probe or installation changes; a bundled native selection is checked as soon as it is available.
 
 The native selection must also avoid traversing a command symlink that installation will replace: the primary `cataly` link or side `omp-cataly` link. This check follows relative links, parent aliases and directory prefixes without rewriting the selected pathname. Independent paths to the same executable remain valid because relinking leaves their target inode intact.
-
-The primary wrapper captures Bun as an absolute pathname before generating its bound-ULW guard. A relative `PATH` entry therefore keeps selecting the installation-time Bun after the guard changes directory, including when the wrapper is launched from another directory.
 
 Managed release preparation runs Git materialization and frozen dependency installation with a child-local `umask 077` before bundle admission. Root and skill packages use `--production`; the extension retains its full frozen install, including the OMP host dependency. The caller's mask stays unchanged, and independently group/world-writable bundle files remain rejected.
 
@@ -52,15 +76,26 @@ Process attestation also recognizes the pinned launcher's optional `PI_TIMING=1`
 | `keys(ref, keys)` | Enter or Escape |
 | `close(ref, scope)` | Closes the session (a Tern tab closes with its last block) |
 
-A session is stored as a `SessionRef`: the runtime (`headless` or `tern`), the id (a decimal block id such as `42` on tern), and the group and tab when the runtime has them. Every stored lane and role keeps its own ref, so commands on an existing session go to the runtime that opened it, whatever runtime is selected for new sessions. Refs written by earlier versions may name the removed `herdr` or `hc` runtimes, and lane records written before runtimes existed have no ref and read as herdr. Cataly still reads them but never writes one, and any command that would act on such a session stops with the upgrade message in the [release guide](releases.md#upgrading-from-a-terminal-runtime).
+A session is stored as a `SessionRef`: the runtime (`headless` or `tern`), the id (a decimal block id such as `42` on tern), and the group and tab when the runtime has them. Every stored lane and role keeps its own ref, so commands on an existing session go to the runtime that opened it, whatever runtime is selected for new sessions.
 
 ## Choosing a runtime
 
-For new sessions, `CATALY_RUNTIME` overrides the configuration field `sessionRuntime`; both accept `headless` and `tern`. With neither set, macOS and Linux select `headless` even inside a Tern block or when `tern` is installed. `cataly harness status` reports `RUNTIME headless (from default)`. Old `runtime` fields were often generated by an installer, so they do not opt a home into terminal execution after an upgrade.
+For new sessions, `CATALY_RUNTIME` overrides the configuration field `sessionRuntime`; both accept `headless` and `tern`. With neither set, macOS and Linux select `headless` even inside a Tern block or when `tern` is installed. `cataly harness status` reports `RUNTIME headless (from default)`. A `runtime` field alone does not opt a home into terminal execution.
 
 An explicit `launch --runtime` overrides the lane and session settings for that launch. With `"laneRuntime": "terminal"`, and on Windows where the native host has no Unix socket, the terminal runtime is Tern when the `runtime` field says `"tern"`, the caller runs in a Tern block (`TERN_PANE`), or `tern` is on `PATH`. When none of these holds, commands that require a terminal refuse with a one-line fix: install Tern, or set `"runtime": "tern"` in the config file (the message prints its absolute path), or `CATALY_RUNTIME`.
 
-`CATALY_RUNTIME`, `sessionRuntime` or `runtime` naming `herdr` or `hc` stops with the upgrade message; any other invalid value is an error. `cataly harness status` prints the choice first, for example `RUNTIME tern (from config)`; sources are `default`, `env`, `config`, `detect:TERN_PANE` and `detect:path`. With no choice it prints `RUNTIME unset:` and a fix. Skill `cataly boot` prints the same selection, or `RUNTIME unavailable:` and a failed check.
+Any other value of `CATALY_RUNTIME` or `sessionRuntime`, or a `runtime` other than `tern`, is an error. `cataly harness status` prints the choice first, for example `RUNTIME tern (from config)`; sources are `default`, `env`, `config`, `detect:TERN_PANE` and `detect:path`. With no choice it prints `RUNTIME unset:` and a fix. Skill `cataly boot` prints the same selection, or `RUNTIME unavailable:` and a failed check.
+
+After the roles, `cataly harness status` lists the open lanes, the longest without progress first, one line each within 120 columns: key, status, session ref, progress and the last entry. The ref names its runtime once, as its prefix. A headless id is shortened like a git short SHA: its first 8 characters, more when another registered session (a role or a lane of any status) shares them:
+
+```text
+discord-intake        waiting  headless:3f2a9c1d-11 progress 40m (14:20)    waiting: ci:vntrevx/Cataly#812 since 14:25
+docs-license          working  tern:42              progress 25m (14:35)    report 14:35: license headers added
+status-board-readable working  headless:3f2a9c1e    progress 12m (14:48)    report 14:48: rebased on main; touched suit…
+discord-voice         working  headless:3f2a9c1d-12 progress 5m (14:55)     report 14:55: voice route test green
+```
+
+Commands that take a session ref accept the shortened form and resolve it against the registered roles and lanes: `cataly harness send`, `inbox list|ack|resend`, `observe` and `answer`, and skill `cataly policy allow-once --root`. A prefix shorter than 8 characters, one no registered session has, and one more than one has are refused; an ambiguous one lists the full refs it matches. The roles line, `NATIVE` lines, JSON output and stored records keep the full id.
 
 For a registered native lead or duty session, use `cataly harness observe lead`
 or `cataly harness observe duty`. To stop the owned native harness, run
@@ -128,7 +163,7 @@ Skill direct sends gate on the status they just read. A rejected send is failed;
 
 ### OMP identity, goal and approval records
 
-The extension writes `<stateDir>/sessions/<encodeURIComponent(id)>.json` for its headless session id (`CATALY_HEADLESS_ID`) or, in a Tern block, its `TERN_PANE`. Its schema is `paneId` (the session or block id; the field name is kept for older records), `role`, `sessionId`, optional `sessionFile`, `cwd`, `pid`, `startedAt`, `updatedAt`, `goal: {status, objective?}`, `approvalPending`, optional `agentStatus: idle|working`, and optional `native: {observedAt, jobs, approvals}`. Earlier records may omit the optional fields. `stateDir` follows `CATALY_STATE_DIR`, then the `CATALY_CONFIG` file's value, then `~/.cataly/state`. Production callers pass that configured `stateDir` explicitly to enable OMP refinement. Runtime instances without it preserve native behavior and do not read operator config or extension state.
+The extension writes `<stateDir>/sessions/<encodeURIComponent(id)>.json` for its headless session id (`CATALY_HEADLESS_ID`) or, in a Tern block, its `TERN_PANE`. Its schema is `paneId` (the session or block id), `role`, `sessionId`, optional `sessionFile`, `cwd`, `pid`, `startedAt`, `updatedAt`, `goal: {status, objective?}`, `approvalPending`, optional `agentStatus: idle|working`, and optional `native: {observedAt, jobs, approvals}`. `stateDir` follows `CATALY_STATE_DIR`, then the `CATALY_CONFIG` file's value, then `~/.cataly/state`. Production callers pass that configured `stateDir` explicitly to enable OMP refinement. Runtime instances without it preserve native behavior and do not read operator config or extension state.
 
 The runtime attests the writer against the live session process, its ancestry and process start time before trusting a record. Missing, malformed, reused-pid, foreign or changing OMP identity stays unknown; an open approval becomes blocked even for forced delivery. Session IDs and files therefore come from the live OMP writer rather than an unrelated newest transcript.
 
@@ -144,7 +179,7 @@ An extension monitor is not a native `AsyncJobManager` job or daemon service. Na
 
 `monitor` belongs to the Cataly main session: the selected role must be `cataly` and native `ctx.agent.kind` must be `main`. Registration is inactive by default. Session start, switch, branch and tree events remove an explicitly selected `monitor` from child tool lists, even when the child inherits the Cataly role or receives a copied role flag. The execution guard separately rejects child `start`, `stop` and `list` calls; hiding a tool is not authorization.
 
-Native children still inherit their parent's role-gated ULW behavior. Ordinary tools such as `read`, `edit` and `bash`, including direct work in the main session, retain their existing selection and permission rules. This is an extension tool boundary, not an operating-system sandbox.
+Ordinary tools such as `read`, `edit` and `bash`, including direct work in the main session, retain their existing selection and permission rules. This is an extension tool boundary, not an operating-system sandbox.
 
 ## Waiting on an identified operation
 
@@ -178,7 +213,7 @@ Only one duty loop runs per home: it takes `duty/lock` under `CATALY_HOME`, and 
 - `lead` or `duty`;
 - a lane key.
 
-A bare `42` is not a ref, because it is a legal lane key. Stored roles and inbox file names prefix the runtime (`tern:42`; inbox file `tern--42.jsonl`). A `herdr:` or `hc:` ref, or a bare herdr pane such as `w1:p3`, names a removed runtime and stops with the upgrade message.
+A bare `42` is not a ref, because it is a legal lane key. Stored roles and inbox file names prefix the runtime (`tern:42`; inbox file `tern--42.jsonl`).
 
 ## Hooks and prompts
 
@@ -197,15 +232,15 @@ A bare `42` is not a ref, because it is a legal lane key. Stored roles and inbox
 
 `onReady` runs on `cataly harness ready`, `onReport` on `cataly harness report`, and `onLost` when the duty loop finds a vanished session. `{key}`, `{text}` and `{evidence}` are replaced inside each argv element. Hooks run in the background; failure logs one stderr line without failing the command. `reviewCommand` replaces the built-in OMP reviewer in `cataly harness review`, receives `{pr}`, `{repo}`, `{number}`, `{sha}` and `{text}` (the rendered prompt), and must print `VERDICT: CLEAR` or `VERDICT: BLOCK`.
 
-`CATALY_PROMPTS_DIR` overrides templates individually. A missing file uses the built-in template, so a directory from before waiting-lane supervision can omit `nudge-waiting.md`. An existing override is used as-is: an unreadable file or a directory at that path reports `lane-failed` before the nudge is queued or counted, and repairing it lets the next pass try again. A missing override's default nudge is a real nudge and counts once. An override `nudge-waiting.md` without `{{wholeTarget}}` still names the whole waiting target: when its `{{target}}` was cut to fit the first line, or it has no `{{target}}`, the whole target is added on its own line under the first line. Restart the long-lived duty process with the matching CLI source during cutover.
+`CATALY_PROMPTS_DIR` overrides templates individually. A missing file uses the built-in template, so a directory need not provide every template, `nudge-waiting.md` included. An existing override is used as-is: an unreadable file or a directory at that path reports `lane-failed` before the nudge is queued or counted, and repairing it lets the next pass try again. A missing override's default nudge is a real nudge and counts once. An override `nudge-waiting.md` without `{{wholeTarget}}` still names the whole waiting target: when its `{{target}}` was cut to fit the first line, or it has no `{{target}}`, the whole target is added on its own line under the first line. Restart the long-lived duty process with the matching CLI source during cutover.
 
-Duty queues notices before recording their nudge count, escalation marker or LOST status. Each lane has a persisted random `noticeId` for its incarnation and a `progressEpoch` counter advanced by counted new evidence and READY, independently of the wall clock. Retries reuse the same notice ID; new evidence, READY and a reused lane key get fresh identities even when timestamps or pane IDs repeat. Legacy records persist their initial identity before their first notice is queued. LOST notices owed while no lead is registered or its inbox is locked remain in `duty/lead.jsonl`, outside the replaceable lane record, and move under the destination inbox lock once it is available.
+Duty queues notices before recording their nudge count, escalation marker or LOST status. Each lane has a persisted random `noticeId` for its incarnation and a `progressEpoch` counter advanced by counted new evidence and READY, independently of the wall clock. Retries reuse the same notice ID; new evidence, READY and a reused lane key get fresh identities even when timestamps or pane IDs repeat. LOST notices owed while no lead is registered or its inbox is locked remain in `duty/lead.jsonl`, outside the replaceable lane record, and move under the destination inbox lock once it is available.
 
 Settled notice IDs remain in `<inbox>.ids` and move with forwarded or migrated queues. Deduplication covers retained local duty queues and these journals, including interrupted queue rewrites; distinct IDs remain distinct even when their timestamp and text match. It is not external exactly-once delivery: runtime acceptance and local settlement are separate operations. Losing the journal or selecting an unrelated destination is outside this boundary; ambiguous deliveries retain their existing held-message handling.
 
 Every rewrite of an inbox queue holds the inbox's lock, and so does every append. A message sent while another process holds the lock (a flush, an ack, a migration or a duty notice) is written to a file of its own under `<inbox>.spool/`; the next holder of that lock moves it into the queue in order before it reads the queue and again after it rewrites it, and the duty loop lists a spooled inbox even when its queue is empty. A forwarded inbox's spool moves with its old entries to the new inbox. The send itself returns `QUEUED`. A spooled entry keeps its spool file's name, so a move cut short adds it once and an equal message sent in the same millisecond stays a second message, also when a migration carries both. When a spooled entry leaves its queue, its spool file's name is recorded with the delivered ids (`<inbox>.ids`), so a `.moving` file left by a move cut short after the entry was queued and delivered is removed on the next pass instead of being queued a second time.
 
-Inbox and route locks record a unique random `nonce` alongside `pid`, `host` and `at`, so a delayed release cannot remove another acquisition even when its process and timestamp are unchanged. Legacy records without a nonce keep the same stale classification: a live local pid retains its lock; a dead local pid frees it; foreign-host or unreadable records use the existing age rule. A stale lock is reclaimed under an exclusive sibling `.inbox-claim-<sha256>` whose digest covers the target basename and complete observed lock content. Every claim component stays 77 bytes through recursive crash recovery. Directory aliases of the same physical parent and basename share that claim; the lexical directory path is not part of its digest. The claim holder still checks the stale snapshot before removal, and release still checks its full owner receipt.
+Inbox and route locks record a unique random `nonce` alongside `pid`, `host` and `at`, so a delayed release cannot remove another acquisition even when its process and timestamp are unchanged. Stale classification does not depend on the nonce: a live local pid retains its lock; a dead local pid frees it; foreign-host or unreadable records use the existing age rule. A stale lock is reclaimed under an exclusive sibling `.inbox-claim-<sha256>` whose digest covers the target basename and complete observed lock content. Every claim component stays 77 bytes through recursive crash recovery. Directory aliases of the same physical parent and basename share that claim; the lexical directory path is not part of its digest. The claim holder still checks the stale snapshot before removal, and release still checks its full owner receipt.
 
 A send holds the route lock of the inbox it names (`<inbox>.route`, stale under the inbox lock's rules) from reading any forward marker to writing its message or spool file. A send waits up to two seconds for a held route without blocking the process. A name is resolved again under the route before the message is written: a lane or role that switched sessions between the first resolution and the route gets the message at its new session, and a name that no longer resolves leaves the send where it first pointed. Duty notices (nudges, escalations, LOST notices and owed notices) resolve their lane or role again under the route the same way. Past a held route, a message addressed to the logical `lead` role (a report, READY, START, a loop summary or a held-delivery notice) is kept in a file of its own under `duty/lead.jsonl.spool/` and returns `QUEUED`, even if the role was replaced or disappeared after its initial resolution. That intent comes from the send target, not a later comparison with the current lead session. The next duty pass that finds the registered lead's route and inbox lock free moves it into that lead's inbox after the owed LOST notices, oldest first. An explicit session ref does not become a message for a future lead merely because it once held that role: past a held route it is refused (exit 2) with nothing queued. A duty notice is tried again on the next pass.
 
@@ -245,7 +280,7 @@ Use the exact session ID or a unique live prefix. `--generation` pins an observe
 
 On macOS and Linux, `cataly launch` starts a native OMP lane. Use the normal `cataly status`, `pause`, `resume` and `close` commands with the lane key; they address its recorded session.
 
-Each headless lane runs one native `omp --mode rpc-ui` process owned by a local supervisor that survives CLI exits. An upgrade never kills sessions left over from a removed terminal runtime or deletes their state; see the [upgrade note](releases.md#upgrading-from-a-terminal-runtime).
+Each headless lane runs one native `omp --mode rpc-ui` process owned by a local supervisor that survives CLI exits.
 
 Before creating the first goal, the supervisor verifies the requested provider/model against the Cataly extension's catalog readback and OMP's current selection in that same session. If they disagree, no brief is sent. Inspect the registered lane with `cataly headless observe LANE`; the launcher does not substitute another model or retry the request.
 

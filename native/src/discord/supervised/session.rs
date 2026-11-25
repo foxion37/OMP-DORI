@@ -66,7 +66,8 @@ pub(super) struct Session<'a> {
 impl Session<'_> {
     /// `storeFor(channel, seed).load()`: an absent cursor is seeded from the oldest queued message minus one.
     pub(super) fn cursor(&self, channel: Snowflake, seed: bool) -> Result<Option<Snowflake>> {
-        if let Some(cursor) = crate::discord::intake::migration::read(Some(self.cursors), channel)?
+        if let Some(cursor) =
+            crate::discord::intake::cursor_file::read(Some(self.cursors), channel)?
         {
             return Ok(Some(cursor));
         }

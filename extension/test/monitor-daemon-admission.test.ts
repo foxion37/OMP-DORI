@@ -14,7 +14,7 @@ afterEach(() => {
 
 for (const mode of ["once", "daemon"] as const) {
   test(`${mode} completion waits for real owner admission before sealing or retrying`, async () => {
-    const root = useConfig(join(import.meta.dir, "fake-ulw.ts"));
+    const root = useConfig();
     const pi = await load({ session: { id: "owner", entries: [] }, flags: { "cataly-role": "cataly" } });
     await pi.emit("session_start");
     mkdirSync(join(root, "owes"), { recursive: true, mode: 0o700 });

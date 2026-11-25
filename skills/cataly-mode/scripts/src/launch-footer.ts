@@ -25,15 +25,11 @@ const FOOTER_END = "<!-- cataly launch: footer end -->";
 // what a first launch would. Only a file that ends with launch's footer is cut: the owner's text may quote the heading.
 export const originalBrief = (text: string): string => {
   const brief = text.replace(/\s*$/, "");
-  const legacy = brief.endsWith("<!-- dori launch: footer end -->");
-  if (!legacy && !brief.endsWith(FOOTER_END)) return brief;
-  const footer = legacy ? "<!-- dori launch: footer start -->" : FOOTER_START;
-  const begin = legacy ? "<!-- dori launch: the brief starts below -->" : BRIEF_START;
-  const foot = brief.lastIndexOf(`\n${footer}\n`);
+  if (!brief.endsWith(FOOTER_END)) return brief;
+  const foot = brief.lastIndexOf(`\n${FOOTER_START}\n`);
   if (foot === -1) return brief;
-  const start = brief.indexOf(`${begin}\n`);
-  if (legacy && (start === -1 || start > foot)) return brief;
-  return brief.slice(start === -1 || start > foot ? 0 : start + begin.length + 1, foot).trimEnd();
+  const start = brief.indexOf(`${BRIEF_START}\n`);
+  return brief.slice(start === -1 || start > foot ? 0 : start + BRIEF_START.length + 1, foot).trimEnd();
 };
 
 // Name only the selected runtime; an unresolved preview still records reports without inventing a send command.
@@ -52,16 +48,14 @@ export const laneFooterFor = async (deps: FlowDeps, lane: Lane): Promise<string>
   const target = leadAddress(deps.config, deps.env ?? process.env);
   if ("ref" in target) {
     const ref = target.ref;
-    // A lead still recorded on the removed herdr/hc runtime has no send command.
-    const runtime = ref.runtime === "headless" || ref.runtime === "tern" ? ref.runtime : undefined;
-    if (runtime === undefined) return footer(lane, "", repoIdentities, undefined, freshness);
+    const runtime = ref.runtime;
     if (runtime === "headless" || runtime !== rts.choice?.kind) {
       const state = await trustedPaneState(deps.run, deps.config.stateDir, ref, rts).catch(() => null);
       if (state?.role !== "cataly") return footer(lane, "", repoIdentities, undefined, freshness);
     }
     return footer(lane, runtime === "headless" ? formatRef(ref) : ref.id, repoIdentities, runtime, freshness);
   }
-  // A legacy terminal alias is meaningful only on an explicitly selected terminal and without a conflicting binding.
+  // A configured terminal alias is meaningful only on an explicitly selected terminal and without a conflicting binding.
   const runtime = rts.choice?.kind;
   const alias =
     target.reason === "invalid" && target.unboundAlias && runtime !== "headless" ? deps.config.leadPane : "";

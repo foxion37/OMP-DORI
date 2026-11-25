@@ -6,7 +6,7 @@ import { setup } from "./harness-setup.ts";
 export async function waitLane() {
   const s = setup();
   const lane = await startLane(s.d, "waiting-job", s.brief, { group: "w1" });
-  const pane = s.w.panes.get(lane.paneId)!;
+  const pane = s.w.panes.get(lane.sessionRef.id)!;
   pane.status = "idle";
   const control: {
     native: NonNullable<Probe["native"]> | undefined;

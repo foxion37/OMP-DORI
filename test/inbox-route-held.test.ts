@@ -11,7 +11,7 @@ import { href } from "./fake.ts";
 import { quietLane } from "./harness-setup.ts";
 import { LEAD_REF as LEAD, PANE, setup } from "./inbox-setup.ts";
 
-// A message for the lead whose route stays held past the wait (a migration of the lead's inbox that does not let go)
+// A message for the lead whose route stays held past the wait (another process that does not let go of the route)
 // is kept for the lead, not dropped: the next duty pass that finds the route free moves it into the lead's inbox.
 
 afterEach(() => mock.restore());

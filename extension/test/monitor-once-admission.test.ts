@@ -13,7 +13,7 @@ afterEach(() => {
 });
 
 test("once completion waits for real owner admission before sealing", async () => {
-  const root = useConfig(join(import.meta.dir, "fake-ulw.ts"));
+  const root = useConfig();
   const pi = await load({ session: { id: "owner", entries: [] }, flags: { "cataly-role": "cataly" } });
   await pi.emit("session_start");
   mkdirSync(join(root, "owes"), { recursive: true, mode: 0o700 });
@@ -60,7 +60,7 @@ test("once completion waits for real owner admission before sealing", async () =
 });
 
 test("failed owner admission retains unfinished once intent", async () => {
-  const root = useConfig(join(import.meta.dir, "fake-ulw.ts"));
+  const root = useConfig();
   const pi = await load({ session: { id: "owner", entries: [] }, flags: { "cataly-role": "cataly" } });
   await pi.emit("session_start");
   writeFileSync(join(root, "owes"), "block admission storage");

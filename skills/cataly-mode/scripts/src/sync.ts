@@ -71,7 +71,8 @@ export const syncRegistry = async (deps: FlowDeps, write: boolean): Promise<Sync
   };
   for (const lane of lanes) {
     const session = lane.sessionRef ? live.get(formatRef(lane.sessionRef)) : undefined;
-    if (!session) drift.push(`${lane.key}: pane ${lane.pane ?? "(none)"} is gone but the lane is ${statusOf(lane)}`);
+    if (!session)
+      drift.push(`${lane.key}: pane ${lane.sessionRef?.id ?? "(none)"} is gone but the lane is ${statusOf(lane)}`);
     const hit: SessionHit = session
       ? await resolveSession(session.ref, session.cwd ?? "", table, resolveDeps)
       : { id: "", via: "none", unknownReason: "pane not listed" };
@@ -110,7 +111,7 @@ export const syncRegistry = async (deps: FlowDeps, write: boolean): Promise<Sync
     rows.push({
       key: lane.key,
       thread: lane.thread,
-      pane: lane.pane ?? "-",
+      pane: lane.sessionRef?.id ?? "-",
       session: hit.id ? `${hit.id} (${hit.via})` : (lane.session ?? "-"),
       status: statusOf(lane),
       ...observation(hit, lane.session),

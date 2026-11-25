@@ -11,14 +11,13 @@ import {
 } from "../../skills/cataly-mode/scripts/src/owes";
 import { type FakePi, load, until, useConfig } from "./fake-pi";
 
-const FAKE_ULW = join(import.meta.dir, "fake-ulw.ts");
 const CHANNEL = "1570973386363117651";
 const inbound = (message: string, text = "배포 왜 안 됨") =>
   `INBOUND discord ${CHANNEL} ${message} from=owner ref=- ${JSON.stringify(text)}`;
 
 let stateDir: string;
 beforeEach(() => {
-  stateDir = useConfig(FAKE_ULW);
+  stateDir = useConfig();
   delete process.env.CATALY_HEADLESS_ID;
 });
 afterEach(() => {

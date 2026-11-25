@@ -6,6 +6,7 @@ import { dutyTick } from "../src/duty.ts";
 import { hhmm } from "../src/fit.ts";
 import { report, startLane } from "../src/lanes.ts";
 import { laneBoard } from "../src/status-view.ts";
+import { knownRefs } from "../src/target.ts";
 import { setup } from "./harness-setup.ts";
 import { captureIo } from "./inbox-setup.ts";
 
@@ -19,7 +20,7 @@ async function waitingLane(opts: { waitingFor?: string; runtime?: "tern" } = {},
   const { runtime, ...wait } = opts;
   const s = setup(runtime ? { runtime } : {});
   const lane = await startLane(s.d, "blocked", s.brief, { group: "w1" });
-  const pane = s.w.panes.get(lane.paneId)!;
+  const pane = s.w.panes.get(lane.sessionRef.id)!;
   pane.status = "idle";
   await report(s.d, "blocked", text, { status: "waiting", ...wait });
   const at = async (min: number) => {
@@ -90,22 +91,14 @@ describe("a waiting lane", () => {
     expect(lead.received.at(-1)).toBe("[REPORT blocked] CI green, back on it");
   });
 
-  test("a record from before --for waits since its last progress", async () => {
-    const { d, lead, lane, at } = await waitingLane();
-    const old = d.store.lane("blocked")!;
-    delete old.waitingFor;
-    delete old.waitingSince;
-    d.store.saveLane(old);
+  test("a report without --for names its blocker and waits since it reported", async () => {
+    const { lead, lane, at } = await waitingLane();
     await at(40);
     expect(lead.received.at(-1)!.split("\n")[1]).toBe(`waiting on CI on acme/app#3 since ${hhmm(lane.createdAt)}`);
   });
 
-  test("a record from before --for keeps its inferred start and target when it reports again before escalation", async () => {
+  test("a lane waiting without --for keeps its start and target when it reports again before escalation", async () => {
     const { w, d, lead, lane, at } = await waitingLane();
-    const old = d.store.lane("blocked")!;
-    delete old.waitingFor;
-    delete old.waitingSince;
-    d.store.saveLane(old);
     w.clock = lane.createdAt + 25 * MIN;
     await report(d, "blocked", "STUCK: no log for 15m", { status: "waiting" });
     expect(d.store.lane("blocked")).toMatchObject({ waitingSince: lane.createdAt, waitingFor: "CI on acme/app#3" });
@@ -123,11 +116,11 @@ describe("a waiting lane", () => {
     // A Tern block's short ref leaves room for the last entry; a headless UUID ref, never cut, takes that room first.
     const { w, d, lane } = await waitingLane({ waitingFor: "CI 812", runtime: "tern" });
     const since = hhmm(lane.createdAt);
-    const [line] = laneBoard(d.store.lanes(), w.clock);
+    const [line] = laneBoard(d.store.lanes(), w.clock, knownRefs(d.store));
     expect(line).toContain(`waiting: CI 812 since ${since} | report`);
     expect(Bun.stringWidth(line!)).toBeLessThanOrEqual(120);
     await report(d, "blocked", "x", { status: "waiting", waitingFor: "ＬＯＮＧ ＴＡＲＧＥＴ ".repeat(8) });
-    const [long] = laneBoard(d.store.lanes(), w.clock);
+    const [long] = laneBoard(d.store.lanes(), w.clock, knownRefs(d.store));
     expect(long).toMatch(new RegExp(`waiting: ＬＯＮＧ .*… since ${since}`));
     expect(Bun.stringWidth(long!)).toBeLessThanOrEqual(120);
   });

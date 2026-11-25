@@ -14,7 +14,6 @@ export const artifactFixture = async () => {
     ...defaultConfig(state.dir),
     stateDir: join(state.dir, "state"),
     defaultCwd: root,
-    ompUlwPath: "",
     artifactRoots: [{ path: root, baseUrl: "https://files.example/reports/" }],
   };
   const registry = new Registry(config.stateDir);

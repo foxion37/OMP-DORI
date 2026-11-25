@@ -37,7 +37,6 @@ test("only a fresh matching receipt and an owned live child establish monitor li
     };
     const spec = { name: "watch", argv: ["cataly", "watch"], filter: "^LANE_", cwd: state.dir };
     const manifest: Manifest = {
-      kind: "omp",
       path: "/unused",
       data: { version: 1, sessionId: "owner", monitors: [spec] },
     };
@@ -52,7 +51,7 @@ test("only a fresh matching receipt and an owned live child establish monitor li
       pid: process.pid,
       startedAt,
       updatedAt,
-      presetLoaded: true,
+      configLoaded: true,
       monitors: [{ ...spec, pid: child.pid, startTicks: identity?.startTicks ?? "unavailable" }],
     };
     const path = join(state.dir, "runtime", `${encodeURIComponent(lead.paneId)}.json`);

@@ -12,7 +12,7 @@ const text = async (pi: FakePi) => (await run(pi, { op: "list" })).content[0]!.t
 const record = (pi: FakePi) => recordedMonitorStates(pi.session.entries).get("daemon");
 
 async function fixture() {
-  const stateDir = useConfig(join(import.meta.dir, "fake-ulw.ts"));
+  const stateDir = useConfig();
   const root = dirname(stateDir);
   const marker = join(root, "runs");
   const session: FakeSession = { id: "daemon-owner", entries: [] };
@@ -111,7 +111,7 @@ test("version three preserves daemon and silence policy through boot and managed
       version: 3,
       monitors: [{ mode: "daemon", restart: { max: 5, backoffSec: 10 }, silentAfterMin: 1 }],
     });
-    const boot = readMonitorManifests(join(f.root, "sessions"), [], join(f.stateDir, "monitors"));
+    const boot = readMonitorManifests(join(f.stateDir, "monitors"));
     expect(boot.errors).toEqual([]);
     expect(boot.manifests[0]?.data.monitors[0]).toMatchObject({ mode: "daemon", silentAfterMin: 1 });
     const readManaged = () => readMonitorSet(join(f.stateDir, "monitors", "daemon-owner.json"), "daemon-owner", true);

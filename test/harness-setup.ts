@@ -31,7 +31,7 @@ export function setup(opts: { readonly runtime?: "headless" | "tern" } = {}) {
 export async function quietLane() {
   const s = setup();
   const lane = await startLane(s.d, "talker", s.brief, { group: "w1" });
-  const pane = s.w.panes.get(lane.paneId)!;
+  const pane = s.w.panes.get(lane.sessionRef.id)!;
   pane.status = "idle";
   s.lead.received.length = 0;
   const at = async (min: number) => {

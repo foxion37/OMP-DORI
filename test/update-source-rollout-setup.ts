@@ -91,7 +91,7 @@ process.on("SIGTERM", stop);
         });
       manifests.add(sessionId);
     };
-    await startHarness(config.deployment, d.oldSource, { ...d.toolchain, bun }, d.work);
+    await startHarness(config.deployment, d.oldSource, { ...d.toolchain, bun, extensionSource: d.oldSource }, d.work);
     const lead = await d.until(async () => {
       const seen = await d.lead();
       return seen?.status === "idle" && seen.sessionId && manifests.has(seen.sessionId) ? seen : undefined;

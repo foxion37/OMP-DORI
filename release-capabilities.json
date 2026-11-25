@@ -1,7 +1,0 @@
-{
-  "version": 1,
-  "profiles": [
-    { "platform": "linux", "arch": "x64", "runtime": "herdr" },
-    { "platform": "darwin", "arch": "arm64", "runtime": "hc" }
-  ]
-}

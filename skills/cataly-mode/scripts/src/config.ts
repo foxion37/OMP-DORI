@@ -1,16 +1,8 @@
 import { homedir } from "node:os";
 import { join, sep } from "node:path";
-import {
-  resolveConsumerOmpCommand,
-  resolveConsumerOmpUlwPath,
-  resolveProcessOmpCommand,
-  resolveProcessOmpUlwPath,
-} from "../../../../src/release/runtime.ts";
+import { resolveConsumerOmpCommand, resolveProcessOmpCommand } from "../../../../src/release/runtime.ts";
 import { freshnessError, type FreshnessPolicy } from "./freshness-policy.ts";
 import { isSessionRuntime } from "../../../../src/runtime/select.ts";
-import { currentAgentCommand } from "../../../../src/runtime/legacy-agent-command.ts";
-import { LegacyRuntimeError } from "../../../../src/runtime/registry.ts";
-import { legacyRecipeEnv, recipePaths } from "../../../../src/runtime/recipe-env.ts";
 import type { RuntimeKind, TerminalRuntimeKind } from "../../../../src/runtime/types.ts";
 import { type ArtifactRoot, parseArtifactRoots } from "./artifact-config.ts";
 import { repoIdentities } from "./config-identities.ts";
@@ -42,7 +34,7 @@ export type GuardThresholds = {
 };
 
 export type CatalyConfig = LaunchConfig & {
-  /** Terminal preference: only "tern" remains; "herdr"/"hc" stop the command with the upgrade guidance. */
+  /** Terminal preference: only "tern". */
   readonly runtime?: TerminalRuntimeKind;
   readonly sessionRuntime?: RuntimeKind;
   readonly laneRuntime?: "headless" | "terminal";
@@ -60,7 +52,6 @@ export type CatalyConfig = LaunchConfig & {
   /** How long `launch` waits for the agent's ready status and goal after it starts; a slow host is a host property. */
   readonly startupWaitSeconds: number;
   readonly sessionsDir: string;
-  readonly ompUlwPath: string;
   readonly freshness?: FreshnessPolicy;
   readonly nudgeAfterMin: number;
   readonly postAfterMin: number;
@@ -98,7 +89,6 @@ export const defaultConfig = (home = homedir()): CatalyConfig => ({
   goalMarker: "Pursuing goal",
   startupWaitSeconds: 180,
   sessionsDir: join(home, ".omp", "agent", "sessions"),
-  ompUlwPath: join(home, ".cataly", "omp-ulw", "index.ts"),
   nudgeAfterMin: 15,
   postAfterMin: 20,
   closeAfterMin: 5,
@@ -126,24 +116,10 @@ export const expandHome = (path: string, home = homedir()): string =>
 const queueCwds = new WeakMap<CatalyConfig, string>();
 export const queueDefaultCwd = (config: CatalyConfig): string => queueCwds.get(config) ?? config.defaultCwd;
 
-// Bind the loaded file and installation, not a process environment variable reread at invocation.
-const hookPaths = new WeakMap<Hooks, ReturnType<typeof recipePaths>>();
-export function configuredHookEnv(
-  hooks: Hooks,
-  argv: ArgvTemplate,
-  env: Readonly<Record<string, string | undefined>> = process.env,
-): ReturnType<typeof legacyRecipeEnv> {
-  const paths = hookPaths.get(hooks);
-  return paths === undefined ? undefined : legacyRecipeEnv(argv, { ...paths, env });
-}
-
 export class ConfigError extends Error {}
 
-/** Settings that name the removed herdr/hc runtimes stop the command with the upgrade guidance. */
-const checkRuntimeSettings = (raw: Readonly<Record<string, unknown>>, path: string): void => {
+const checkRuntimeSettings = (raw: Readonly<Record<string, unknown>>): void => {
   const { runtime, sessionRuntime } = raw;
-  if (runtime === "herdr" || runtime === "hc" || sessionRuntime === "herdr" || sessionRuntime === "hc")
-    throw new LegacyRuntimeError(path);
   if (runtime !== undefined && runtime !== "tern")
     throw new ConfigError(`invalid runtime: expected "tern", got ${JSON.stringify(runtime)}`);
   if (sessionRuntime !== undefined && !isSessionRuntime(sessionRuntime))
@@ -152,16 +128,13 @@ const checkRuntimeSettings = (raw: Readonly<Record<string, unknown>>, path: stri
 
 export const loadConfig = async (path = configPath(), home = homedir(), env = process.env): Promise<CatalyConfig> => {
   const selectedHome = env["CATALY_HOME"];
-  const selectedPaths = recipePaths(path, selectedHome);
   const base = {
     ...defaultConfig(home),
-    ...(selectedHome && path === join(selectedHome, "config.json")
-      ? { stateDir: join(selectedHome, "state"), ompUlwPath: join(selectedHome, "omp-ulw/index.ts") }
-      : {}),
+    ...(selectedHome && path === join(selectedHome, "config.json") ? { stateDir: join(selectedHome, "state") } : {}),
   };
   const file = Bun.file(path);
   const raw = (await file.exists()) ? ((await file.json()) as Partial<CatalyConfig>) : {};
-  checkRuntimeSettings(raw, path);
+  checkRuntimeSettings(raw);
   try {
     checkLanePolicy(raw.lanePolicy);
   } catch (error) {
@@ -219,23 +192,17 @@ export const loadConfig = async (path = configPath(), home = homedir(), env = pr
   const command = resolveProcessOmpCommand(merged.agentCommand, path, env);
   const config: CatalyConfig = {
     ...merged,
-    agentCommand: currentAgentCommand(
+    agentCommand:
       command === merged.agentCommand || env["CATALY_AGENT_ARGV"] === undefined
         ? resolveConsumerOmpCommand(command, { home })
         : command,
-    ),
     stateDir: expandHome(env["CATALY_STATE_DIR"] ?? merged.stateDir, home),
     artifactRoots: parseArtifactRoots(raw.artifactRoots, (root) => expandHome(root, home), ConfigError),
     defaultCwd: expandHome(merged.defaultCwd, home),
     sessionsDir: expandHome(merged.sessionsDir, home),
-    ompUlwPath: resolveConsumerOmpUlwPath(resolveProcessOmpUlwPath(expandHome(merged.ompUlwPath, home), home, env), {
-      home,
-      useDefault: raw.ompUlwPath === undefined,
-    }),
     leadPane: env["CATALY_LEAD_PANE"] ?? merged.leadPane,
   };
   if (merged.defaultCwd.startsWith("~/")) queueCwds.set(config, `${home}${sep}${merged.defaultCwd.slice(2)}`);
-  hookPaths.set(config.hooks, selectedPaths);
   return config;
 };
 export const fill = (template: ArgvTemplate, values: Readonly<Record<string, string>>): string[] =>

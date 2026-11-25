@@ -37,9 +37,7 @@ export const renderStatus = (snapshot: StatusSnapshot): string => {
     lines.push(snapshot.registryIncomplete ? "LANES unknown (registry incomplete)" : "LANES none open");
   lines.push(`DECISIONS ${snapshot.decisions ?? "unknown"} open`);
   const m = snapshot.monitors;
-  lines.push(
-    `MONITORS ${m.recorded ?? "unknown"} recorded, ${m.suspended ?? "unknown"} suspended, ${m.expired ?? "unknown"} expired (metadata only; liveness unverified)`,
-  );
+  lines.push(`MONITORS ${m.recorded ?? "unknown"} recorded (metadata only; liveness unverified)`);
   for (const error of snapshot.errors) lines.push(`WARN ${error}`);
   return lines.join("\n");
 };

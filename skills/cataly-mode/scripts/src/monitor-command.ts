@@ -6,12 +6,12 @@ import { quotedSubstitutions, shellWords, splitString, unquote } from "./monitor
 // Find the Cataly entry point and its own arguments through shell commands, substitutions and known launchers.
 // A relative entry comes from the cwd or a prior cd/env directory, and must resolve in every possible directory
 // unless the caller asks whether it may coordinate. Unowned words, including comments, can still name lanes.
-const CATALY_NAMES: Record<string, true> = { cataly: true, "omp-cataly": true, dori: true, "omp-dori": true };
+const CLI_NAMES: Record<string, true> = { cataly: true, "omp-cataly": true };
 // A POSIX path is cut at `/` only; a backslash is an ordinary name character there, so only Windows reads it as one.
 const SKILL_SOURCE =
   process.platform === "win32"
-    ? /(?:^|[\\/])(?:cataly|dori)-mode[\\/]scripts[\\/]src[\\/]cli\.ts$/
-    : /(?:^|\/)(?:cataly|dori)-mode\/scripts\/src\/cli\.ts$/;
+    ? /(?:^|[\\/])cataly-mode[\\/]scripts[\\/]src[\\/]cli\.ts$/
+    : /(?:^|\/)cataly-mode\/scripts\/src\/cli\.ts$/;
 // A Set: a `then` key on an object literal reads as a thenable.
 const RESERVED = new Set(["do", "then", "else", "elif", "if", "while", "until", "!", "{"]);
 const PREFIXES: Record<string, true> = { exec: true, command: true, builtin: true };
@@ -99,7 +99,7 @@ const commandWords = (
     return possible && all.length > 16 ? [undefined] : all;
   };
   const isCataly = (word: string, dirs: Dirs): boolean =>
-    CATALY_NAMES[basename(word)] === true ||
+    CLI_NAMES[basename(word)] === true ||
     expand(dirs, word)[possible ? "some" : "every"]((path) =>
       (path === undefined && possible && typeof cwd === "string" ? /(^|\/)cli\.ts$/ : SKILL_SOURCE).test(path ?? word),
     );

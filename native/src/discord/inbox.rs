@@ -24,8 +24,8 @@ const MESSAGE: &str = "json_extract(payload, '$.id')";
 /// How the queue treats the head admission ledger.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Ledger {
-    /// The Rust-owned head: settle a legacy unresolved row from its original OMP transcript.
-    Legacy,
+    /// The Rust-owned head: settle an unresolved row from its original OMP transcript.
+    Unresolved,
     /// TS non-native intake: use an existing ledger, never settle it locally.
     Existing,
     /// Supervised admission: create the ledger (discord-inbound-queue.ts:81-85); IPC reconciles it.
@@ -74,6 +74,9 @@ impl Inbox {
             directory.is_dir() && directory.uid() == uid && directory.mode().trailing_zeros() >= 6,
             "Discord queue directory must be owned and private"
         );
+        // SQLITE_OPEN_NOFOLLOW refuses a symlink in any path component, such as macOS's `/var -> /private/var`
+        // above `$TMPDIR`. The queue directory itself is not a link (checked above), so resolve only its ancestors.
+        let root = fs::canonicalize(root)?;
         let path = root.join("gateway.sqlite");
         if !check_file(&path, uid)? {
             match OpenOptions::new()
@@ -108,7 +111,7 @@ impl Inbox {
             has_admissions,
             source_prefix,
         };
-        if ledger == Ledger::Legacy {
+        if ledger == Ledger::Unresolved {
             inbox.reconcile()?;
         }
         Ok(inbox)
@@ -181,7 +184,7 @@ impl Inbox {
             source_channel == channel.to_string()
                 && source_id == id.to_string()
                 && matches!(outcome.as_str(), "accepted" | "rejected" | "abandoned"),
-            "Discord legacy admission does not have an exact settled source"
+            "Discord admission does not have an exact settled source"
         );
         Ok(true)
     }
@@ -204,12 +207,12 @@ impl Inbox {
                     "{}{}:{}",
                     self.source_prefix, source.channel, source.message
                 ),
-            "legacy Discord admission belongs to another receiver"
+            "unresolved Discord admission belongs to another receiver"
         );
         let file = Path::new(&head_file);
         ensure!(
             file.is_absolute(),
-            "legacy Discord head path must be absolute"
+            "unresolved Discord head path must be absolute"
         );
         let (outcome, entry) = match receipt(file, &identity, &fingerprint)
             .context("HEAD_ADMISSION_UNRESOLVED: reading original OMP receipt")?
@@ -236,30 +239,18 @@ fn initialize(db: &mut Connection, source: &str, native: bool) -> Result<bool> {
     let tx = db
         .transaction_with_behavior(TransactionBehavior::Exclusive)
         .context("acquiring the Discord FIFO; stop the other receiver before switching")?;
-    tx.execute_batch("CREATE TABLE IF NOT EXISTS pending (id INTEGER PRIMARY KEY, kind TEXT NOT NULL, payload TEXT NOT NULL);
+    tx.execute_batch("CREATE TABLE IF NOT EXISTS pending (id INTEGER PRIMARY KEY, kind TEXT NOT NULL, payload TEXT NOT NULL, admitted_after TEXT, thread_parent TEXT);
         CREATE TABLE IF NOT EXISTS cataly_native_receiver (key INTEGER PRIMARY KEY CHECK(key=1), source TEXT NOT NULL);")?;
-    for (column, sql) in [
-        (
-            "admitted_after",
-            "ALTER TABLE pending ADD COLUMN admitted_after TEXT",
-        ),
-        (
-            "thread_parent",
-            "ALTER TABLE pending ADD COLUMN thread_parent TEXT",
-        ),
-        (
-            "cataly_native",
+    // The TypeScript receiver creates the same queue without the Rust-only column.
+    let native_column: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('pending') WHERE name='cataly_native')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !native_column {
+        tx.execute_batch(
             "ALTER TABLE pending ADD COLUMN cataly_native INTEGER NOT NULL DEFAULT 0",
-        ),
-    ] {
-        let exists: bool = tx.query_row(
-            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('pending') WHERE name=?1)",
-            [column],
-            |row| row.get(0),
         )?;
-        if !exists {
-            tx.execute_batch(sql)?;
-        }
     }
     tx.execute_batch(&format!("CREATE INDEX IF NOT EXISTS pending_channel ON pending ({CHANNEL},length({MESSAGE}),{MESSAGE},id) WHERE kind='message';
         CREATE INDEX IF NOT EXISTS pending_owner ON pending ({CHANNEL},json_extract(payload, '$.author.id'),length({MESSAGE}),{MESSAGE},id) WHERE kind='message'"))?;

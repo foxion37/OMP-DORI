@@ -69,7 +69,6 @@ export const defaultDeps = (): Deps => {
           });
           return k === "tern" ? new TernRuntime(spawnExec, { stateDir }) : new HeadlessRuntime(stateDir);
         },
-        harnessConfigPath(store.root),
       );
       return runtimes;
     },
@@ -80,9 +79,9 @@ export const defaultDeps = (): Deps => {
       const selected = processOmpCommand();
       if (selected) return selected.map(shq).join(" ");
       if (process.env["CATALY_AGENT_CMD"] !== undefined) {
-        const legacy = [process.env["CATALY_AGENT_CMD"]] as const;
-        const command = resolveConsumerOmpCommand(legacy);
-        return command === legacy ? legacy[0] : command.map(shq).join(" ");
+        const configured = [process.env["CATALY_AGENT_CMD"]] as const;
+        const command = resolveConsumerOmpCommand(configured);
+        return command === configured ? configured[0] : command.map(shq).join(" ");
       }
       const command = resolveConsumerOmpCommand(["omp"]);
       return command[0] !== "omp"
@@ -106,7 +105,7 @@ export function isOmpAgentCommand(command: string): boolean {
 
 /** Give OMP the extension role while preserving configured arguments and explicit role/command overrides. */
 export const agentCommand = (d: Deps, role: "cataly" | "lane"): string =>
-  isOmpAgentCommand(d.agentCmd) && !/(?:^|\s)--(?:cataly|dori)-role(?:[=\s]|$)/.test(d.agentCmd)
+  isOmpAgentCommand(d.agentCmd) && !/(?:^|\s)--cataly-role(?:[=\s]|$)/.test(d.agentCmd)
     ? `${d.agentCmd} --cataly-role ${role}`
     : d.agentCmd;
 
@@ -154,8 +153,8 @@ export function harnessLaneEnv(d: Deps, key: string): Record<string, string> {
 export const promptsDir = (): string => process.env["CATALY_PROMPTS_DIR"] || PROMPTS;
 
 /**
- * The template `name` from `promptsDir()`, or the built-in one when that directory has none: a prompts directory made
- * for an older cataly lacks the templates added since (nudge-waiting.md), and those keep their defaults.
+ * The template `name` from `promptsDir()`, or the built-in one when that directory has none: a prompts directory
+ * overrides templates individually, and any template it omits (nudge-waiting.md, say) keeps its default.
  */
 export function promptFile(name: string): string {
   const own = join(promptsDir(), name);
@@ -170,10 +169,7 @@ export function promptFile(name: string): string {
 
 /** `template` with each `{{name}}` in `vars` replaced; an unknown one is left as written. */
 export const fill = (template: string, vars: Record<string, string>): string =>
-  template.replace(
-    /\{\{(\w+)\}\}/g,
-    (literal, k: string) => vars[k] ?? (k === "dori" ? vars["cataly"] : undefined) ?? literal,
-  );
+  template.replace(/\{\{(\w+)\}\}/g, (literal, k: string) => vars[k] ?? literal);
 
 export const prompt = (name: string, vars: Record<string, string>): string =>
   fill(readFileSync(promptFile(name), "utf8"), vars);

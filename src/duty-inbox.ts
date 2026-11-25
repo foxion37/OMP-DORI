@@ -8,13 +8,12 @@ import type { SessionRef } from "./runtime/types.ts";
 const RESOLVES = 3;
 
 /**
- * Runs `write` on the inbox the session `name` resolves to (the one a running migration forwards it to, if one does)
- * under that session's route lock and that inbox's lock, the lock every rewrite of the queue holds: a flush that read
- * the queue before an unlocked append writes it back without the appended entry, and a migration that moved the inbox
- * meanwhile would leave it behind (lockRoute). `name` (a lane's or role's record) is resolved again under the route: a
- * migration that finished before the route was taken left nothing on the old id, which a new session may use. Returns
- * the inbox written; undefined while another process holds either lock, or with nothing named: nothing is written, and
- * the next pass tries again.
+ * Runs `write` on the inbox of the session `name` resolves to, under that session's route lock and its inbox lock, the
+ * lock every rewrite of the queue holds: a flush that read the queue before an unlocked append writes it back without
+ * the appended entry, and a native stop that sealed the inbox meanwhile must not receive it (lockRoute). `name` (a
+ * lane's or role's record) is resolved again under the route: a lane or role that switched sessions before the route
+ * was taken is followed to its new session. Returns the inbox written; undefined while another process holds either
+ * lock, or with nothing named: nothing is written, and the next pass tries again.
  */
 export function underInboxLock(
   d: Deps,
@@ -29,14 +28,13 @@ export function underInboxLock(
       now = name();
       if (now === undefined) return undefined;
       if (sameSession(now, ref)) {
-        const inbox = d.store.destination(ref);
-        if (inboxSealed(d.store.root, ref) || inboxSealed(d.store.root, inbox)) return undefined;
-        registeredNativeTarget(d, inbox);
-        const release = d.store.lockInbox(inbox, d.now());
+        if (inboxSealed(d.store.root, ref)) return undefined;
+        registeredNativeTarget(d, ref);
+        const release = d.store.lockInbox(ref, d.now());
         if (!release) return undefined;
         try {
-          write(inbox);
-          return inbox;
+          write(ref);
+          return ref;
         } finally {
           release();
         }

@@ -179,9 +179,28 @@ fn identity(pid: u32) -> Option<Identity> {
     })
 }
 
-/// macOS identity needs libproc/sysctl FFI, which `unsafe_code = "forbid"` excludes: fail closed like TS does when
-/// no reader is available.
-#[cfg(not(target_os = "linux"))]
+/// processIdentity(pid) on macOS (src/platform/darwin.ts): libproc start token and status, `kern.bootsessionuuid`, and
+/// libproc's executable path, which is both the recorded executable and the image whose dev/ino is recorded.
+#[cfg(target_os = "macos")]
+fn identity(pid: u32) -> Option<Identity> {
+    if pid == 0 {
+        return None;
+    }
+    let start_ticks = super::darwin::start(pid)?;
+    let executable = super::darwin::executable(pid)?;
+    let image = fs::metadata(&executable).ok()?;
+    Some(Identity {
+        pid,
+        start_ticks,
+        boot_id: super::darwin::boot_session()?,
+        image_dev: image.dev().to_string(),
+        image_ino: image.ino().to_string(),
+        executable,
+    })
+}
+
+/// No process readers on other hosts: fail closed like TS does when it has none.
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 fn identity(_pid: u32) -> Option<Identity> {
     None
 }
@@ -478,7 +497,7 @@ mod tests {
         );
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
     fn own_identity_is_current() {
         let own = identity(std::process::id()).unwrap();
@@ -487,6 +506,23 @@ mod tests {
         let mut other = serde_json::to_value(&own).unwrap();
         other["startTicks"] = Value::from("0");
         assert!(!same_process(&other));
+    }
+
+    /// The record is reusable only while TypeScript's `processIdentity` reads the same fields for the same PID. Needs
+    /// `bun`, so Linux runs it with `cargo test -- --ignored`.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg_attr(
+        not(target_os = "macos"),
+        ignore = "runs the TypeScript readers with bun"
+    )]
+    #[test]
+    fn identity_matches_typescript() {
+        let pid = std::process::id();
+        let ts = crate::discord::darwin::typescript_process(pid);
+        assert_eq!(
+            Some(ts["identity"].clone()),
+            identity(pid).map(|own| serde_json::to_value(own).unwrap())
+        );
     }
 
     #[test]

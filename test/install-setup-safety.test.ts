@@ -10,7 +10,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
-import { git, script, setup, withUlwRemote } from "./install-setup.ts";
+import { script, setup } from "./install-setup.ts";
 
 // POSIX-only: the source installer and its fixture use Bash and POSIX paths and permissions.
 const posix = test.skipIf(process.platform === "win32");
@@ -34,16 +34,12 @@ posix.each(["primary", "side"] as const)("source %s setup creates a private home
   expect(s.install({ CATALY_INSTALL_MODE: mode, CATALY_NO_PULL: "1" }).code).toBe(0);
 });
 
-posix.each(["custom-ulw", "backup"] as const)("source %s path creates a private home before preparation", (kind) => {
-  const s = withUlwRemote();
+posix("source backup path creates a private home before preparation", () => {
+  const s = setup();
   const extra: Record<string, string> = { CATALY_INSTALL_MODE: "primary", CATALY_NO_PULL: "1" };
-  if (kind === "custom-ulw") {
-    Object.assign(extra, { OMP_ULW_SRC: "", OMP_ULW_REPO: s.remote, OMP_ULW_REF: "main" });
-  } else {
-    const bin = join(s.home, "global-bin");
-    mkdirSync(bin);
-    symlinkSync(join(s.upstream, s.cli), join(bin, "cataly"));
-  }
+  const bin = join(s.home, "global-bin");
+  mkdirSync(bin);
+  symlinkSync(join(s.upstream, s.cli), join(bin, "cataly"));
   const result = Bun.spawnSync(["bash", "-c", 'umask 0002; exec "$1"', "setup-umask", script], {
     env: s.env(extra),
     stdin: "ignore",
@@ -52,8 +48,7 @@ posix.each(["custom-ulw", "backup"] as const)("source %s path creates a private 
   const base = join(s.home, ".cataly");
   expect(statSync(base).mode & 0o777).toBe(0o700);
   expect(statSync(join(base, "config.json")).mode & 0o777).toBe(0o600);
-  if (kind === "custom-ulw") expect(git(join(base, "omp-ulw-custom"), "rev-parse", "HEAD")).toBe(s.first);
-  else expect(readdirSync(join(base, "backups"))).toHaveLength(1);
+  expect(readdirSync(join(base, "backups"))).toHaveLength(1);
   expect(s.install(extra).code).toBe(0);
 });
 
@@ -110,7 +105,7 @@ posix("source JSON with no managed change retains original non-UTF-8 bytes", () 
   mkdirSync(base, { mode: 0o700 });
   const path = join(base, "config.json");
   const bytes = Buffer.concat([
-    Buffer.from('{"ompUlwPath":"","agentCommand":["owner"],"owner":"'),
+    Buffer.from('{"agentCommand":["owner"],"owner":"'),
     Buffer.from([0xff]),
     Buffer.from('"}\n'),
   ]);
@@ -128,7 +123,7 @@ posix.each(["config.json", "omp.yml"] as const)("source refuses a lossy UTF-8 re
   mkdirSync(base, { mode: 0o700 });
   const path = join(base, name);
   const bytes = Buffer.concat([
-    Buffer.from(name === "config.json" ? '{"ompUlwPath":"stale","owner":"' : 'owner: "'),
+    Buffer.from(name === "config.json" ? '{"owner":"' : 'owner: "'),
     Buffer.from([0xff]),
     Buffer.from(name === "config.json" ? '"}\n' : '"\n'),
   ]);

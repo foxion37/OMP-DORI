@@ -43,7 +43,6 @@ linux("a source candidate is a real immutable-target clone and a clean interrupt
   expect(git(input.candidate, "rev-parse", "HEAD")).toBe(f.target.commit);
   expect(git(input.candidate, "rev-parse", "HEAD^{tree}")).toBe(f.target.tree);
   expect(input.publicManifest.hash).toBe(sourceManifest(input.candidate).hash);
-  expect(input.publicManifest.ulwPresent).toBe(false);
   expect(input.publicManifest.files.some((file) => file.path.includes("node_modules"))).toBe(false);
   expect(await sourceCandidate(f.config, f.target)).toEqual(input);
   expect(await currentSource(f.config)).toEqual(f.current);

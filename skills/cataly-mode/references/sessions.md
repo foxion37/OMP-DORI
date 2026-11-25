@@ -16,7 +16,7 @@ For a Tern launch, `launch` checks the key and the `Done =` line, appends a foot
 
 Write the brief like a careful prompt:
 
-- open with the keywords you would type yourself (for example `ulw set goal and work`);
+- open with the instruction you would type yourself (for example `set goal and work`);
 - the original request/source references and only the facts learned that matter to this task, not the whole lead transcript;
 - the allowed repositories, worktree and branch, with the execution directory explicit when it differs from the lead's;
 - the observable acceptance, checks and stop condition, from the point of view of whoever uses the result;
@@ -95,8 +95,9 @@ A blocked call records the rule IDs and the command's SHA-256, not the command t
 cataly policy allow-once demo-lane 'denyBash[0]' --reason "Owner approved the blocked attempt"
 ```
 
-For a lane started by the root harness, pass `--root headless:<UUID>` using the
-exact reference from that lane's status. If a skill-registry lane and a root
+For a lane started by the root harness, pass `--root headless:<UUID>`, or the
+unique prefix `cataly harness status` shows for that lane (`headless:3f2a9c1e`);
+an ambiguous or unknown prefix is refused. If a skill-registry lane and a root
 lane share a key, use `--skill` to select the skill-registry lane instead.
 The key alone cannot authorize a different lane with the same name.
 
@@ -111,7 +112,7 @@ One JSON file per lane under `<stateDir>/lanes/`, written atomically (temp file 
 | Field                           | Meaning                                                                                                                                                                      |
 | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `thread`                        | where its updates go, as `platform:thread` (or `none`)                                                                                                                       |
-| `sessionRef`                    | its session: the runtime (`headless` or `tern`), the id, and the group (the headless group label, or the Tern session) and tab when the runtime has them. Records from earlier versions that name the removed herdr or hc runtime are still read; commands on them stop with the [upgrade message](../../../docs/releases.md#upgrading-from-a-terminal-runtime) |
+| `sessionRef`                    | its session: the runtime (`headless` or `tern`), the id, and the group (the headless group label, or the Tern session) and tab when the runtime has them |
 | `session`                       | the agent's own session id, so a closed job can be reopened later                                                                                                            |
 | `status`                        | `working`, `done-claimed`, `verified-done`, `not-done`, `closed`                                                                                                             |
 | `claim`, `objection`, `history` | what was claimed, what was objected, every status change                                                                                                                     |
@@ -157,7 +158,7 @@ Before you send to a session:
 
 Exit code 0 and echoed input are not proof the agent acted on the message. A reply from the session, or its record of handling the message, is.
 
-For a registered lane, `cataly tell <key> --text TEXT` does steps 1, 3 and 4 through `sendVerified`; delivery holds on an open OMP approval, an unknown status or a changed session id. `TOLD` (exit 0) means the native host confirmed delivery to the exact recorded session, queued if the agent was working, or on tern that the agent moved to working. `TELL_UNCONFIRMED` (exit 3) means the text may be in the session but delivery was not confirmed (the host's answer was lost, or on tern no status change was seen, which is always the case for an agent that was already working): do not send it again; wait for the lane to answer, inspect it with `cataly headless observe <key>`, or on tern read the block (step 2) and, if the text still sits in the input, press Enter only. `TELL_FAILED` (exit 2) means nothing was sent: a shell, a stopped agent, an open approval, an unreadable status, a paused or parked lane (resume or reopen it first), a lane without a confirmed session, a lane still recorded on a removed herdr/hc runtime, or a changed lane identity; a refusal by the runtime ends with the status read after it. An unknown or closed key exits 1.
+For a registered lane, `cataly tell <key> --text TEXT` does steps 1, 3 and 4 through `sendVerified`; delivery holds on an open OMP approval, an unknown status or a changed session id. `TOLD` (exit 0) means the native host confirmed delivery to the exact recorded session, queued if the agent was working, or on tern that the agent moved to working. `TELL_UNCONFIRMED` (exit 3) means the text may be in the session but delivery was not confirmed (the host's answer was lost, or on tern no status change was seen, which is always the case for an agent that was already working): do not send it again; wait for the lane to answer, inspect it with `cataly headless observe <key>`, or on tern read the block (step 2) and, if the text still sits in the input, press Enter only. `TELL_FAILED` (exit 2) means nothing was sent: a shell, a stopped agent, an open approval, an unreadable status, a paused or parked lane (resume or reopen it first), a lane without a confirmed session, or a changed lane identity; a refusal by the runtime ends with the status read after it. An unknown or closed key exits 1.
 
 An unconfirmed dispatch now keeps a private, durable local request ID. It fences later `tell` messages, automatic nudges, and claim/objection notifications even after restart; a rejected later message is not queued. `cataly tell <key> --status` shows that record. Only `cataly tell <key> --resolve REQUEST_ID --note REASON` ends that exact hold: it does not prove the action ran, cancel the original input, or resend anything. Inspect the original session and obtain the operator's decision before releasing it. Ordinary activity cannot clear a hold. Explicit pause/resume remains available, and releasing a hold does not resume a paused lane. See the scripts reference for statuses, errors and concurrency.
 

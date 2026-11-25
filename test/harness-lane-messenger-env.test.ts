@@ -7,15 +7,8 @@ import { setup } from "./harness-setup.ts";
 
 // Inspect only the messenger assignments a native session starts with, never caller credentials.
 const messengerEnv = (env: Readonly<Record<string, string | undefined>> | undefined) =>
-  Object.fromEntries(
-    Object.entries(env ?? {}).filter(([name]) => /^(CATALY|DORI)_(DISCORD|TELEGRAM)_TOKEN$/.test(name)),
-  );
-const emptyOverrides = {
-  CATALY_DISCORD_TOKEN: "",
-  CATALY_TELEGRAM_TOKEN: "",
-  DORI_DISCORD_TOKEN: "",
-  DORI_TELEGRAM_TOKEN: "",
-};
+  Object.fromEntries(Object.entries(env ?? {}).filter(([name]) => /^CATALY_(DISCORD|TELEGRAM)_TOKEN$/.test(name)));
+const emptyOverrides = { CATALY_DISCORD_TOKEN: "", CATALY_TELEGRAM_TOKEN: "" };
 
 async function withFixtureConfig(root: string, run: () => Promise<unknown>): Promise<unknown> {
   const previous = process.env["CATALY_CONFIG"];

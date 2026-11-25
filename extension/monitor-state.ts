@@ -108,7 +108,7 @@ export function recordedMonitorStates(branch: readonly Entry[]): Map<string, Rec
   return states;
 }
 
-/** A successful once job carries an ordinary stop record, so older extensions also leave it stopped. */
+/** A successful once job carries an ordinary stop record, so a plain start/stop replay also leaves it stopped. */
 export const recordedMonitors = (branch: readonly Entry[]): Map<string, MonitorSpec> =>
   new Map(
     [...recordedMonitorStates(branch)].flatMap(([name, record]) => (record.completed ? [] : [[name, record.spec]])),

@@ -1,17 +1,7 @@
 import { afterEach, test } from "bun:test";
-import {
-  chmodSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  symlinkSync,
-  writeFileSync,
-} from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { digest } from "../src/update/source.ts";
 
 // The miniature checkout exposes the real reader without copying the full application into every fixture.
 const fixtureReader = resolve(import.meta.dir, "../skills/cataly-mode/scripts/src/config.ts");
@@ -31,7 +21,7 @@ const gitEnv: Record<string, string | undefined> = {
   GIT_COMMITTER_EMAIL: "t@example.com",
 };
 for (const key of Object.keys(gitEnv)) {
-  if (/^(?:OMP_)?(?:CATALY|DORI)_/.test(key)) delete gitEnv[key];
+  if (/^(?:OMP_)?CATALY_/.test(key)) delete gitEnv[key];
 }
 const roots: string[] = [];
 afterEach(() => {
@@ -53,7 +43,6 @@ export function setup() {
   const src = join(root, "src");
   const home = join(root, "home");
   const bin = join(root, "bin");
-  const ulw = join(root, "omp-ulw");
   const cli = "skills/cataly-mode/scripts/src/cli.ts";
   mkdirSync(join(upstream, "skills/cataly-mode/scripts/src"), { recursive: true });
   mkdirSync(join(upstream, "skills/cataly-mode/references"), { recursive: true });
@@ -63,16 +52,16 @@ export function setup() {
     resolve(import.meta.dir, "../scripts/source-dependencies.ts"),
     join(upstream, "scripts/source-dependencies.ts"),
   );
+  // The installer's one-way bridge from previous installations, run from the checkout being installed.
+  symlinkSync(resolve(import.meta.dir, "../scripts/previous-install"), join(upstream, "scripts/previous-install"));
   writeFileSync(join(upstream, "extension/index.ts"), "export default () => {};\n");
-  mkdirSync(ulw);
-  writeFileSync(join(ulw, "index.ts"), "export default () => {};\n");
-  writeFileSync(join(ulw, "presets.ts"), "export {};\n");
   writeFileSync(join(upstream, cli), "v1\n");
   writeFileSync(
     join(upstream, "skills/cataly-mode/scripts/src/config.ts"),
     `export * from ${JSON.stringify(fixtureReader)};\n`,
   );
-  writeFileSync(join(upstream, "omp-ulw.lock"), "0000000000000000000000000000000000000000\n");
+  // Marks a Cataly checkout; an explicit CATALY_OMP never reads this unbound placeholder lock.
+  writeFileSync(join(upstream, "native-omp.lock"), "{}\n");
   writeFileSync(join(upstream, "skills/cataly-mode/SKILL.md"), skillFixture);
   writeFileSync(join(upstream, "skills/cataly-mode/references/config.example.json"), "{}\n");
   git(upstream, "init", "-q", "-b", "main");
@@ -84,12 +73,12 @@ export function setup() {
   // Record package-manager mutations without installing or linking anything on the host.
   writeFileSync(
     join(bin, "bun"),
-    `#!/bin/sh\ncase "$1" in\n--version) echo "\${INSTALL_TEST_BUN_VERSION:-1.4.4}" ;;\n-e|*/source-dependencies.ts|*/source-configuration.ts|*/skills/cataly-mode/scripts/src/cli.ts) exec ${JSON.stringify(process.execPath)} "$@" ;;\n*) echo "$*" >> ${JSON.stringify(join(root, "bun.log"))} ;;\nesac\n`,
+    `#!/bin/sh\ncase "$1" in\n--version) echo "\${INSTALL_TEST_BUN_VERSION:-1.4.4}" ;;\n-e|*/source-dependencies.ts|*/source-configuration.ts|*/previous-install/cli.ts|*/skills/cataly-mode/scripts/src/cli.ts) exec ${JSON.stringify(process.execPath)} "$@" ;;\n*) echo "$*" >> ${JSON.stringify(join(root, "bun.log"))} ;;\nesac\n`,
   );
   chmodSync(join(bin, "bun"), 0o755);
   writeFileSync(
     join(bin, "omp"),
-    `#!/bin/sh\ncase "$1" in\n--version) echo "omp \${INSTALL_TEST_OMP_VERSION:-18.20.0}" ;;\n*) exit 64 ;;\nesac\n`,
+    `#!/bin/sh\ncase "$1" in\n--version) echo "omp \${INSTALL_TEST_OMP_VERSION:-19.0.1}" ;;\n*) exit 64 ;;\nesac\n`,
   );
   chmodSync(join(bin, "omp"), 0o755);
   const upstreamCommit = (text: string) => {
@@ -108,16 +97,12 @@ export function setup() {
     CATALY_AGENT_ARGV: undefined,
     CATALY_AGENT_CMD: undefined,
     CATALY_AGENT_EXECUTABLE: undefined,
-    CATALY_OMP_ULW_PATH: undefined,
     CATALY_INSTALL_MODE: "",
     CATALY_NO_PULL: "",
     CATALY_SRC: src,
     CATALY_OMP: join(bin, "omp"),
     SKILLS_DIR: join(home, "skills"),
     OMP_EXTENSIONS_DIR: join(home, "extensions"),
-    OMP_ULW_SRC: ulw,
-    OMP_ULW_REPO: "",
-    OMP_ULW_REF: "",
     INSTALL_TEST_OMP_VERSION: "",
     OMP_CATALY_HOME: join(home, ".omp-cataly"),
     OMP_CATALY_BIN_DIR: join(home, "global-bin"),
@@ -128,44 +113,5 @@ export function setup() {
     const r = Bun.spawnSync([script, ...argv], { env: env(extra), stdin: "ignore" });
     return { code: r.exitCode, out: r.stdout.toString(), err: r.stderr.toString() };
   };
-  return { root, upstream, src, home, ulw, cli, upstreamCommit, env, install };
-}
-
-// A local omp-ulw remote with one commit per call, and omp-cataly's lock pointing at its first commit.
-export function withUlwRemote() {
-  const s = setup();
-  const remote = join(s.root, "ulw-remote");
-  mkdirSync(remote);
-  git(remote, "init", "-q", "-b", "main");
-  writeFileSync(join(remote, "presets.ts"), "export {};\n");
-  const commit = (text: string): string => {
-    writeFileSync(join(remote, "index.ts"), `export default () => {}; // ${text}\n`);
-    git(remote, "add", ".");
-    git(remote, "commit", "-qm", text);
-    return git(remote, "rev-parse", "HEAD");
-  };
-  const first = commit("u1");
-  writeFileSync(join(s.upstream, "omp-ulw.lock"), `${first}\n`);
-  const base = readFileSync(join(remote, "index.ts"), "utf8");
-  writeFileSync(join(remote, "index.ts"), `${base}export const reviewedOverlay = true;\n`);
-  const patch = `${git(remote, "diff", "--binary")}\n`;
-  git(remote, "add", "index.ts");
-  const lock = {
-    version: 1,
-    repository: "https://github.com/dbc-hbin/omp-ulw.git",
-    commit: first,
-    patchSha256: digest(patch),
-    resultTree: git(remote, "write-tree"),
-    files: [{ path: "index.ts", sha256: digest(readFileSync(join(remote, "index.ts"))), executable: false }],
-  };
-  writeFileSync(join(s.upstream, "omp-ulw.overlay.lock"), JSON.stringify(lock));
-  writeFileSync(join(s.upstream, "omp-ulw.patch"), patch);
-  git(remote, "restore", "--source=HEAD", "--staged", "--worktree", "index.ts");
-  git(s.upstream, "add", "omp-ulw.lock", "omp-ulw.overlay.lock", "omp-ulw.patch");
-  git(s.upstream, "commit", "-qm", "lock");
-  const config = () => JSON.parse(readFileSync(join(s.home, ".cataly/config.json"), "utf8"));
-  const ulwHead = () => git(join(s.home, "extensions/omp-ulw"), "rev-parse", "HEAD");
-  const install = (extra: Record<string, string> = {}) =>
-    s.install({ OMP_ULW_SRC: "", OMP_ULW_REPO: remote, ...extra });
-  return { ...s, remote, first, commit, config, ulwHead, install };
+  return { root, upstream, src, home, cli, upstreamCommit, env, install };
 }

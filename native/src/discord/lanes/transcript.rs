@@ -9,8 +9,8 @@ use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Result, bail};
 
-use super::json::Json;
-use super::util::{has_control, parse_iso};
+use crate::json::Json;
+use crate::util::{has_control, parse_iso};
 
 const HEADER_BYTES: u64 = 32 * 1024;
 const LINE_LIMIT: u64 = 64 * 1024 * 1024;

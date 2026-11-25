@@ -3,7 +3,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { run } from "../src/run.ts";
-import { withState } from "./fakes.ts";
+import { refusedOnWindows, withState } from "./fakes.ts";
 
 const cli = join(import.meta.dir, "../src/cli.ts");
 
@@ -43,7 +43,7 @@ test("watch commands refuse a --loop that is not a number of minutes instead of 
       expect({ args, code: r.code, err: r.err, out: r.out }).toEqual({
         args,
         code: 1,
-        err: "--loop must be a number of minutes, 0 or more",
+        err: refusedOnWindows(args, "--loop must be a number of minutes, 0 or more"),
         out: "",
       });
     }

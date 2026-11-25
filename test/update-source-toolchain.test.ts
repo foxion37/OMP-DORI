@@ -2,7 +2,6 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { provisionSourceOverlay } from "../src/release/source-checkout.ts";
 import { parseDeploymentConfig } from "../src/update/deployment-config.ts";
 import { actorEnv } from "../src/update/deployment-process.ts";
 import { assertRuntimeToolchain, prepareRuntimeToolchain } from "../src/update/deployment-toolchain.ts";
@@ -20,8 +19,7 @@ function fixture() {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "cataly-source-toolchain-")));
   roots.push(root);
   const source = join(root, "release");
-  const ulw = overlayFixture(source, join(root, "ulw-upstream"));
-  const native = overlayFixture(source, join(root, "native-upstream"), true);
+  const native = overlayFixture(source, join(root, "native-upstream"));
   const home = join(root, "home");
   const receipt = nativeCacheFixture(source, home, native.checkout);
   mkdirSync(join(source, "scripts"));
@@ -58,12 +56,11 @@ function fixture() {
     status: "prepared",
     step: "prepare",
   };
-  return { root, source, home, ulw, receipt, config, record };
+  return { root, source, home, receipt, config, record };
 }
 
-it("managed default preparation binds native and ULW source identities and propagates those actual consumers", async () => {
+it("managed default preparation binds the native source identity and propagates those actual consumers", async () => {
   const f = fixture();
-  await provisionSourceOverlay(f.source, f.home, undefined, f.ulw.checkout);
   await prepareRuntimeToolchain(f.config, f.record);
   expect(f.config.omp).toBeUndefined();
   expect(f.record.toolchain?.nativeSource?.identity).toBe(f.receipt.identity);
@@ -77,9 +74,6 @@ it("managed default preparation binds native and ULW source identities and propa
     join(f.source, "extension"),
   ]);
   expect(actorEnv(f.config, f.record.toolchain)["CATALY_AGENT_CMD"]).toBeUndefined();
-  expect(actorEnv(f.config, f.record.toolchain)["CATALY_OMP_ULW_PATH"]).toBe(
-    join(f.record.toolchain!.ompUlw!.directory, "index.ts"),
-  );
   await prepareRuntimeToolchain(f.config, f.record);
   assertRuntimeToolchain(f.config, f.record.toolchain!);
   const changed = join(f.receipt.directory, "source/index.ts");
@@ -88,18 +82,20 @@ it("managed default preparation binds native and ULW source identities and propa
   expect(readFileSync(changed, "utf8")).toBe("source drift\n");
 }, 30_000);
 
-it("a same-version old-style receipt cannot admit a new locked default", async () => {
+it("a same-version override receipt cannot admit the locked default", async () => {
   const f = fixture();
-  const versionOnly: ToolchainReceipt = {
+  const override: ToolchainReceipt = {
     omp: f.receipt.omp,
     ompEntry: f.receipt.omp,
     ompEntryHash: digest(readFileSync(f.receipt.omp)),
     bun: f.config.bun,
     bunHash: digest(readFileSync(f.config.bun)),
-    nativeVersion: "18.20.0",
+    nativeVersion: "19.0.1",
     nativeConfig: join(f.config.releaseRoot, "native-config.json"),
     nativeConfigHash: digest("{}"),
+    nativeOverride: true,
+    extensionSource: f.source,
   };
-  f.record.toolchain = versionOnly;
+  f.record.toolchain = override;
   await expect(prepareRuntimeToolchain(f.config, f.record)).rejects.toThrow("configured target");
 });

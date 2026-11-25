@@ -134,7 +134,6 @@ test("a losing launch cannot replace the registered winner's policy snapshot", a
       ...f.input,
       thread: "none",
       openedAt: new Date(NOW).toISOString(),
-      pane: sid(99),
       sessionRef: href(sid(99)),
     });
     writeLanePolicy(winner);

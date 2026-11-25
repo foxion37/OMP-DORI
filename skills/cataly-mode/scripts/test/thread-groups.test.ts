@@ -34,7 +34,6 @@ test("last-lane skips the first hook and runs it only for the final sibling", as
   await deps.registry.write(lane);
   await deps.registry.write(sibling);
   await deps.registry.write({ ...lane, key: "different-thread", thread: "discord:41" });
-  await deps.registry.write({ ...lane, key: "legacy-blank", thread: "" });
   const first = await closeLane(deps, lane, "first finished");
   expect(first.closed).toBe(true);
   expect(first.lines.join("\n")).toContain("1 lanes still open (second-lane); threadDone skipped");
@@ -63,7 +62,7 @@ test.each(["working", "paused", "not-done", "done-claimed", "verified-done"] as 
   },
 );
 
-test.each([undefined, "every-lane"] as const)("legacy policy %s still runs each lane's hook", async (policy) => {
+test.each([undefined, "every-lane"] as const)("policy %s runs each lane's hook", async (policy) => {
   const world = newWorld();
   const deps = depsFor(world, fakeClock(T0), state.dir, {
     ...(policy === undefined ? {} : { threadDonePolicy: policy }),
@@ -73,20 +72,6 @@ test.each([undefined, "every-lane"] as const)("legacy policy %s still runs each 
   await deps.registry.write({ ...lane, key: "sibling-lane" });
   expect((await closeLane(deps, lane, "done")).closed).toBe(true);
   expect(world.calls.filter((c) => c[0] === "notify")).toHaveLength(1);
-});
-
-test("a legacy blank thread closes as ungrouped without running a thread hook", async () => {
-  const world = newWorld();
-  const deps = depsFor(world, fakeClock(T0), state.dir, {
-    threadDonePolicy: "last-lane",
-    hooks: { threadDone: ["notify", "{thread}"] },
-  });
-  const blank = { ...lane, thread: "" };
-  await deps.registry.write(blank);
-
-  expect((await closeLane(deps, blank, "done")).closed).toBe(true);
-  expect(await deps.registry.read(blank.key)).toMatchObject({ status: "closed", receipt: { outcome: "done" } });
-  expect(world.calls.some(([cmd]) => cmd === "notify")).toBe(false);
 });
 
 test("concurrent sibling closes elect one final hook, independent of slow cleanup", async () => {

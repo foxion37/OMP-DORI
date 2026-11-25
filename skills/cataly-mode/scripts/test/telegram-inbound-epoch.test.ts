@@ -2,10 +2,11 @@ import { afterEach, expect, test } from "bun:test";
 import type { Http } from "../src/messenger/http.ts";
 import { Telegram } from "../src/messenger/telegram.ts";
 import type { TgUpdate } from "../src/messenger/telegram-inbound-update.ts";
+import { fileTgInboundStore } from "../src/messenger/telegram-inbound-state.ts";
 import { ERROR_BACKOFF_CAP_MS, pollTelegramInbound, telegramInboundLoop } from "../src/messenger/telegram-inbound.ts";
 import { fakeClock, withState } from "./fakes.ts";
-import { telegramTestStore } from "./telegram-win32-fixtures.ts";
 
+const posix = test.skipIf(process.platform === "win32");
 const states: ReturnType<typeof withState>[] = [];
 afterEach(() => {
   for (const state of states.splice(0)) state.done();
@@ -20,7 +21,7 @@ const setup = (batches: readonly unknown[]) => {
     bodies.push(JSON.parse(request.body));
     return { status: 200, headers: {}, body: JSON.stringify({ ok: true, result: batch }) };
   };
-  return { store: telegramTestStore(state.dir, 900), tg: new Telegram(http, fakeClock(0), "synthetic"), bodies };
+  return { store: fileTgInboundStore(state.dir, 900), tg: new Telegram(http, fakeClock(0), "synthetic"), bodies };
 };
 const message = (id: number, text = String(id)): TgUpdate => ({
   update_id: id,
@@ -28,7 +29,7 @@ const message = (id: number, text = String(id)): TgUpdate => ({
 });
 const owner = { ownerId: 5250 };
 
-test("offset expires exactly at 24 hours and a clock rollback never borrows a future cursor", async () => {
+posix("offset expires exactly at 24 hours and a clock rollback never borrows a future cursor", async () => {
   const observedAt = 100_000_000;
   for (const [age, fresh] of [
     [0, true],
@@ -47,7 +48,7 @@ test("offset expires exactly at 24 hours and a clock rollback never borrows a fu
   }
 });
 
-test("an empty poll does not refresh the cursor epoch, even while clearing acknowledged receipts", async () => {
+posix("an empty poll does not refresh the cursor epoch, even while clearing acknowledged receipts", async () => {
   const { tg, store, bodies } = setup([[message(1000)], [], [message(5)]]);
   await pollTelegramInbound(tg, store, owner, undefined, () => 1000);
   expect(store.load()?.seen).toHaveLength(1);
@@ -58,7 +59,7 @@ test("an empty poll does not refresh the cursor epoch, even while clearing ackno
   expect(bodies[2]).not.toHaveProperty("offset");
 });
 
-test("same-second A to B to A edits survive, while replay ignores volatile profile and file IDs", async () => {
+posix("same-second A to B to A edits survive, while replay ignores volatile profile and file IDs", async () => {
   const edits: TgUpdate[] = ["A", "B", "A"].map((text, index) => ({
     update_id: index + 10,
     edited_message: {
@@ -86,7 +87,7 @@ test("same-second A to B to A edits survive, while replay ignores volatile profi
   expect((await pollTelegramInbound(tg, store, owner, undefined, () => 1000)).inbound).toEqual([]);
 });
 
-test("a reused update ID is not enough to suppress a new revision lacking edit_date", async () => {
+posix("a reused update ID is not enough to suppress a new revision lacking edit_date", async () => {
   const original = message(10, "first").message;
   const { tg, store } = setup([
     [{ update_id: 10, edited_message: original }],
@@ -103,53 +104,61 @@ test("a reused update ID is not enough to suppress a new revision lacking edit_d
   ]);
 });
 
-test("an early emit failure preserves later matched receipts after a scope change and rollback", async () => {
-  const group: TgUpdate = {
-    update_id: 11,
-    message: { ...message(11).message, chat: { id: -100, type: "supergroup" } },
-  };
-  const batch = [message(10), group, message(12)];
-  const { tg, store, bodies } = setup([batch, batch, batch]);
-  expect(
-    (await pollTelegramInbound(tg, store, owner, undefined, () => 3000)).inbound.map((item) => item.updateId),
-  ).toEqual([10, 12]);
-  const saved = store.load();
-  const scope = { ...owner, groupChatId: -100 };
-  await expect(
-    pollTelegramInbound(
-      tg,
-      store,
-      scope,
-      () => {
-        throw new Error("emit interrupted");
-      },
-      () => 2000,
-    ),
-  ).rejects.toThrow("emit interrupted");
-  expect(store.load()?.offset).toBe(11);
-  expect(store.load()?.seen).toEqual(saved?.seen);
-  expect(
-    (await pollTelegramInbound(tg, store, scope, undefined, () => 1000)).inbound.map((item) => item.updateId),
-  ).toEqual([11]);
-  expect(bodies[1]).not.toHaveProperty("offset");
-  expect(bodies[2]).not.toHaveProperty("offset");
-}, 30_000);
+posix(
+  "an early emit failure preserves later matched receipts after a scope change and rollback",
+  async () => {
+    const group: TgUpdate = {
+      update_id: 11,
+      message: { ...message(11).message, chat: { id: -100, type: "supergroup" } },
+    };
+    const batch = [message(10), group, message(12)];
+    const { tg, store, bodies } = setup([batch, batch, batch]);
+    expect(
+      (await pollTelegramInbound(tg, store, owner, undefined, () => 3000)).inbound.map((item) => item.updateId),
+    ).toEqual([10, 12]);
+    const saved = store.load();
+    const scope = { ...owner, groupChatId: -100 };
+    await expect(
+      pollTelegramInbound(
+        tg,
+        store,
+        scope,
+        () => {
+          throw new Error("emit interrupted");
+        },
+        () => 2000,
+      ),
+    ).rejects.toThrow("emit interrupted");
+    expect(store.load()?.offset).toBe(11);
+    expect(store.load()?.seen).toEqual(saved?.seen);
+    expect(
+      (await pollTelegramInbound(tg, store, scope, undefined, () => 1000)).inbound.map((item) => item.updateId),
+    ).toEqual([11]);
+    expect(bodies[1]).not.toHaveProperty("offset");
+    expect(bodies[2]).not.toHaveProperty("offset");
+  },
+  30_000,
+);
 
-test("receipts stay within the current 100-update batch without evicting its first emission", async () => {
-  const first = Array.from({ length: 100 }, (_, index) => message(index + 1));
-  const second = Array.from({ length: 100 }, (_, index) => message(index + 101));
-  const { tg, store, bodies } = setup([first, first, second, []]);
-  expect((await pollTelegramInbound(tg, store, owner, undefined, () => 3000)).inbound).toHaveLength(100);
-  expect(store.load()?.seen).toHaveLength(100);
-  expect((await pollTelegramInbound(tg, store, owner, undefined, () => 2000)).inbound).toEqual([]);
-  expect((await pollTelegramInbound(tg, store, owner, undefined, () => 4000)).inbound).toHaveLength(100);
-  expect(bodies[2]?.["offset"]).toBe(101);
-  expect(store.load()?.seen).toHaveLength(100);
-  await pollTelegramInbound(tg, store, owner, undefined, () => 5000);
-  expect(store.load()).toEqual({ offset: 201, observedAt: 4000, seen: [] });
-}, 30_000);
+posix(
+  "receipts stay within the current 100-update batch without evicting its first emission",
+  async () => {
+    const first = Array.from({ length: 100 }, (_, index) => message(index + 1));
+    const second = Array.from({ length: 100 }, (_, index) => message(index + 101));
+    const { tg, store, bodies } = setup([first, first, second, []]);
+    expect((await pollTelegramInbound(tg, store, owner, undefined, () => 3000)).inbound).toHaveLength(100);
+    expect(store.load()?.seen).toHaveLength(100);
+    expect((await pollTelegramInbound(tg, store, owner, undefined, () => 2000)).inbound).toEqual([]);
+    expect((await pollTelegramInbound(tg, store, owner, undefined, () => 4000)).inbound).toHaveLength(100);
+    expect(bodies[2]?.["offset"]).toBe(101);
+    expect(store.load()?.seen).toHaveLength(100);
+    await pollTelegramInbound(tg, store, owner, undefined, () => 5000);
+    expect(store.load()).toEqual({ offset: 201, observedAt: 4000, seen: [] });
+  },
+  30_000,
+);
 
-test("invalid update IDs or oversized API batches cannot mutate the cursor or emit", async () => {
+posix("invalid update IDs or oversized API batches cannot mutate the cursor or emit", async () => {
   for (const batch of [
     [{ update_id: -1 }],
     [{ update_id: Number.MAX_SAFE_INTEGER }],
@@ -173,7 +182,7 @@ test("invalid update IDs or oversized API batches cannot mutate the cursor or em
   }
 });
 
-test("failed store initialization uses the existing retry loop and successful initialization is cached", async () => {
+posix("failed store initialization uses the existing retry loop and successful initialization is cached", async () => {
   const { tg, store, bodies } = setup([[message(1)], []]);
   let opens = 0;
   const warnings: string[] = [];

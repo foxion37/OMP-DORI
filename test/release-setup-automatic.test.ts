@@ -5,7 +5,7 @@ import { automaticUpdate } from "../src/release/automatic.ts";
 import { readAutomaticState } from "../src/release/automatic-state.ts";
 import { installBundle } from "../src/release/install.ts";
 import { loadInstalled, releasePath } from "../src/release/state.ts";
-import { portableFixture as fixture, posix } from "./release-consumer-setup.ts";
+import { fixture, posix } from "./release-consumer-setup.ts";
 import { boundRelease } from "./release-native-recovery-setup.ts";
 
 const { readFileSync, readlinkSync, writeFileSync } = fs;
@@ -42,7 +42,7 @@ posix("an atomic owner save during setup snapshot holds automatic update without
   const before = await installBundle(f.paths, f.release("one").bundle, undefined);
   const current = releasePath(f.paths, before.current);
   const text = `${readFileSync(f.paths.config, "utf8")}\n`;
-  const staged = join(f.paths.dori, "owner-save.json");
+  const staged = join(f.paths.cataly, "owner-save.json");
   writeFileSync(staged, text, { mode: 0o600 });
   const original = fs.statSync(f.paths.config, { bigint: true });
   const fsRead = fs.readSync;

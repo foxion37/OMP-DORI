@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { closeSync, existsSync, openSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { NATIVE_BINARY_ENV, nativeBinary } from "../native-binary.ts";
 import type { HeadlessObservation, NativeLoopRole } from "./headless-protocol.ts";
 import * as host from "./headless-record.ts";
 import type { SessionRef, SessionRole } from "./types.ts";
@@ -8,6 +9,10 @@ import type { SessionRef, SessionRole } from "./types.ts";
 type Resume = { readonly file: string; readonly sessionId: string };
 type Env = Record<string, string | undefined>;
 const WAIT_FOR_HOST = 65_000;
+const MISSING_BINARY =
+  "headless lanes, the lead and duty run on the native Cataly binary, and none is installed: reinstall Cataly " +
+  `(see docs/releases.md), or set ${NATIVE_BINARY_ENV} to an absolute cataly built with ` +
+  "`cargo build --locked --release`";
 
 const liveAgent = (seen: HeadlessObservation, role: SessionRole): boolean =>
   seen.status !== "gone" &&
@@ -21,12 +26,14 @@ const liveAgent = (seen: HeadlessObservation, role: SessionRole): boolean =>
 const liveLoop = (seen: HeadlessObservation, role: NativeLoopRole): boolean =>
   seen.harnessRole === role && seen.role === undefined && seen.status === "working" && seen.pid !== undefined;
 
-async function spawnHost(dir: string, start: host.HostStart) {
+/** Agent roles run `<binary> headless-host <dir>`; a plain loop runs on Bun as its own scheduler process. */
+async function spawnHost(dir: string, start: host.HostStart, binary: string | undefined) {
   const { env } = start;
-  const log = start.argv.length === 0 ? openSync(join(dir, "loop.log"), "wx", 0o600) : undefined;
+  const log = binary === undefined ? openSync(join(dir, "loop.log"), "wx", 0o600) : undefined;
+  const entry = binary === undefined ? join(import.meta.dir, "headless-loop.ts") : "headless-host";
   const child = (() => {
     try {
-      return spawn(process.execPath, [join(import.meta.dir, "headless-broker.ts"), dir], {
+      return spawn(binary ?? process.execPath, [entry, dir], {
         detached: true,
         stdio: ["pipe", log ?? "ignore", log ?? "ignore"],
         // Secrets are streamed to the child, not persisted or inserted into argv.
@@ -65,30 +72,35 @@ export async function startHost(
   if (isLoop !== (argv.length === 0) || (resume && role !== "lane" && role !== "lead"))
     throw new host.HeadlessError("native start role mismatch");
   if (existsSync(join(dir, "stopped.json"))) throw new host.HeadlessError("headless reservation has stopped");
+  const binary = isLoop ? undefined : nativeBinary();
+  if (!isLoop && binary === undefined) throw new host.HeadlessError(MISSING_BINARY);
   // A competing start/close gets the same exclusive file. Never retry a spawn after ambiguity.
   writeFileSync(join(dir, "started"), "", { flag: "wx", mode: 0o600 });
-  for (const key of [
-    "HC_TERMINAL_ID",
-    "HERDR_PANE_ID",
-    "HERDR_WORKSPACE_ID",
-    "HERDR_TAB_ID",
-    "CATALY_HEADLESS_ID",
-    "CATALY_ASK_LAUNCHED_LANE",
-    "CATALY_HARNESS_ROLE",
-  ])
-    delete env[key];
+  for (const key of ["CATALY_HEADLESS_ID", "CATALY_ASK_LAUNCHED_LANE", "CATALY_HARNESS_ROLE"]) delete env[key];
   if (role === "lead" || role === "duty") env["CATALY_HARNESS_ROLE"] = role;
-  const child = await spawnHost(dir, {
-    argv: resume ? [...argv, `--resume=${resume.file}`] : argv,
-    env,
-    ...(resume ? { expectedResumeId: resume.sessionId } : {}),
-  });
+  const child = await spawnHost(
+    dir,
+    {
+      argv: resume ? [...argv, `--resume=${resume.file}`] : argv,
+      env,
+      ...(resume ? { expectedResumeId: resume.sessionId } : {}),
+    },
+    binary,
+  );
   const deadline = Date.now() + WAIT_FOR_HOST;
   do {
     const seen = await host.observeHost(stateDir, ref);
     if (isLoop ? liveLoop(seen, role) : liveAgent(seen, role)) return seen;
-    if (seen.status === "gone" || child.exitCode !== null || child.signalCode !== null)
-      throw new host.HeadlessError(seen.detail ?? `headless ${role} process exited before proving startup`);
+    if (seen.status === "gone" || child.exitCode !== null || child.signalCode !== null) {
+      // The native host's stderr is not kept; name the binary so an old build without `headless-host` is diagnosable.
+      const exit = child.exitCode ?? child.signalCode;
+      const fallback =
+        binary === undefined
+          ? `headless ${role} process exited before proving startup`
+          : `headless ${role} host \`${binary} headless-host\` exited${exit === null ? "" : ` (${exit})`} before ` +
+            "proving startup; a binary without that subcommand is stale: rebuild or reinstall it";
+      throw new host.HeadlessError(seen.detail ?? fallback);
+    }
     await Bun.sleep(50);
   } while (Date.now() < deadline);
   throw new host.HeadlessError(`headless ${role} process did not prove startup before the deadline`);

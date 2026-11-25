@@ -26,19 +26,19 @@ const working: Lane = {
   key: "quiet-lane",
   title: "quiet",
   thread: "chat:team/9",
-  pane: "w:p7",
+  sessionRef: { runtime: "tern", id: "7" },
   brief: "/b.md",
   done: "merged acme/app#1",
   openedAt: new Date(T0).toISOString(),
   lastReplyAt: T0,
 };
 
-test("adopting a Tern block refuses a Done line the watcher could never check, and herdr/hc panes", async () => {
+test("adopting a Tern block refuses a Done line the watcher could never check, and non-Tern panes", async () => {
   const deps = depsFor(world, fakeClock(T0), state.dir);
   await expect(
     adoptLane(deps, { key: "x-lane", title: "x", brief: "/b.md", done: "two clean QA passes", pane: "tern:2" }),
   ).rejects.toBeInstanceOf(LaunchError);
-  for (const pane of ["w:p2", "herdr:w1:p2", "hc:t2"])
+  for (const pane of ["w:p2", "tmux:2"])
     await expect(
       adoptLane(deps, { key: "x-lane", title: "x", brief: "/b.md", done: "closed acme/app#3", pane }),
     ).rejects.toBeInstanceOf(LaunchError);

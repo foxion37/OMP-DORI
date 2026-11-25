@@ -59,7 +59,7 @@ beforeEach(() => {
     "CATALY_MANAGED_STARTUP",
   ])
     saved.set(key, process.env[key]);
-  stateDir = useConfig("");
+  stateDir = useConfig();
   delete process.env["CATALY_HEADLESS_ID"];
   delete process.env["CATALY_MANAGED_STARTUP"];
   const policy = prepareLanePolicy(stateDir, "demo", { denyBash: ["sudo"] });
@@ -125,8 +125,10 @@ test("cold native workers restore parent role and policy, including grandchildre
   const denied = await inWorker("worker-child", "Main", child, parent);
   expect(denied.tool.executions).toBe(0);
   expect(denied.tool.error).toContain("LANE_POLICY_BLOCKED");
-  expect(denied.entries).toContainEqual(expect.objectContaining({ customType: "omp-dori:role", data: "lane" }));
-  expect(denied.entries).toContainEqual(expect.objectContaining({ customType: "omp-dori:lane-policy", data: binding }));
+  expect(denied.entries).toContainEqual(expect.objectContaining({ customType: "omp-cataly:role", data: "lane" }));
+  expect(denied.entries).toContainEqual(
+    expect.objectContaining({ customType: "omp-cataly:lane-policy", data: binding }),
+  );
   const grandchild = await inWorker(
     "worker-grandchild",
     "worker-child",
@@ -192,12 +194,12 @@ test("guarded spawning requires a persisted parent, while unconfigured in-memory
 test("new sessions carry policy, resume restores it, and switching to plain branches clears it", async () => {
   const pi = await lane(`lifecycle-${++counter}`);
   const original = pi.session;
-  expect(original.entries).toContainEqual({ type: "custom", customType: "omp-dori:lane-policy", data: binding });
+  expect(original.entries).toContainEqual({ type: "custom", customType: "omp-cataly:lane-policy", data: binding });
   delete process.env["CATALY_LANE_POLICY"];
   pi.session = { id: "fresh-session", entries: [] };
   await pi.emit("session_switch", { type: "session_switch", reason: "new" });
   expect(blocked(await call(pi))).toBe(true);
-  expect(pi.session.entries).toContainEqual({ type: "custom", customType: "omp-dori:lane-policy", data: binding });
+  expect(pi.session.entries).toContainEqual({ type: "custom", customType: "omp-cataly:lane-policy", data: binding });
   pi.session = { id: "plain-session", entries: [] };
   await pi.emit("session_switch", { type: "session_switch", reason: "resume" });
   expect(blocked(await call(pi))).toBe(false);
@@ -210,11 +212,11 @@ test("new sessions carry policy, resume restores it, and switching to plain bran
   expect(blocked(await call(resumed))).toBe(true);
 });
 
-test("the newest mixed-format lane policy wins, including an explicit invalid binding", async () => {
+test("the newest lane policy wins, including an explicit invalid binding", async () => {
   const policyEntry = (customType: string, data: unknown) => ({ type: "custom", customType, data });
   const entries = [
-    policyEntry("omp-dori:role", "lane"),
-    policyEntry("omp-dori:lane-policy", binding),
+    policyEntry("omp-cataly:role", "lane"),
+    policyEntry("omp-cataly:lane-policy", binding),
     policyEntry("omp-cataly:lane-policy", null),
     policyEntry("foreign:lane-policy", binding),
   ];
@@ -224,42 +226,15 @@ test("the newest mixed-format lane policy wins, including an explicit invalid bi
   expect(await call(pi, "echo safe")).toContainEqual(
     expect.objectContaining({ block: true, reason: expect.stringContaining("invalid recorded lane policy") }),
   );
-  entries.push(policyEntry("omp-dori:lane-policy", binding));
+  entries.push(policyEntry("omp-cataly:lane-policy", binding));
   await pi.emit("session_tree");
   expect(blocked(await call(pi, "echo safe"))).toBe(false);
   expect(blocked(await call(pi))).toBe(true);
 });
 
-const retainedSource = process.env["CATALY_TEST_V013_SOURCE"];
-test.skipIf(!retainedSource)(
-  "the tagged v0.1.3 extension blocks a new protected lane after flagless rollback",
-  async () => {
-    const file = join(stateDir, "rollback-lane.jsonl");
-    const priorConfig = process.env.DORI_CONFIG;
-    process.env.DORI_CONFIG = process.env.CATALY_CONFIG!;
-    try {
-      await nativePolicy(join(import.meta.dir, "../index.ts"), { role: "lane", session: { file } });
-      delete process.env["CATALY_LANE_POLICY"];
-      const denied = await nativePolicy(join(retainedSource!, "extension/index.ts"), {
-        session: { file },
-        bash: { command: "sudo true", approvalMode: "yolo" },
-      });
-      expect(denied.tool).toEqual({
-        executions: 0,
-        approvals: 0,
-        error: expect.stringContaining("LANE_POLICY_BLOCKED"),
-      });
-    } finally {
-      if (priorConfig === undefined) delete process.env.DORI_CONFIG;
-      else process.env.DORI_CONFIG = priorConfig;
-    }
-  },
-  30_000,
-);
-
 test("a historical lane without a policy record cannot adopt a foreign inherited policy on resume", async () => {
   const pi = await load({
-    session: { id: "old-unconfigured", entries: [{ type: "custom", customType: "omp-dori:role", data: "lane" }] },
+    session: { id: "old-unconfigured", entries: [{ type: "custom", customType: "omp-cataly:role", data: "lane" }] },
     flags: { "cataly-role": "lane" },
     agent: { kind: "main", id: "old-unconfigured" },
   });

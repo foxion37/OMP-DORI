@@ -12,7 +12,7 @@ describe("duty loop", () => {
   test("nudges a quiet lane at 10 and 20 minutes and escalates once at 40", async () => {
     const { w, d, lead, brief } = setup();
     const lane = await startLane(d, "quiet", brief, { group: "w1" });
-    const pane = w.panes.get(lane.paneId)!;
+    const pane = w.panes.get(lane.sessionRef.id)!;
     pane.status = "idle";
     const at = async (min: number) => {
       w.clock = lane.createdAt + min * 60_000;
@@ -53,11 +53,11 @@ describe("duty loop", () => {
     const lost = await startLane(d, "lost-lane", brief, { group: "w1" });
     const stuck = await startLane(d, "stuck-lane", brief, { group: "w1" });
     const fine = await startLane(d, "fine-lane", brief, { group: "w1" });
-    w.panes.delete(lost.paneId);
-    w.panes.get(stuck.paneId)!.status = "idle";
-    w.panes.get(fine.paneId)!.status = "idle";
+    w.panes.delete(lost.sessionRef.id);
+    w.panes.get(stuck.sessionRef.id)!.status = "idle";
+    w.panes.get(fine.sessionRef.id)!.status = "idle";
     w.deliverFails.set(LEAD, "lead exploded");
-    w.deliverFails.set(stuck.paneId, "stuck exploded");
+    w.deliverFails.set(stuck.sessionRef.id, "stuck exploded");
     w.clock = fine.createdAt + 10 * 60_000;
     const events = await dutyTick(d);
     expect(events).toContainEqual({
@@ -71,7 +71,7 @@ describe("duty loop", () => {
       detail: expect.stringContaining("stuck exploded"),
     });
     expect(events).toContainEqual({ lane: "fine-lane", action: "nudge-1" });
-    expect(w.panes.get(fine.paneId)!.received.at(-1)).toContain("quiet for 10 minutes");
+    expect(w.panes.get(fine.sessionRef.id)!.received.at(-1)).toContain("quiet for 10 minutes");
   });
 
   test("the delivery-ambiguous detail is the failure's first line, never the queued message", async () => {
@@ -106,7 +106,7 @@ describe("duty loop", () => {
   test("kill switch: a stopped duty loop flushes, nudges and escalates nothing; resume delivers what was held", async () => {
     const { w, d, lead, brief } = setup();
     const lane = await startLane(d, "quiet", brief, { group: "w1" });
-    w.panes.get(lane.paneId)!.status = "idle";
+    w.panes.get(lane.sessionRef.id)!.status = "idle";
     lead.status = "working";
     expect(await send(d, "lead", "held note", "cli")).toBe("QUEUED");
     lead.status = "idle";
@@ -150,12 +150,12 @@ describe("duty loop", () => {
   test("a working lane counts as activity; a vanished pane is reported LOST", async () => {
     const { w, d, lead, brief } = setup();
     const lane = await startLane(d, "busy", brief, { group: "w1" });
-    w.panes.get(lane.paneId)!.status = "working";
+    w.panes.get(lane.sessionRef.id)!.status = "working";
     w.clock += 30 * 60_000;
     expect(await dutyTick(d)).toEqual([]);
     expect(d.store.lane("busy")!.lastActivityAt).toBe(w.clock);
     expect(w.touches).toBeGreaterThan(0);
-    w.panes.delete(lane.paneId);
+    w.panes.delete(lane.sessionRef.id);
     expect(await dutyTick(d)).toContainEqual({ lane: "busy", action: "lost" });
     expect(lead.received.at(-1)).toContain("[LOST busy]");
   });

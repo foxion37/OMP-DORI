@@ -1,18 +1,18 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { type Manifest, type Monitor, monitorCleanup, readMonitorManifests } from "../src/boot-monitors.ts";
+import { type Manifest, monitorCleanup } from "../src/boot-monitors.ts";
 import { CATALY_COMMANDS, CATALY_VALUE_OPTIONS } from "../src/monitor-cataly.ts";
+import { laneWords } from "../src/monitor-command.ts";
 import type { Lane, LaneStatus } from "../src/registry.ts";
-import { withState } from "./fakes.ts";
 
 // Which words of a watch's own command may name a lane: base matched every word; each command's program, and a cataly
-// program's command and platform, are excluded (src/monitor-command.ts), and a legacy record never crashes the match.
+// program's command and platform, are excluded (src/monitor-command.ts).
 // test/boot-monitor-matrix.test.ts holds every reviewed counterexample.
 const lane = (key: string, status: LaneStatus): Lane => ({
   key,
   status,
-  pane: `w1:${key}`,
+  sessionRef: { runtime: "tern", id: `w1:${key}` },
   title: key,
   thread: "none",
   brief: "/b.md",
@@ -20,63 +20,44 @@ const lane = (key: string, status: LaneStatus): Lane => ({
   openedAt: "2026-01-01T12:00:00.000Z",
 });
 
-const manifest = (monitors: Monitor[]): Manifest => ({
-  path: "/fixture/extensions/terminal/owner.json",
+type Spec = { readonly name?: string; readonly cwd?: string; readonly argv: readonly string[] };
+const manifest = (specs: readonly Spec[]): Manifest => ({
+  path: "/fixture/monitors/owner.json",
   data: {
     version: 1,
     sessionId: "owner",
-    monitors: monitors.map((m) => ({ sessionId: "owner", persistent: true, monitorId: "mon_FIXTURE", ...m })),
+    monitors: specs.map((spec, index) => ({
+      name: spec.name ?? `watch-${index}`,
+      argv: spec.argv,
+      cwd: spec.cwd ?? "/repo",
+    })),
   },
 });
-
-let state: ReturnType<typeof withState>;
-beforeEach(() => {
-  state = withState();
-});
-afterEach(() => state.done());
-
-test("a legacy record whose argv holds a non-string is still matched by its command, as before", () => {
-  const dir = join(state.dir, "legacy");
-  mkdirSync(dir);
-  writeFileSync(
-    join(dir, "owner.json"),
-    JSON.stringify({
-      version: 1,
-      sessionId: "owner",
-      monitors: [
-        { sessionId: "owner", persistent: true, monitorId: "mon_TEST", argv: [7], command: "cataly checkpoints api" },
-      ],
-    }),
-  );
-  const read = readMonitorManifests(join(state.dir, "missing"), [dir]);
-  expect(read.errors).toEqual([]);
-  expect(monitorCleanup([lane("api", "closed")], read.manifests).map((m) => [m.monitorId, m.match])).toEqual([
-    ["mon_TEST", ["api:command:key"]],
-  ]);
-});
+// A shell command line is read by the same parser as an argv (monitor-command.ts).
+const commandLanes = (command: string, cwd = "/repo") => laneWords(command, cwd);
 
 test("a closed lane named in an argument position is still claimed, even when its key is a cataly program name", () => {
   const lanes = ["cataly", "omp-cataly", "api-fix", "harness-lane"].map((key) => lane(key, "closed"));
   const result = monitorCleanup(lanes, [
     manifest([
-      { argv: ["cataly", "checkpoints", "cataly"], monitorId: "mon_CATALY" },
-      { argv: ["cataly", "checkpoints", "omp-cataly"], monitorId: "mon_OMP" },
-      { command: "cataly checkpoints cataly", monitorId: "mon_COMMAND" },
-      { argv: ["rg", "-n", "/src/omp-cataly", "api-fix"], monitorId: "mon_PATH" },
-      { argv: ["bun", "/repo/src/cli.ts", "send", "harness-lane", "hi"], monitorId: "mon_HARNESS" },
+      { argv: ["cataly", "checkpoints", "cataly"], name: "CATALY" },
+      { argv: ["cataly", "checkpoints", "omp-cataly"], name: "OMP" },
+      { argv: ["rg", "-n", "/src/omp-cataly", "api-fix"], name: "PATH" },
+      { argv: ["bun", "/repo/src/cli.ts", "send", "harness-lane", "hi"], name: "HARNESS" },
     ]),
   ]);
   expect(result.map((m) => [m.monitorId, m.match])).toEqual([
-    ["mon_CATALY", ["cataly:argv:key"]],
-    ["mon_OMP", ["omp-cataly:argv:key"]],
-    ["mon_COMMAND", ["cataly:command:key"]],
-    ["mon_PATH", ["api-fix:argv:key"]],
-    ["mon_HARNESS", ["harness-lane:argv:key"]],
+    ["CATALY", ["cataly:argv:key"]],
+    ["OMP", ["omp-cataly:argv:key"]],
+    ["PATH", ["api-fix:argv:key"]],
+    ["HARNESS", ["harness-lane:argv:key"]],
   ]);
+  expect(commandLanes("cataly checkpoints cataly")).toContain("cataly");
 });
 
 test("a shared cataly watch behind a launcher with options is still not claimed by its own command words", () => {
-  const lanes = ["cataly", "inbound", "slack"].map((key) => lane(key, "closed"));
+  const keys: unknown[] = ["cataly", "inbound", "slack"];
+  const lanes = keys.map((key) => lane(String(key), "closed"));
   const argv = [
     ["env", "-u", "NODE_OPTIONS", "cataly", "inbound", "slack"],
     ["env", "-i", "/home/user/.cataly/bin/cataly", "inbound", "slack"],
@@ -92,8 +73,8 @@ test("a shared cataly watch behind a launcher with options is still not claimed 
     "bash -lc 'exec -a intake cataly inbound slack'",
     'sh -c "nohup cataly inbound slack"',
   ];
-  const monitors = [...argv.map((words) => ({ argv: words })), ...commands.map((command) => ({ command }))];
-  expect(monitorCleanup(lanes, [manifest(monitors)])).toEqual([]);
+  expect(monitorCleanup(lanes, [manifest(argv.map((words) => ({ argv: words })))])).toEqual([]);
+  for (const command of commands) expect(commandLanes(command).filter((word) => keys.includes(word))).toEqual([]);
 });
 
 test("a relative cli.ts entry is cataly's own, and an argument after its command still names a lane", () => {
@@ -101,50 +82,42 @@ test("a relative cli.ts entry is cataly's own, and an argument after its command
   const skill = "/w/skills/cataly-mode/scripts";
   const result = monitorCleanup(lanes, [
     manifest([
-      { argv: ["bun", "src/cli.ts", "freshness"], cwd: skill, monitorId: "mon_SKILL" },
-      { command: "bun run src/cli.ts freshness", cwd: skill, monitorId: "mon_SKILL_COMMAND" },
-      { argv: ["bun", "src/cli.ts", "send", "api-fix", "hi"], cwd: "/w", monitorId: "mon_HARNESS" },
+      { argv: ["bun", "src/cli.ts", "freshness"], cwd: skill, name: "SKILL" },
+      { argv: ["bun", "src/cli.ts", "send", "api-fix", "hi"], cwd: "/w", name: "HARNESS" },
     ]),
   ]);
-  expect(result.map((m) => [m.monitorId, m.match])).toEqual([["mon_HARNESS", ["api-fix:argv:key"]]]);
+  expect(result.map((m) => [m.monitorId, m.match])).toEqual([["HARNESS", ["api-fix:argv:key"]]]);
+  expect(commandLanes("bun run src/cli.ts freshness", skill)).not.toContain("freshness");
 });
 
 test("a word after a cataly program that is no cataly command still names a lane: rg -c cataly api-fix", () => {
-  const result = monitorCleanup(
-    [lane("api-fix", "closed")],
-    [
-      manifest([
-        { argv: ["rg", "-c", "cataly", "api-fix"], monitorId: "mon_ARGV" },
-        { command: "rg -c cataly api-fix", monitorId: "mon_COMMAND" },
-      ]),
-    ],
-  );
-  expect(result.map((m) => [m.monitorId, m.match])).toEqual([
-    ["mon_ARGV", ["api-fix:argv:key"]],
-    ["mon_COMMAND", ["api-fix:command:key"]],
-  ]);
+  const result = monitorCleanup([lane("api-fix", "closed")], [manifest([{ argv: ["rg", "-c", "cataly", "api-fix"] }])]);
+  expect(result.map((m) => m.match)).toEqual([["api-fix:argv:key"]]);
+  expect(commandLanes("rg -c cataly api-fix")).toContain("api-fix");
 });
 
 test("a shared cataly watch inside a loop, a condition, a subshell, a cd or an env -C stays unclaimed", () => {
   const scripts = "/w/skills/cataly-mode/scripts";
   const lanes = ["slack", "freshness"].map((key) => lane(key, "closed"));
-  const monitors: Monitor[] = [
-    { command: "while true; do cataly inbound slack --loop 1; sleep 3; done" },
-    { command: "while true; do exec cataly inbound slack --loop 1; done" },
-    { command: "if test -f /ready; then cataly inbound slack --loop 1; fi" },
-    { command: "( cataly inbound slack --loop 1 )" },
-    { command: `cd ${scripts} && bun src/cli.ts freshness`, cwd: "/repo" },
+  const monitors: Spec[] = [
     { argv: ["env", "-C", scripts, "bun", "src/cli.ts", "freshness"], cwd: "/repo" },
     { argv: ["bun", "src/cli.ts", "freshness"], cwd: scripts },
     { argv: ["timeout", "-vk", "5", "60", "cataly", "inbound", "slack"] },
-    { command: "bash -O extglob -c 'exec cataly inbound slack --loop 1'" },
   ];
   expect(monitorCleanup(lanes, [manifest(monitors)])).toEqual([]);
+  for (const command of [
+    "while true; do cataly inbound slack --loop 1; sleep 3; done",
+    "while true; do exec cataly inbound slack --loop 1; done",
+    "if test -f /ready; then cataly inbound slack --loop 1; fi",
+    "( cataly inbound slack --loop 1 )",
+    "bash -O extglob -c 'exec cataly inbound slack --loop 1'",
+  ])
+    expect(commandLanes(command)).not.toContain("slack");
+  expect(commandLanes(`cd ${scripts} && bun src/cli.ts freshness`)).not.toContain("freshness");
   // An open lane named anywhere still keeps the watch.
   const open = [lane("slack", "working"), lane("api", "closed")];
-  expect(monitorCleanup(open, [manifest([{ command: "while true; do cataly inbound slack; done # api" }])])).toEqual(
-    [],
-  );
+  const shell = ["sh", "-c", "while true; do cataly inbound slack; done # api"];
+  expect(monitorCleanup(open, [manifest([{ argv: shell }])])).toEqual([]);
 });
 
 test("relayed is a command word, while its target still identifies a closed lane", () => {
@@ -152,24 +125,21 @@ test("relayed is a command word, while its target still identifies a closed lane
   const receipt = "a".repeat(64);
   const result = monitorCleanup(lanes, [
     manifest([
-      { argv: ["cataly", "relayed", "api", "--report", receipt], monitorId: "mon_ARGV" },
-      { command: `cataly relayed api --report ${receipt}`, monitorId: "mon_COMMAND" },
-      { argv: ["cataly", "relayed", "relayed", "--report", receipt], monitorId: "mon_TARGET" },
+      { argv: ["cataly", "relayed", "api", "--report", receipt], name: "ARGV" },
+      { argv: ["cataly", "relayed", "relayed", "--report", receipt], name: "TARGET" },
     ]),
   ]);
   expect(result.map((m) => [m.monitorId, m.match])).toEqual([
-    ["mon_ARGV", ["api:argv:key"]],
-    ["mon_COMMAND", ["api:command:key"]],
-    ["mon_TARGET", ["relayed:argv:key"]],
+    ["ARGV", ["api:argv:key"]],
+    ["TARGET", ["relayed:argv:key"]],
   ]);
+  expect(commandLanes(`cataly relayed api --report ${receipt}`)).toContain("api");
 });
 
 test.each(["owner", "report"])("report option values do not hide a messenger platform: %s", (option) => {
-  const monitors: Monitor[] = [
-    { argv: ["cataly", "inbound", `--${option}`, "slack", "discord"] },
-    { command: `cataly inbound --${option} slack discord` },
-  ];
+  const monitors: Spec[] = [{ argv: ["cataly", "inbound", `--${option}`, "slack", "discord"] }];
   expect(monitorCleanup([lane("discord", "closed")], [manifest(monitors)])).toEqual([]);
+  expect(commandLanes(`cataly inbound --${option} slack discord`)).not.toContain("discord");
 });
 
 test("lanes is a command word, but report can still target a lane named lanes", () => {
@@ -177,19 +147,19 @@ test("lanes is a command word, but report can still target a lane named lanes", 
     [lane("lanes", "closed")],
     [
       manifest([
-        { argv: ["cataly", "lanes", "--thread", "discord:123", "--open"], monitorId: "mon_ARGV" },
-        { command: "cataly lanes --open", monitorId: "mon_COMMAND" },
-        { argv: ["cataly", "report", "lanes", "--kind", "done", "--text", "complete"], monitorId: "mon_TARGET" },
+        { argv: ["cataly", "lanes", "--thread", "discord:123", "--open"], name: "ARGV" },
+        { argv: ["cataly", "report", "lanes", "--kind", "done", "--text", "complete"], name: "TARGET" },
       ]),
     ],
   );
-  expect(result.map((m) => [m.monitorId, m.match])).toEqual([["mon_TARGET", ["lanes:argv:key"]]]);
+  expect(result.map((m) => [m.monitorId, m.match])).toEqual([["TARGET", ["lanes:argv:key"]]]);
+  expect(commandLanes("cataly lanes --open")).not.toContain("lanes");
 });
 
 test("a Discord voice monitor does not belong to lanes named voice or discord", () => {
   const lanes = ["voice", "discord"].map((key) => lane(key, "closed"));
-  const monitors = [{ argv: ["cataly", "voice", "discord"] }, { command: "cataly voice discord" }];
-  expect(monitorCleanup(lanes, [manifest(monitors)])).toEqual([]);
+  expect(monitorCleanup(lanes, [manifest([{ argv: ["cataly", "voice", "discord"] }])])).toEqual([]);
+  expect(commandLanes("cataly voice discord").filter((word) => word === "voice" || word === "discord")).toEqual([]);
 });
 
 test("the monitor vocabulary matches CLI dispatch and value options", () => {

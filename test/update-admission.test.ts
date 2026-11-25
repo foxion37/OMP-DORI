@@ -11,11 +11,10 @@ import { assertFrozen, assertSource, freezeSource, gitIdentity, sourceManifest }
 import type { UpdateConfig, UpdateJob } from "../src/update/types.ts";
 import { fixture, git, it } from "./update-setup.ts";
 
-const dependencies = ["node_modules", "skills/cataly-mode/scripts/node_modules", "ref/omp-ulw/node_modules"];
+const dependencies = ["node_modules", "skills/cataly-mode/scripts/node_modules"];
 
 async function prepared(overrides: Partial<Pick<UpdateConfig, "provision" | "checks">> = {}) {
   const f = fixture();
-  mkdirSync(join(f.localSource, "ref/omp-ulw"), { recursive: true });
   const updater = new CatalyUpdater({
     ...f.config,
     checks: [
@@ -89,16 +88,15 @@ for (const revision of ["base", "incoming"] as const) {
 for (const path of [
   "bin/cataly",
   "ref/other-library/index.ts",
-  "ref/omp-ulw/bin/task",
-  "ref/omp-ulw/.cache/payload.ts",
-  "ref/omp-ulw/.omp/SYSTEM.md",
+  "src/.cache/payload.ts",
+  "src/.omp/SYSTEM.md",
   "src/payload.tmp",
 ]) {
   it(`excluded local code ${path} holds without losing an adaptation or copying auth`, async () => {
     const f = fixture();
     const bytes = "export const excludedAdaptation = true;\n";
     f.write(f.localSource, path, bytes);
-    f.write(f.localSource, "ref/omp-ulw/auth/token.json", '{"token":"private-fixture"}\n');
+    f.write(f.localSource, "auth.json", '{"token":"private-fixture"}\n');
     const omitted = sourceManifest(f.localSource).excluded.find(
       (item) => path === item || path.startsWith(`${item}/`),
     )!;
@@ -112,7 +110,7 @@ for (const path of [
     expect(readFileSync(join(f.localSource, path), "utf8")).toBe(bytes);
     expect(existsSync(join(job.candidate, path))).toBe(false);
     expect(existsSync(join(job.directory, "inputs/local"))).toBe(false);
-    expect(existsSync(join(job.candidate, "ref/omp-ulw/auth"))).toBe(false);
+    expect(existsSync(join(job.candidate, "auth.json"))).toBe(false);
     expect(job.history.some(({ phase }) => phase === "ready")).toBe(false);
   });
 }
@@ -126,17 +124,17 @@ it("gitignored adaptations retain filesystem hashes, coverage, frozen review inp
   chmodSync(join(f.localSource, path), 0o755);
   git(f.localSource, "init", "-b", "main");
   expect(git(f.localSource, "check-ignore", "--no-index", path)).toBe(path);
-  f.write(f.localSource, "ref/omp-ulw/runtime.ts", "export const frozenLibrary = true;\n");
-  git(join(f.localSource, "ref/omp-ulw"), "init", "-b", "main");
-  const privatePaths = ["config.json", "ref/omp-ulw/auth/token.json", "ref/omp-ulw/nested/credentials/token.json"];
+  f.write(f.localSource, "src/vendor/runtime.ts", "export const nestedCheckout = true;\n");
+  git(join(f.localSource, "src/vendor"), "init", "-b", "main");
+  const privatePaths = ["config.json", "auth.json", "src/vendor/credentials.json"];
   for (const secret of privatePaths) f.write(f.localSource, secret, '{"token":"private-fixture"}\n');
   f.write(f.localSource, "skills/cataly-mode/scripts/node_modules/private/index.js", "installed dependency\n");
   const job = (await f.updater.once("stage")).job!;
   expect(job.commands.at(-1)?.name).toBe("port");
-  expect(job.inputs!.local.excluded).toContain("ref/omp-ulw/.git");
+  expect(job.inputs!.local.excluded).toContain("src/vendor/.git");
   expect(job.inputs!.local.excluded).toContain("skills/cataly-mode/scripts/node_modules");
   expect(job.inputs!.changedPaths).toContain(path);
-  expect(job.inputs!.changedPaths).toContain("ref/omp-ulw/runtime.ts");
+  expect(job.inputs!.changedPaths).toContain("src/vendor/runtime.ts");
   expect(job.inputs!.local.files.find((file) => file.path === path)?.executable).toBe(true);
   expect(readFileSync(join(job.directory, "inputs/local", path), "utf8")).toBe(bytes);
   writeFileSync(

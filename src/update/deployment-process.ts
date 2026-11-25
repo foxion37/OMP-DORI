@@ -56,14 +56,9 @@ export function underProcess(pid: number, root: number): boolean {
 
 /** The prepared parent and its descendants use the same fence and pinned Cataly extension. */
 export function managedOmpCommand(toolchain: ToolchainReceipt, source: string | undefined): readonly string[] {
-  if (toolchain.ompUlw && source !== toolchain.ompUlw.source)
+  if (source !== toolchain.extensionSource)
     throw new DeploymentHeld("managed extension source differs from its prepared toolchain");
-  return [
-    toolchain.omp,
-    "--config",
-    toolchain.nativeConfig,
-    ...(toolchain.ompUlw ? ["--no-extensions", "-e", join(source!, "extension")] : []),
-  ];
+  return [toolchain.omp, "--config", toolchain.nativeConfig, "--no-extensions", "-e", join(source, "extension")];
 }
 
 /** No caller environment, tokens, sudo context or global Bun policy enters a prepared release/native actor. */
@@ -83,13 +78,9 @@ export function actorEnv(config: DeploymentConfig, toolchain?: ToolchainReceipt)
     CATALY_HOME: config.catalyHome,
     CATALY_CONFIG: config.catalyConfig,
     CATALY_STATE_DIR: config.stateDir,
-    ...(toolchain?.nativeSource || toolchain?.nativeOverride
-      ? { CATALY_AGENT_ARGV: JSON.stringify(managedOmpCommand(toolchain, toolchain.ompUlw?.source)) }
+    ...(toolchain
+      ? { CATALY_AGENT_ARGV: JSON.stringify(managedOmpCommand(toolchain, toolchain.extensionSource)) }
       : {}),
-    ...(toolchain?.ompUlw ? { CATALY_OMP_ULW_PATH: join(toolchain.ompUlw.directory, "index.ts") } : {}),
-    ...(process.env["OMP_ULW_SCOPE_FILE"] === undefined
-      ? {}
-      : { OMP_ULW_SCOPE_FILE: process.env["OMP_ULW_SCOPE_FILE"] }),
     CATALY_TELEMETRY: "0",
     DO_NOT_TRACK: "1",
   };

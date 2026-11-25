@@ -13,7 +13,6 @@ import { fakeClock, newWorld, withState, type TestState, type World } from "./fa
 const T0 = Date.parse("2026-01-01T12:00:00.000Z");
 const ID = "5001";
 const B1 = ternRef(ID);
-const HERDR: SessionRef = { runtime: "herdr", id: "w:p1" };
 
 let state: TestState;
 let world: World;
@@ -165,11 +164,11 @@ test("text with a backtick or $( never reaches a block", async () => {
   expect(ternSent(world)).toEqual([]);
 });
 
-test("listing names each live block's status; a lane left on the removed herdr runtime reads as gone", async () => {
+test("listing names each live block's status", async () => {
   agent({}, { agentStatus: "idle" });
   ternOf(world).blocks.set("5002", block({ foreground: ZSH, group: ZSH.pid, draft: undefined, body: "$ " }));
   ternOf(world).blocks.set("5003", block({ live: false }));
-  const lanes = [{ sessionRef: B1 }, { sessionRef: HERDR }, {}];
+  const lanes = [{ sessionRef: B1 }, {}];
   const listed = await listSessions(runtimesOf(deps), { lanes });
   expect(listed.map((s) => `${s.ref.runtime}:${s.ref.id}:${s.status}`).sort()).toEqual([
     "tern:5001:idle",
@@ -181,11 +180,10 @@ test("listing names each live block's status; a lane left on the removed herdr r
 
 test("a failed runtime choice still lists a stored Tern lane; with no lane the failure is thrown", async () => {
   agent();
-  for (const choice of ["tmux", "herdr"]) {
+  for (const choice of ["tmux", "screen"]) {
     const failing = (): FlowDeps => ({ ...ternDeps(world, fakeClock(T0), state.dir), env: { CATALY_RUNTIME: choice } });
-    const listed = await listSessions(runtimesOf(failing()), { lanes: [{ sessionRef: B1 }, { sessionRef: HERDR }] });
+    const listed = await listSessions(runtimesOf(failing()), { lanes: [{ sessionRef: B1 }] });
     expect(listed.map((s) => `${s.ref.runtime}:${s.ref.id}`)).toEqual(["tern:5001"]);
-    await expect(listSessions(runtimesOf(failing()), { lanes: [{ sessionRef: HERDR }] })).rejects.toThrow();
     await expect(listSessions(runtimesOf(failing()))).rejects.toThrow();
   }
 });

@@ -60,7 +60,7 @@ const race = async (rewrite?: string, switchSession = false): Promise<Accepted[]
   let pi: FakePi | undefined;
   let root: string | undefined;
   try {
-    const stateDir = useConfig(join(import.meta.dir, "fake-ulw.ts"));
+    const stateDir = useConfig();
     root = dirname(stateDir);
     process.env.CATALY_HEADLESS_ID = HEADLESS;
     const registry = new Registry(stateDir);
@@ -68,7 +68,6 @@ const race = async (rewrite?: string, switchSession = false): Promise<Accepted[]
       key: KEY,
       title: "receipt race",
       thread: "none",
-      pane: HEADLESS,
       sessionRef: { runtime: "headless", id: HEADLESS },
       brief: "/brief.md",
       done: "file /done.md",

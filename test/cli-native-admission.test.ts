@@ -17,21 +17,21 @@ posix("a lightweight command in a consumer release still validates every native 
   roots.push(home);
   const source = join(home, ".cataly/releases/releases", `${"a".repeat(40)}-${"b".repeat(16)}`);
   const root = resolve(import.meta.dir, "..");
-  const f = overlayFixture(source, join(home, "upstream"), true);
+  const f = overlayFixture(source, join(home, "upstream"));
   for (const tree of ["src", "skills/cataly-mode/scripts/src"])
     cpSync(join(root, tree), join(source, tree), { recursive: true });
   cpSync(join(root, "package.json"), join(source, "package.json"));
   const receipt = nativeCacheFixture(source, home, f.checkout);
   const manifests = join(home, ".cataly/releases/consumer-manifests");
   mkdirSync(manifests, { recursive: true, mode: 0o700 });
-  writeFileSync(join(manifests, `${basename(source)}.json`), JSON.stringify({ requirements: { omp: "18.20.0" } }), {
+  writeFileSync(join(manifests, `${basename(source)}.json`), JSON.stringify({ requirements: { omp: "19.0.1" } }), {
     mode: 0o600,
   });
   const state = join(home, "state");
   mkdirSync(join(state, "lanes"), { recursive: true });
   writeFileSync(join(state, "lanes/fixture.json"), JSON.stringify({ key: "fixture", status: "working" }));
   const config = join(home, "config.json");
-  writeFileSync(config, JSON.stringify({ stateDir: state, agentCommand: ["omp"], ompUlwPath: "/explicit-ulw" }));
+  writeFileSync(config, JSON.stringify({ stateDir: state, agentCommand: ["omp"] }));
   const cli = join(source, "skills/cataly-mode/scripts/src/cli.ts");
   const invoke = (preload?: string) =>
     Bun.spawnSync([process.execPath, ...(preload ? ["--preload", preload] : []), cli, "checkpoints", "fixture"], {
@@ -77,7 +77,7 @@ test("an explicitly configured external OMP needs no native receipt, but the man
   writeFileSync(join(stateDir, "lanes/fixture.json"), JSON.stringify({ key: "fixture", status: "working" }));
   const config = join(home, "config.json");
   const invoke = (executable: string, cwd = home) => {
-    writeFileSync(config, JSON.stringify({ stateDir, agentCommand: [executable], ompUlwPath: "/explicit-ulw" }));
+    writeFileSync(config, JSON.stringify({ stateDir, agentCommand: [executable] }));
     return Bun.spawnSync(
       [process.execPath, join(source, "skills/cataly-mode/scripts/src/cli.ts"), "checkpoints", "fixture"],
       {
@@ -119,10 +119,12 @@ test("an explicitly configured external OMP needs no native receipt, but the man
       join(alias, "releases", "releases", basename(source), "scripts", "consumer", "omp"),
     );
   }
+  // Windows may name the temp root by its 8.3 short form; the error names the long one, as realpathSync.native does.
+  const lock = join(realpathSync.native(source), "native-omp.lock");
   for (const executable of managedPaths) {
     const managed = invoke(executable);
     expect(managed.exitCode === 0 ? { unexpectedlyAccepted: executable } : null).toBeNull();
     expect(managed.stdout.toString()).toBe("");
-    expect(managed.stderr.toString()).toContain("consumer-manifests");
+    expect(managed.stderr.toString()).toContain(lock);
   }
 }, 20_000);

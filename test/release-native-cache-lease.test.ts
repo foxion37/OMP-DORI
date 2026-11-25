@@ -161,7 +161,7 @@ test("a root process whose working directory cannot be read holds unless --trust
 
 posix("direct native inspection leases its identity before executable or fence verification", async () => {
   const c = pruneFixture();
-  const x = c.native("legacy");
+  const x = c.native("direct");
   const f = preparationFixture();
   await expect(
     inspectRuntimeToolchain({ ...f.config, home: c.home }, f.record, join(x.directory, "bin/missing")),

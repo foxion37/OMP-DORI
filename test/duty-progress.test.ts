@@ -23,7 +23,7 @@ function touched(dir: string, name: string, at: number): string {
 async function quietLane() {
   const s = setup();
   const lane = await startLane(s.d, "talker", s.brief, { group: "w1" });
-  const pane = s.w.panes.get(lane.paneId)!;
+  const pane = s.w.panes.get(lane.sessionRef.id)!;
   pane.status = "idle";
   const at = async (min: number) => {
     s.w.clock = lane.createdAt + min * MIN;
@@ -89,21 +89,8 @@ describe("the progress clock", () => {
     expect(d.store.lane("talker")!.progressAt).toBe(w.clock);
   });
 
-  test("a record from before the clock counts its last report", async () => {
-    const { d, lane, at } = await quietLane();
-    const old = d.store.lane("talker")!;
-    delete old.progressAt;
-    old.log.push({ at: lane.createdAt + 30 * MIN, kind: "report", text: "old report" });
-    d.store.saveLane(old);
-    expect((await at(69)).map((e) => e.action)).not.toContain("escalated");
-    expect(await at(70)).toContainEqual({ lane: "talker", action: "escalated" });
-  });
-
-  test("a record from before the clock is not moved by a report without evidence, so repeating it cannot dodge escalation", async () => {
+  test("a report without evidence does not move the clock, so repeating it cannot dodge escalation", async () => {
     const { w, d, lane, at } = await quietLane();
-    const old = d.store.lane("talker")!;
-    delete old.progressAt;
-    d.store.saveLane(old);
     for (const min of [15, 30, 39]) {
       w.clock = lane.createdAt + min * MIN;
       await report(d, "talker", `still going ${min}`);
@@ -148,7 +135,7 @@ describe("the progress clock", () => {
     const key = `lane-${"k".repeat(36)}`;
     expect(key.length).toBe(41);
     const lane = await startLane(d, key, brief, { group: "w1" });
-    w.panes.get(lane.paneId)!.status = "idle";
+    w.panes.get(lane.sessionRef.id)!.status = "idle";
     const tick = (min: number) => {
       w.clock = lane.createdAt + min * MIN;
       return dutyTick(d);

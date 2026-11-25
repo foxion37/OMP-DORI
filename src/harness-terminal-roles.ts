@@ -1,17 +1,15 @@
 import type { Deps } from "./harness.ts";
 import { Refusal } from "./refusal.ts";
 import { refText, sameSession } from "./refs.ts";
-import { isLegacyRuntime, parseRef, type SessionRef } from "./runtime/types.ts";
+import { parseRef, type SessionRef } from "./runtime/types.ts";
 import { RESERVED_KEYS, type Role } from "./store-types.ts";
 
 /**
  * A terminal role (`cataly harness up` or `role` on Tern) has no ownership receipt. Retire registrations only, and only
- * once every registered session is proven gone; never close any terminal. Historical herdr/hc registrations are left
- * untouched (nothing here can prove them gone; `up` names the upgrade steps), and nothing is retired beside them.
+ * once every registered session is proven gone; never close any terminal.
  */
 export async function retireTerminalRoles(d: Deps): Promise<number> {
   const entries = Object.entries(d.store.roles()) as [Role, SessionRef][];
-  if (entries.some(([, ref]) => isLegacyRuntime(ref.runtime))) return 0;
   const byRuntime = new Map<SessionRef["runtime"], SessionRef[]>();
   for (const [role, ref] of entries) {
     if (!RESERVED_KEYS.includes(role) || ref.runtime === "headless" || !parseRef(refText(ref)))

@@ -13,7 +13,7 @@ const MIN = 60_000;
 async function quietLane() {
   const s = setup();
   const lane = await startLane(s.d, "talker", s.brief, { group: "w1" });
-  const pane = s.w.panes.get(lane.paneId)!;
+  const pane = s.w.panes.get(lane.sessionRef.id)!;
   pane.status = "idle";
   s.lead.received.length = 0;
   const at = (min: number) => {
@@ -102,56 +102,13 @@ describe("duty notice identities across progress epochs and lane incarnations", 
     expect(told("ESCALATE")).toBe(2);
   });
 
-  test.each(["nudge", "escalate", "lost"] as const)(
-    "a legacy lane persists its identity before queueing %s and reuses it after restart",
-    async (kind) => {
-      const { w, d, lane, pane, at, told } = await quietLane();
-      // The original lane schema, without progress or notice identity fields.
-      d.store.saveLane({
-        key: lane.key,
-        sessionRef: lane.sessionRef,
-        paneId: lane.paneId,
-        tabId: lane.tabId,
-        brief: lane.brief,
-        cwd: lane.cwd,
-        status: "working",
-        createdAt: lane.createdAt,
-        lastActivityAt: lane.createdAt,
-        nudges: 0,
-        log: [...lane.log],
-      });
-      if (kind === "lost") w.panes.delete(lane.paneId);
-      interruptSave(d, (next) => {
-        if (kind === "nudge") return next.nudges === 1;
-        return kind === "escalate" ? next.escalatedAt !== undefined : next.status === "lost";
-      });
-      const minute = kind === "nudge" ? 10 : kind === "escalate" ? 40 : 0;
-      expect(await at(minute)).toContainEqual(expect.objectContaining({ lane: "talker", action: "lane-failed" }));
-      const target = kind === "nudge" ? lane.sessionRef : LEAD_REF;
-      expect(d.store.queued(target)).toHaveLength(1);
-      expect(d.store.queued(target)[0]!.id).toEqual(expect.any(String));
-      w.clock = lane.createdAt + (minute + 1) * MIN;
-      await dutyTick({ ...d, store: new Store(d.store.root) });
-      await at(minute + 2);
-      expect(d.store.queued(target)).toEqual([]);
-      if (kind === "nudge") {
-        expect(pane.received.filter((m) => m.includes("[duty -> talker]"))).toHaveLength(1);
-        expect(d.store.lane("talker")!.nudges).toBe(1);
-      } else {
-        expect(told(kind === "lost" ? "LOST" : "ESCALATE")).toBe(1);
-        if (kind === "lost") expect(d.store.lane("talker")!.status).toBe("lost");
-        else expect(d.store.lane("talker")!.escalatedAt).toBeDefined();
-      }
-    },
-  );
-
   test.each([false, true])(
     "reusing a key, timestamp and pane id still delivers both LOST notices (lead registered: %s)",
     async (registered) => {
       const { w, d, lane, brief, told } = await quietLane();
       if (!registered) rmSync(join(d.store.root, "roles.json"));
       const serial = w.next;
-      w.panes.delete(lane.paneId);
+      w.panes.delete(lane.sessionRef.id);
       await dutyTick(d);
       expect(d.store.lane("talker")!.status).toBe("lost");
       // A restarted runtime can reuse its pane numbers while the wall clock also repeats.
@@ -159,7 +116,7 @@ describe("duty notice identities across progress epochs and lane incarnations", 
       const again = await startLane(d, "talker", brief, { group: "w1" });
       expect(again.createdAt).toBe(lane.createdAt);
       expect(again.sessionRef).toEqual(lane.sessionRef);
-      w.panes.delete(again.paneId);
+      w.panes.delete(again.sessionRef.id);
       await dutyTick(d);
       d.store.setRole("lead", LEAD_REF);
       await dutyTick(d);

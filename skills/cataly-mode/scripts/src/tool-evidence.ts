@@ -35,9 +35,9 @@ type Frame = { readonly content?: unknown; readonly details?: Details | null; re
 /**
  * The custom entry recording that the background job a tool call started completed successfully: the call, its job,
  * the tool, the session cwd the call started in, and the completed result's fingerprint, or why that result is not
- * evidence. Keep the exact tag read by the retained v0.1.3 runtime.
+ * evidence.
  */
-export const COMPLETION_ENTRY = "omp-dori:tool-completion";
+export const COMPLETION_ENTRY = "omp-cataly:tool-completion";
 export type Completion = {
   readonly call: string;
   readonly job: string;
@@ -48,7 +48,6 @@ export type Completion = {
 /** Tools that coordinate the lane (reports, messages, goals, questions, plans) rather than do its work. */
 const COORDINATION_TOOLS: Record<string, true> = {
   cataly_report: true,
-  dori_report: true,
   monitor: true,
   goal: true,
   ask: true,

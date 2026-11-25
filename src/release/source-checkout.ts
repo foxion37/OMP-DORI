@@ -1,13 +1,5 @@
-import { lstatSync, mkdirSync, renameSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { owned, realDirectory } from "./files.ts";
-import {
-  assertSourceBundle,
-  bundleGit,
-  readSourceBundle,
-  SourceBundleError,
-  type BoundBundle,
-} from "./source-bundle.ts";
+import { mkdirSync } from "node:fs";
+import { assertSourceBundle, bundleGit, SourceBundleError, type BoundBundle } from "./source-bundle.ts";
 
 /** HEAD and upstream gitlinks remain intact; the index explicitly records the expected overlay. */
 export async function checkoutSourceBundle(
@@ -31,26 +23,4 @@ export async function checkoutSourceBundle(
     throw new SourceBundleError("Bound source patch cannot apply to its exact upstream; preparation held");
   }
   assertSourceBundle(checkout, bundle, home);
-}
-
-export async function provisionSourceOverlay(
-  source: string,
-  home: string,
-  target?: string,
-  repository?: string,
-): Promise<string> {
-  const bundle = readSourceBundle(source);
-  target ??= join(home, ".cache/omp-cataly", `omp-ulw-${bundle.identity}`);
-  if (lstatSync(target, { throwIfNoEntry: false })) assertSourceBundle(target, bundle, home);
-  else {
-    const stage = `${target}.preparing`;
-    if (lstatSync(stage, { throwIfNoEntry: false }))
-      throw new Error("Partial ULW preparation exists; preserve it before reinstalling");
-    realDirectory(dirname(target), true);
-    owned(dirname(target));
-    await checkoutSourceBundle(stage, bundle, home, repository);
-    renameSync(stage, target);
-    assertSourceBundle(target, bundle, home);
-  }
-  return join(target, "index.ts");
 }

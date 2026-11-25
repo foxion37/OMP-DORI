@@ -1,6 +1,6 @@
 /** Discord send/thread/react operations. */
 import { type Command, die, messageText } from "./cli-context.ts";
-import { discordNativeBinary } from "./cli-discord-binary.ts";
+import { discordNativeBinary } from "../../../../src/native-binary.ts";
 import { type DcChannel, Discord, isForumType } from "./messenger/discord.ts";
 import { discordInboundEnv, isDiscordSnowflake } from "./messenger/discord-inbound-state.ts";
 import { renderDiscordTables } from "./messenger/discord-markdown.ts";

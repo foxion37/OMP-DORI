@@ -69,8 +69,7 @@ export async function publishRelease(
     throw error;
   }
   const process = new PublicationProcess(config, join(job.directory, "publication"), ctx.signal);
-  const legacy = previous?.branch === `refs/heads/dori-update/${job.id}`;
-  const branch = `refs/heads/${legacy ? "dori" : "cataly"}-update/${job.id}`;
+  const branch = `refs/heads/cataly-update/${job.id}`;
   let record = previous;
   if (
     record &&
@@ -135,7 +134,7 @@ export async function publishRelease(
   const waitingExpired = (startedAt = current.createdAt): boolean => {
     if (!config.github) return false;
     if (!current.ciWait) {
-      // Legacy receipts lack a first-wait timestamp; immutable creation time supplies a conservative bound.
+      // No first-wait timestamp before the first check; immutable creation time supplies a conservative bound.
       const timeoutMs = Math.max(
         3_600_000,
         Math.min(

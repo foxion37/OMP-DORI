@@ -28,7 +28,7 @@ it("public export uses only the checked manifest, preserves modes and independen
   expect(git(f.target, "log", "--format=%s", "main")).toContain("Independent owner history");
   const paths = git(f.target, "ls-tree", "-rz", "--name-only", commit).split("\0").filter(Boolean).sort();
   expect(paths).toEqual(manifest.files.map((file) => file.path));
-  expect(paths).toContain("omp-ulw.lock");
+  expect(paths).toContain("native-addon/pin.txt");
   expect(paths).toContain(".gitignore");
   expect(paths).toContain("src/ignored-adaptation.ts");
   expect(git(f.target, "show", `${commit}:assets/data.bin`)).toBe("\0public binary fixture");
@@ -38,7 +38,6 @@ it("public export uses only the checked manifest, preserves modes and independen
         path === ".env" ||
         path === "config.json" ||
         path === "job.json" ||
-        path.startsWith("ref/omp-ulw/") ||
         path.startsWith("node_modules/") ||
         path.startsWith(".git/"),
     ),

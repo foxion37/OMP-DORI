@@ -27,7 +27,7 @@ const snapshot = (dir: string) =>
 
 const bootDeps = (world: World, slack: () => Promise<{ userId: string; teamId: string } | null> = async () => null) => {
   const sessionsDir = join(state.dir, "sessions");
-  const deps = depsFor(world, fakeClock(T0), state.dir, { sessionsDir, leadPane: "w2:p1" });
+  const deps = depsFor(world, fakeClock(T0), state.dir, { sessionsDir, leadPane: "tern:5001" });
   return { ...deps, reports: new Reports(state.dir), worklog: new Worklog(state.dir), slack, sessionsDir };
 };
 

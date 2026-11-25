@@ -59,7 +59,7 @@ function data(reply: Reply): Record<string, unknown> {
 }
 
 async function fixture(options?: { role?: "cataly" | "lane"; mode?: string; sub?: boolean; plain?: boolean }) {
-  const root = useConfig("");
+  const root = useConfig();
   roots.push(root);
   const session = randomUUID();
   const fake = fakePi({
@@ -110,7 +110,7 @@ async function fixture(options?: { role?: "cataly" | "lane"; mode?: string; sub?
 }
 
 test("native role and monitor work without Unix user ownership", async () => {
-  const root = useConfig("");
+  const root = useConfig();
   roots.push(root);
   const fake = fakePi({ session: { id: randomUUID(), entries: [] }, flags: { "cataly-role": "cataly" } });
   active.push(fake);
@@ -119,7 +119,7 @@ test("native role and monitor work without Unix user ownership", async () => {
   try {
     await ompCataly(fake.api);
     await fake.emit("session_start");
-    expect(fake.session.entries).toContainEqual({ type: "custom", customType: "omp-dori:role", data: "dori" });
+    expect(fake.session.entries).toContainEqual({ type: "custom", customType: "omp-cataly:role", data: "cataly" });
     expect(fake.active).toContain("monitor");
     expect(fake.notes.join("\n")).not.toContain("Native remote");
   } finally {
@@ -128,8 +128,8 @@ test("native role and monitor work without Unix user ownership", async () => {
   }
 });
 
-test("a native duty transcript cannot appear as a v0.1.3 lead after rollback", async () => {
-  const root = useConfig("");
+test("a native duty transcript does not acquire the lead monitor", async () => {
+  const root = useConfig();
   roots.push(root);
   process.env.CATALY_HARNESS_ROLE = "duty";
   const fake = fakePi({
@@ -149,7 +149,7 @@ test.each([
   { role: "duty", refId: randomUUID() },
   { role: "lead", refId: "not-a-native-ref" },
 ])("flagless archived duty or malformed newest proof cannot acquire lead capabilities %#", async (proof) => {
-  const root = useConfig("");
+  const root = useConfig();
   roots.push(root);
   const fake = fakePi({
     mode: "tui",
@@ -165,7 +165,7 @@ test.each([
         { type: "custom", customType: "omp-cataly:harness-role", data: proof },
         {
           type: "custom",
-          customType: "omp-dori:monitor",
+          customType: "omp-cataly:monitor",
           data: { op: "start", name: "lead-intake", argv: [join(root, "missing-monitor")], filter: ".", cwd: root },
         },
       ],
@@ -188,7 +188,7 @@ test.each([
   // Explicitly resuming a different lead still uses the lead scope; the duty record is branch-local.
   fake.session = {
     id: randomUUID(),
-    entries: [{ type: "custom", customType: "omp-dori:role", data: "dori" }],
+    entries: [{ type: "custom", customType: "omp-cataly:role", data: "cataly" }],
   };
   await fake.emit("session_switch", { reason: "resume" });
   expect(fake.active).toContain("monitor");

@@ -1,8 +1,9 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { Registry } from "../skills/cataly-mode/scripts/src/registry.ts";
 import { HeadlessRuntime, type HeadlessObservation } from "../src/runtime/headless.ts";
+import { installNativeHost } from "./fixtures/native-host.ts";
 
 const native = process.env["CATALY_TEST_OMP_ROOT"];
 const executable = process.env["CATALY_TEST_OMP_EXEC"];
@@ -31,6 +32,8 @@ test.skipIf(!runSmoke)(
     mkdirSync(ompDir);
     mkdirSync(bin);
     symlinkSync(process.execPath, join(bin, "bun"));
+    // The CLI finds the Rust host where an installation keeps it, as a consumer's would.
+    const installed = installNativeHost(home);
     const config = join(home, "config.json");
     const key = "native-smoke";
     const wrong = `${key}-mismatch`;
@@ -50,7 +53,6 @@ test.skipIf(!runSmoke)(
           stateDir,
           defaultCwd: cwd,
           sessionsDir: join(ompDir, "sessions"),
-          ompUlwPath: "",
           requireModelReadback: true,
           guard: { panesMax: 1, memFreeMinPct: 0, diskFreeMinGb: 0 },
           defaultModel: "cataly-local/headless-fixture",
@@ -127,8 +129,6 @@ test.skipIf(!runSmoke)(
     const registry = new Registry(stateDir);
     const queued = `${key}-queued`;
     try {
-      expect(Bun.which("herdr", { PATH: env.PATH })).toBeNull();
-      expect(Bun.which("hc", { PATH: env.PATH })).toBeNull();
       expect(Bun.which("tern", { PATH: env.PATH })).toBeNull();
       const launch = ["launch", key, "--title", "Live test", "--brief", brief, "--done", `file ${evidence}`];
       await expect(runCli({ ...env, CATALY_LANE_RUNTIME: "terminal" }, ...launch)).rejects.toThrow(
@@ -141,6 +141,13 @@ test.skipIf(!runSmoke)(
       const ref = lane?.sessionRef;
       const sessionId = lane?.session;
       if (!ref || !sessionId) throw new Error("native startup did not attest the registered session");
+      // The CLI hosted the lane with the installed native binary, not a Bun broker.
+      const hostDir = join(stateDir, "headless", ref.id);
+      const { pid } = JSON.parse(readFileSync(join(hostDir, "endpoint.json"), "utf8")) as { pid: number };
+      const hostArgs = Bun.spawnSync(["ps", "-ww", "-o", "args=", "-p", String(pid)])
+        .stdout.toString()
+        .trim();
+      expect(hostArgs).toBe(`${installed} headless-host ${hostDir}`);
       const observe = async (laneKey = key) =>
         JSON.parse(await runCli(env, "headless", "observe", laneKey)) as HeadlessObservation;
       const waitForReply = async (expected: string, laneKey = key) => {

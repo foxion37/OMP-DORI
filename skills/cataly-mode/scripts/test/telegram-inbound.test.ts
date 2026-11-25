@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileTgInboundStore } from "../src/messenger/telegram-inbound-state.ts";
 import { pollTelegramInbound } from "../src/messenger/telegram-inbound.ts";
 import { inboundLagLog } from "../src/messenger/telegram-lag.ts";
 import { withState } from "./fakes.ts";
 import { GROUP, mk, msg, OTHER, OWNER, telegramFake, TOPIC } from "./telegram-inbound-fakes.ts";
-import { telegramTestStore } from "./telegram-win32-fixtures.ts";
+
+const posix = test.skipIf(process.platform === "win32");
 
 const state = withState();
 
@@ -15,7 +17,7 @@ beforeEach(() => mkdirSync(state.dir, { recursive: true }));
 
 afterEach(() => state.done());
 
-test("owner DMs pass, non-owner and bot messages drop, offset still advances", async () => {
+posix("owner DMs pass, non-owner and bot messages drop, offset still advances", async () => {
   const { http, bodies } = telegramFake([
     [
       { update_id: 10, message: msg(OWNER, OWNER, "private", "hi") },
@@ -31,7 +33,7 @@ test("owner DMs pass, non-owner and bot messages drop, offset still advances", a
       },
     ],
   ]);
-  const store = telegramTestStore(join(state.dir, "tg-off-1"), 900);
+  const store = fileTgInboundStore(join(state.dir, "tg-off-1"), 900);
   const { inbound: out } = await pollTelegramInbound(mk(http), store, {
     ownerId: OWNER,
     groupChatId: GROUP,
@@ -46,7 +48,7 @@ test("owner DMs pass, non-owner and bot messages drop, offset still advances", a
   expect(bodies[0]!).not.toHaveProperty("offset");
 });
 
-test("configured topic passes, other topics and other groups drop", async () => {
+posix("configured topic passes, other topics and other groups drop", async () => {
   const { http } = telegramFake([
     [
       { update_id: 20, message: msg(OWNER, GROUP, "supergroup", "in topic", TOPIC, true) },
@@ -54,7 +56,7 @@ test("configured topic passes, other topics and other groups drop", async () => 
       { update_id: 22, message: msg(OWNER, -999, "supergroup", "wrong group", TOPIC, true) },
     ],
   ]);
-  const store = telegramTestStore(join(state.dir, "tg-off-2"), 900);
+  const store = fileTgInboundStore(join(state.dir, "tg-off-2"), 900);
   const { inbound: out } = await pollTelegramInbound(mk(http), store, {
     ownerId: OWNER,
     groupChatId: GROUP,
@@ -67,7 +69,7 @@ test("configured topic passes, other topics and other groups drop", async () => 
   expect(store.load()?.offset).toBe(23);
 });
 
-test("a reply in the General topic counts as topic 1, not its reply-root id", async () => {
+posix("a reply in the General topic counts as topic 1, not its reply-root id", async () => {
   const { http } = telegramFake([
     [
       // Direct post in General: no thread markers at all.
@@ -77,7 +79,7 @@ test("a reply in the General topic counts as topic 1, not its reply-root id", as
       { update_id: 31, message: msg(OWNER, GROUP, "supergroup", "general reply", 1234, false) },
     ],
   ]);
-  const store = telegramTestStore(join(state.dir, "tg-off-3"), 900);
+  const store = fileTgInboundStore(join(state.dir, "tg-off-3"), 900);
   const { inbound: out } = await pollTelegramInbound(mk(http), store, {
     ownerId: OWNER,
     groupChatId: GROUP,
@@ -88,34 +90,37 @@ test("a reply in the General topic counts as topic 1, not its reply-root id", as
   expect(out[1]!.thread).toBe(1);
 });
 
-test("a reply names the message it answers; a topic's own root, named on every topic message, is no reply", async () => {
-  const replying = (text: string, target: number, thread: number, isTopic: boolean) => ({
-    ...msg(OWNER, GROUP, "supergroup", text, thread, isTopic),
-    reply_to_message: { message_id: target },
-  });
-  const { http } = telegramFake([
-    [
-      { update_id: 60, message: replying("plain post in topic 3", TOPIC, TOPIC, true) },
-      { update_id: 61, message: replying("2", 77, TOPIC, true) },
-      // In General a reply's message_thread_id is its reply root, which may be the very message it answers.
-      { update_id: 62, message: replying("1", 1234, 1234, false) },
-      { update_id: 63, edited_message: replying("2, sorry", 77, TOPIC, true) },
-    ],
-  ]);
-  const store = telegramTestStore(join(state.dir, "tg-off-reply"), 900);
-  const { inbound: out } = await pollTelegramInbound(mk(http), store, { ownerId: OWNER, groupChatId: GROUP });
-  // The last is the owner's edit of the reply: it still names the message it answers.
-  expect(out.map((i) => i.replyTo ?? "-")).toEqual(["-", 77, 1234, 77]);
-});
+posix(
+  "a reply names the message it answers; a topic's own root, named on every topic message, is no reply",
+  async () => {
+    const replying = (text: string, target: number, thread: number, isTopic: boolean) => ({
+      ...msg(OWNER, GROUP, "supergroup", text, thread, isTopic),
+      reply_to_message: { message_id: target },
+    });
+    const { http } = telegramFake([
+      [
+        { update_id: 60, message: replying("plain post in topic 3", TOPIC, TOPIC, true) },
+        { update_id: 61, message: replying("2", 77, TOPIC, true) },
+        // In General a reply's message_thread_id is its reply root, which may be the very message it answers.
+        { update_id: 62, message: replying("1", 1234, 1234, false) },
+        { update_id: 63, edited_message: replying("2, sorry", 77, TOPIC, true) },
+      ],
+    ]);
+    const store = fileTgInboundStore(join(state.dir, "tg-off-reply"), 900);
+    const { inbound: out } = await pollTelegramInbound(mk(http), store, { ownerId: OWNER, groupChatId: GROUP });
+    // The last is the owner's edit of the reply: it still names the message it answers.
+    expect(out.map((i) => i.replyTo ?? "-")).toEqual(["-", 77, 1234, 77]);
+  },
+);
 
-test("a private chat run with topics carries the topic on DMs", async () => {
+posix("a private chat run with topics carries the topic on DMs", async () => {
   const { http } = telegramFake([
     [
       { update_id: 40, message: msg(OWNER, OWNER, "private", "plain dm") },
       { update_id: 41, message: msg(OWNER, OWNER, "private", "dm in topic 7", 7, true) },
     ],
   ]);
-  const store = telegramTestStore(join(state.dir, "tg-off-4"), 900);
+  const store = fileTgInboundStore(join(state.dir, "tg-off-4"), 900);
   const { inbound: out } = await pollTelegramInbound(mk(http), store, { ownerId: OWNER });
   expect(out.length).toBe(2);
   expect(out[0]!.thread).toBeUndefined();
@@ -123,21 +128,21 @@ test("a private chat run with topics carries the topic on DMs", async () => {
   expect(out[1]!.thread).toBe(7);
 });
 
-test("without a configured group only DMs arrive", async () => {
+posix("without a configured group only DMs arrive", async () => {
   const { http } = telegramFake([
     [{ update_id: 50, message: msg(OWNER, GROUP, "supergroup", "group msg", TOPIC, true) }],
   ]);
-  const store = telegramTestStore(join(state.dir, "tg-off-5"), 900);
+  const store = fileTgInboundStore(join(state.dir, "tg-off-5"), 900);
   const { inbound: out } = await pollTelegramInbound(mk(http), store, { ownerId: OWNER });
   expect(out.length).toBe(0);
 });
 
-test("restart resumes from the persisted offset", async () => {
+posix("restart resumes from the persisted offset", async () => {
   const { http, bodies } = telegramFake([
     [],
     [{ update_id: 60, message: msg(OWNER, OWNER, "private", "after restart") }],
   ]);
-  const store = telegramTestStore(join(state.dir, "tg-off-6"), 900);
+  const store = fileTgInboundStore(join(state.dir, "tg-off-6"), 900);
   store.save({ offset: 60, observedAt: Date.now(), seen: [] }); // what a previous run persisted
   const { inbound: first } = await pollTelegramInbound(mk(http), store, { ownerId: OWNER });
   expect(first.length).toBe(0);
@@ -149,7 +154,7 @@ test("restart resumes from the persisted offset", async () => {
   expect(store.load()?.offset).toBe(61);
 });
 
-test("a crash mid-emit replays the unprinted message, not the printed one", async () => {
+posix("a crash mid-emit replays the unprinted message, not the printed one", async () => {
   const { http, bodies } = telegramFake([
     [{ update_id: 70, message: msg(OWNER, OWNER, "private", "first") }],
     [
@@ -161,7 +166,7 @@ test("a crash mid-emit replays the unprinted message, not the printed one", asyn
       { update_id: 72, message: msg(OWNER, OWNER, "private", "third") },
     ],
   ]);
-  const store = telegramTestStore(join(state.dir, "tg-off-7"), 900);
+  const store = fileTgInboundStore(join(state.dir, "tg-off-7"), 900);
   // First poll: prints "first", offset advances past it.
   const seen1: string[] = [];
   await pollTelegramInbound(mk(http), store, { ownerId: OWNER }, (i) => seen1.push(i.text ?? ""));
@@ -185,7 +190,7 @@ test("a crash mid-emit replays the unprinted message, not the printed one", asyn
   expect(store.load()?.offset).toBe(73);
 });
 
-test("dated owner intake records original-message lag without changing cursor or owner filtering", async () => {
+posix("dated owner intake records original-message lag without changing cursor or owner filtering", async () => {
   const date = 1_700_000_000;
   const { http } = telegramFake([
     [
@@ -200,7 +205,7 @@ test("dated owner intake records original-message lag without changing cursor or
   ]);
   const path = join(state.dir, "telegram-lag.jsonl");
   const record = inboundLagLog(path);
-  const store = telegramTestStore(join(state.dir, "telegram-offset"), 900);
+  const store = fileTgInboundStore(join(state.dir, "tg-off-lag"), 900);
   await pollTelegramInbound(mk(http), store, { ownerId: OWNER }, (inbound) => record(inbound, 1_700_000_002_250));
   const records = readFileSync(path, "utf8")
     .trim()

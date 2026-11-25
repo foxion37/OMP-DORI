@@ -49,12 +49,7 @@ posix(
 
 posix("an installer given CATALY_OMP inside the cache holds its lease while it publishes the wrapper", async () => {
   const s = setup();
-  const f = overlayFixture(
-    join(s.root, "native-source"),
-    join(s.root, "native-upstream"),
-    true,
-    `explicit-native ${s.root}`,
-  );
+  const f = overlayFixture(join(s.root, "native-source"), join(s.root, "native-upstream"), `explicit-native ${s.root}`);
   mkdirSync(join(f.source, "scripts"));
   symlinkSync(
     resolve(import.meta.dir, "../scripts/source-dependencies.ts"),
@@ -85,7 +80,7 @@ posix("an installer given CATALY_OMP inside the cache holds its lease while it p
   }
 });
 
-posix("a relative or interpreter-run Dori writer for this cache keeps every identity", async () => {
+posix("a relative or interpreter-run Cataly writer for this cache keeps every identity", async () => {
   const c = pruneFixture();
   const x = c.native("x");
   // A process whose HOME is the fixture's and whose working directory is the fixture root stands in for the writer.
@@ -108,7 +103,7 @@ posix("a relative or interpreter-run Dori writer for this cache keeps every iden
       `bun scripts/source-dependencies.ts assert-native /old/source ${relative(c.root, c.home)}`,
       "bun src/release/cli.ts install",
       "bash scripts/install-source.sh",
-      "bun skills/dori-mode/scripts/src/cli.ts update install",
+      "bun skills/cataly-mode/scripts/src/cli.ts update install",
     ])
       expect(held(args)).toEqual([`Cataly cache writer process ${holder.pid} (${args})`]);
     // A writer naming another existing home works on another cache.

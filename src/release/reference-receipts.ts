@@ -2,25 +2,20 @@ import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { object } from "../update/config.ts";
 
-const inventories = {
-  legacy: ["bin/dori", "bin/dori-harness", "bin/omp", "bin/omp-dori", "omp.yml"],
-  cataly: ["bin/cataly", "bin/cataly-harness", "bin/omp", "bin/omp-cataly", "omp.yml"],
-} as const;
-export type ReferenceLayout = keyof typeof inventories;
+/** The exact files a side home's wrappers publish; any other recorded inventory belongs to another installation. */
+export const REFERENCE_FILES = ["bin/cataly", "bin/cataly-harness", "bin/omp", "bin/omp-cataly", "omp.yml"] as const;
 export type Reference = { readonly bytes: string; readonly executable: boolean };
 export type PendingReferences = {
   readonly before: Readonly<Record<string, string>>;
   readonly references: Readonly<Record<string, Reference>>;
 };
 export type ReferenceReceipts = {
-  readonly layout: ReferenceLayout;
   readonly recorded: Readonly<Record<string, string>>;
   readonly pending: PendingReferences | undefined;
 };
 
 export const referenceHash = (bytes: string): string => createHash("sha256").update(bytes).digest("hex");
-export const referenceFiles = (layout: ReferenceLayout): readonly string[] => inventories[layout];
-const names = new Set<string>([...inventories.legacy, ...inventories.cataly]);
+const names = new Set<string>(REFERENCE_FILES);
 
 export function nextReferenceDigests({ before, references }: PendingReferences): Readonly<Record<string, string>> {
   return {
@@ -66,15 +61,16 @@ export function readReferenceReceipts(root: string, read: (path: string) => unkn
   const recorded = receipt === undefined ? {} : referenceDigests(receipt);
   const pending = transaction === undefined ? undefined : parsePending(transaction);
   const expected = pending ? nextReferenceDigests(pending) : recorded;
-  const matches = (files: readonly string[]): boolean =>
-    Object.keys(expected).length === files.length && files.every((path) => Object.hasOwn(expected, path));
-  const layout = matches(inventories.legacy) ? "legacy" : matches(inventories.cataly) ? "cataly" : undefined;
-  if (!layout) throw new Error("Invalid or ambiguous consumer reference inventory");
+  if (
+    Object.keys(expected).length !== REFERENCE_FILES.length ||
+    !REFERENCE_FILES.every((path) => Object.hasOwn(expected, path))
+  )
+    throw new Error("Invalid or ambiguous consumer reference inventory");
   if (pending) {
     const same = (digests: Readonly<Record<string, string>>): boolean =>
       Object.keys(recorded).length === Object.keys(digests).length &&
       Object.entries(recorded).every(([path, digest]) => digest === digests[path]);
     if (!same(pending.before) && !same(expected)) throw new Error("Invalid consumer reference receipt");
   }
-  return { layout, recorded, pending };
+  return { recorded, pending };
 }

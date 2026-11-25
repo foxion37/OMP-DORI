@@ -147,8 +147,8 @@ posix("a failed fetch is not taken for local work: no reset is suggested", () =>
   expect(r.err).toContain("missing.git");
 });
 
-posix("the OMP extension and explicit ULW path install without replacing existing owner configuration", () => {
-  const { home, src, ulw, install } = setup();
+posix("the OMP extension installs without replacing existing owner configuration", () => {
+  const { home, src, install } = setup();
   mkdirSync(join(home, ".cataly"));
   writeFileSync(join(home, ".cataly/.omp-cataly"), "primary\n");
   const path = join(home, ".cataly/config.json");
@@ -157,17 +157,13 @@ posix("the OMP extension and explicit ULW path install without replacing existin
     JSON.stringify({
       defaultModel: "provider/custom",
       hooks: { threadReply: ["fixture"] },
-      ompUlwPath: "/previous/index.ts",
     }),
   );
   expect(install().code).toBe(0);
   expect(readlinkSync(join(home, "extensions/omp-cataly"))).toBe(join(src, "extension"));
-  // omp-ulw becomes an OMP extension, so the config's import path is emptied rather than pointed at it.
-  expect(readlinkSync(join(home, "extensions/omp-ulw"))).toBe(ulw);
   expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({
     defaultModel: "provider/custom",
     hooks: { threadReply: ["fixture"] },
-    ompUlwPath: "",
     agentCommand: [join(home, ".cataly/bin/omp"), "--cataly-role", "lane", "--model", "{model}", "{prompt}"],
   });
 });

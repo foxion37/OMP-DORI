@@ -13,7 +13,7 @@ export type LaunchConfig = {
 };
 
 // Derive this at load time, after the raw JSON spread: a file cannot supply its own claimed origin.
-export const launchConfig = (invocation = "ulw set goal and work", path?: string): LaunchConfig => ({
+export const launchConfig = (invocation = "set goal and work", path?: string): LaunchConfig => ({
   launchKeywords: invocation,
   launchSelection: {
     invocation,

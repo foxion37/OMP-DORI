@@ -3,8 +3,8 @@ Cataly - modified-copy notice and source attribution
 Project: https://github.com/vntrevx/Cataly
 Maintainer: vntrevx (https://github.com/vntrevx)
 
-Cataly integrates messenger-facing ownership from dori-superagent, the native
-oh-my-pi coding-agent runtime, and the outcome-driven workflows of omp-ulw.
+Cataly is derived from dori-superagent's messenger-facing ownership and
+builds on the native oh-my-pi coding-agent runtime.
 The Cataly name identifies this maintained integration; it does not replace
 the original authors' credit or the license attached to each source.
 
@@ -19,7 +19,7 @@ goals, approvals, monitors, runtime adapters, configuration, packaging,
 and documentation.
 
 It also integrates upstream 49fba4dc081c9238f01e617b2fd17f548438e624 while
-preserving the local adaptations and separately bound omp-ulw source.
+preserving the local adaptations.
 
 The dori-superagent-derived material retains Sustainable Use License 1.0
 and its notices in LICENSE. The pre-existing omp-dori material incorporated
@@ -35,17 +35,10 @@ This distribution includes modified-copy patch excerpts for:
 
 - oh-my-pi (https://github.com/can1357/oh-my-pi), based on
   f40f335845f0b136453d12fec8d6057011082766 / 19.0.1.
-- omp-ulw (https://github.com/dbc-hbin/omp-ulw), based on
-  6ec7ecd40b2b5667f37c9802999db1d12ebbc2ae.
 
-native-omp.lock/native-omp.patch and omp-ulw.overlay.lock/omp-ulw.patch bind
-those bases, patch digests, and resulting source identities. omp-ulw.lock
-retains its upstream repository/commit meaning. These are prepared source
-overlays, not a vendored union or an external fork dependency.
-
-The legacy-upstream figures in docs/ preserve their original labels and
-depict upstream operating assumptions, not Cataly's current runtime,
-commands or integration support.
+native-omp.lock/native-omp.patch bind that base, the patch digest, and the
+resulting source identity. This is a prepared source overlay, not a vendored
+union or an external fork dependency.
 
 Original authors' copyright and license notices continue to apply to the
 patch excerpts and fetched source. The default runtime uses the official,

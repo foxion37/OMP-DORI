@@ -17,7 +17,7 @@ posix(
       rmSync(join(paths.root, control), { force: true });
     }
     const alias = join(source.home, "consumer-home");
-    symlinkSync(paths.dori, alias);
+    symlinkSync(paths.cataly, alias);
     const before = protectedSnapshot(paths);
     const checkout = snapshot(source.src);
     expect(source.install(consumerEnv(paths)).code).toBe(1);
@@ -36,7 +36,7 @@ posix(
     const parent = join(source.root, "consumer-home-parent");
     symlinkSync(root, parent);
     const home = join(parent, "home");
-    const paths = consumerPaths(home, join(home, basename(physicalPaths.dori)));
+    const paths = consumerPaths(home, join(home, basename(physicalPaths.cataly)));
     const target = join(paths.releases, basename(readlinkSync(paths.live)));
     rmSync(paths.live);
     symlinkSync(target, paths.live);
@@ -44,14 +44,14 @@ posix(
       rmSync(join(paths.root, control), { force: true });
     }
     const alias = join(source.home, "consumer-home");
-    symlinkSync(physicalPaths.dori, alias);
+    symlinkSync(physicalPaths.cataly, alias);
     source.upstreamCommit("pending upstream\n");
     const before = snapshot(paths.home);
     const sourceHome = snapshot(source.home);
     const checkout = snapshot(source.src);
     const attempts: Record<string, string>[] = [
       { ...consumerEnv(paths), CATALY_INSTALL_MODE: "primary" },
-      { CATALY_INSTALL_MODE: "side", OMP_CATALY_HOME: physicalPaths.dori },
+      { CATALY_INSTALL_MODE: "side", OMP_CATALY_HOME: physicalPaths.cataly },
       { CATALY_INSTALL_MODE: "side", OMP_CATALY_HOME: alias },
     ];
     for (const options of attempts) {
@@ -65,13 +65,13 @@ posix(
   },
 );
 
-posix("an intact historical consumer home is not mistaken for source, even with a source marker", () => {
+posix("an intact consumer home is not mistaken for source, even with a source marker", () => {
   const source = setup();
-  const base = join(source.home, ".dori");
+  const base = join(source.home, ".cataly");
   const release = join(base, "releases/releases/active");
   mkdirSync(release, { recursive: true });
   symlinkSync("releases/releases/active", join(base, "src"));
-  writeFileSync(join(base, ".omp-dori"), "primary\n");
+  writeFileSync(join(base, ".omp-cataly"), "primary\n");
   writeFileSync(join(base, "config.json"), '{"owner":"consumer"}\n');
   const before = snapshot(source.home);
 
@@ -97,7 +97,7 @@ posix.each(["existing", "missing", "not-directory"])(
     expect(source.install({ CATALY_INSTALL_MODE: "primary", CATALY_NO_PULL: "1" }).code).toBe(0);
     expect(readlinkSync(join(base, "src"))).toBe(target);
     expect(readlinkSync(join(source.home, "global-bin/cataly"))).toBe(join(source.src, source.cli));
-    expect(JSON.parse(readFileSync(join(base, "config.json"), "utf8")).ompUlwPath).toBe("");
+    expect(JSON.parse(readFileSync(join(base, "config.json"), "utf8")).agentCommand[0]).toBe(join(base, "bin/omp"));
   },
 );
 

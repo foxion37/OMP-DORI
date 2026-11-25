@@ -57,7 +57,7 @@ const modelFinding = (label: string, state: PaneState | null, expected?: string)
   )
     return unknown("modelReadback does not match its session or status contract");
   const exactRequest = expected !== undefined && /^[^/]+\/.+$/.test(expected);
-  const legacyRequest = expected !== undefined && !exactRequest;
+  const inexactRequest = expected !== undefined && !exactRequest;
   if (exactRequest && status !== "unrequested" && status !== "unknown" && requestedKey !== expected?.toLowerCase())
     return unknown(
       `recorded request differs: lane=${JSON.stringify(expected)} native=${JSON.stringify(requested)}`,
@@ -65,7 +65,7 @@ const modelFinding = (label: string, state: PaneState | null, expected?: string)
     );
   return {
     check: "model",
-    severity: status === "matched" ? (legacyRequest ? "INFO" : "OK") : status === "unrequested" ? "INFO" : "WARN",
+    severity: status === "matched" ? (inexactRequest ? "INFO" : "OK") : status === "unrequested" ? "INFO" : "WARN",
     detail:
       label +
       " status=" +
@@ -80,7 +80,7 @@ const modelFinding = (label: string, state: PaneState | null, expected?: string)
       "; billing is not spending authorization or quota evidence" +
       (status === "unrequested" && expected !== undefined
         ? `; recorded request=${JSON.stringify(expected)}; request comparison=unrequested (not native launch verification)`
-        : legacyRequest
+        : inexactRequest
           ? `; recorded request=${JSON.stringify(expected)}; request comparison=unknown (not exact provider/id)`
           : ""),
     provenance: `native-extension session=${JSON.stringify(state.sessionId)} pid=${state.pid} checkedAt=${checkedAt}`,
@@ -146,56 +146,46 @@ export const doctorProvenance = async (
 ): Promise<DoctorFinding[]> => {
   const findings: DoctorFinding[] = [];
   const source = resolve(import.meta.dir, "../../../..");
-  for (const native of [true, false]) {
-    const name = native ? "native-omp" : "omp-ulw.overlay";
-    try {
-      const bundle = readSourceBundleDiagnostic(source, native);
+  try {
+    const bundle = readSourceBundleDiagnostic(source);
+    findings.push({
+      check: "source",
+      severity: "INFO",
+      detail:
+        `CLI source native-omp nativeVersion=${bundle.lock.nativeVersion} upstreamRevision=${bundle.lock.commit} ` +
+        `identity=${bundle.identity}; running revision is not attested by this lock`,
+      provenance: "native-omp.lock and patch digest in the loaded CLI checkout",
+      next: "Inspect the selected executable and live process before claiming runtime compatibility.",
+    });
+    if (bundle.lock.nativeVersion) {
+      const probe = await probeNativeCli(
+        deps.config.agentCommand,
+        deps.config.defaultCwd,
+        deps.env ?? process.env,
+        bundle.lock.nativeVersion,
+        source,
+      );
       findings.push({
         check: "source",
-        severity: "INFO",
+        severity: probe.reason && probe.kind !== "other" ? "WARN" : "INFO",
         detail:
-          "CLI source " +
-          name +
-          (native ? ` nativeVersion=${bundle.lock.nativeVersion}` : "") +
-          " upstreamRevision=" +
-          bundle.lock.commit +
-          " identity=" +
-          bundle.identity +
-          "; running revision is not attested by this lock",
-        provenance: `${name}.lock and patch digest in the loaded CLI checkout`,
-        next: "Inspect the selected executable and live process before claiming runtime compatibility.",
-      });
-      if (native && bundle.lock.nativeVersion) {
-        const probe = await probeNativeCli(
-          deps.config.agentCommand,
-          deps.config.defaultCwd,
-          deps.env ?? process.env,
-          bundle.lock.nativeVersion,
-          source,
-        );
-        findings.push({
-          check: "source",
-          severity: probe.reason && probe.kind !== "other" ? "WARN" : "INFO",
-          detail:
-            `configured native executable=${JSON.stringify(probe.executable)} realpath=${JSON.stringify(probe.realpath ?? null)} ` +
-            `probeExecutable=${JSON.stringify(probe.probeExecutable ?? null)} entry=${JSON.stringify(probe.entry ?? null)} nativeVersion=${probe.version ?? "unknown"} ` +
-            `expectedRevision=${bundle.lock.commit} observedRevision=${probe.revision ?? "unknown"} ` +
-            `publicCLI=${probe.reason ? "unavailable" : "PASS"}; ${probe.reason ?? NATIVE_CLI_FEATURES.join(", ")}; ` +
-            "not live messenger compatibility",
-          provenance:
-            "native-cli --version/--help; private HOME and cwd, no configured prompt or credential environment",
-          next: "Resolve this executable or capability failure; a version number is not a live runtime attestation.",
-        });
-      }
-    } catch {
-      findings.push({
-        check: "source",
-        severity: "WARN",
-        detail: `CLI source ${name} identity=unknown; lock/patch validation failed`,
-        provenance: `${name}.lock in the loaded CLI checkout`,
-        next: "Inspect the installed source bundle lock and matching patch.",
+          `configured native executable=${JSON.stringify(probe.executable)} realpath=${JSON.stringify(probe.realpath ?? null)} ` +
+          `probeExecutable=${JSON.stringify(probe.probeExecutable ?? null)} entry=${JSON.stringify(probe.entry ?? null)} nativeVersion=${probe.version ?? "unknown"} ` +
+          `expectedRevision=${bundle.lock.commit} observedRevision=${probe.revision ?? "unknown"} ` +
+          `publicCLI=${probe.reason ? "unavailable" : "PASS"}; ${probe.reason ?? NATIVE_CLI_FEATURES.join(", ")}; ` +
+          "not live messenger compatibility",
+        provenance: "native-cli --version/--help; private HOME and cwd, no configured prompt or credential environment",
+        next: "Resolve this executable or capability failure; a version number is not a live runtime attestation.",
       });
     }
+  } catch {
+    findings.push({
+      check: "source",
+      severity: "WARN",
+      detail: "CLI source native-omp identity=unknown; lock/patch validation failed",
+      provenance: "native-omp.lock in the loaded CLI checkout",
+      next: "Inspect the installed source bundle lock and matching patch.",
+    });
   }
   findings.push({
     check: "model",

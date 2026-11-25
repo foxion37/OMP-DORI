@@ -68,7 +68,7 @@ export async function prepareNativeUpdate(
 ): Promise<NativeCandidate | undefined> {
   source = realpathSync(source);
   output = resolve(output);
-  const before = readSourceBundle(source, true);
+  const before = readSourceBundle(source);
   realDirectory(dirname(output), true);
   owned(dirname(output));
   if (lstatSync(output, { throwIfNoEntry: false })) throw new Error("Native candidate output already exists");
@@ -81,17 +81,17 @@ export async function prepareNativeUpdate(
         !/^[a-f0-9]{40}$/.test(sourceCommit) ||
         (await git(["status", "--porcelain", "--untracked-files=all"])) !== "" ||
         (await git(["rev-parse", "HEAD"])) !== sourceCommit ||
-        readSourceBundle(source, true).identity !== before.identity
+        readSourceBundle(source).identity !== before.identity
       )
         throw new Error("Native update requires an exact clean committed source; preserve local changes first");
     };
     await unchanged();
     const remote = repository ?? before.lock.repository;
     const selected = latestNativeTag(await git(["ls-remote", "--tags", "--", remote]));
-    if (!stable.test(before.lock.nativeVersion!)) throw new Error("Invalid bound native version");
+    if (!stable.test(before.lock.nativeVersion)) throw new Error("Invalid bound native version");
     if (selected.nativeVersion === before.lock.nativeVersion && selected.commit === before.lock.commit)
       return undefined;
-    if (compareNativeVersions(selected.nativeVersion, before.lock.nativeVersion!) <= 0)
+    if (compareNativeVersions(selected.nativeVersion, before.lock.nativeVersion) <= 0)
       throw new Error("Native stable tag moved or would downgrade the bound release; review required");
     const staged = join(home, "bundle");
     mkdirSync(staged, { mode: 0o700 });
@@ -154,7 +154,7 @@ export async function prepareNativeUpdate(
       if (!readFileSync(conflicts).length) writeFileSync(conflicts, readFileSync(mergePatch));
       return await receipt("conflict", "three-way-apply-failed", digest(readFileSync(conflicts)));
     }
-    const launcher = join(checkout, before.lock.launcher!);
+    const launcher = join(checkout, before.lock.launcher);
     if (
       !regularFile(launcher) ||
       (lstatSync(launcher).mode & 0o111) === 0 ||
@@ -170,14 +170,14 @@ export async function prepareNativeUpdate(
     const lock: SourceBundle = {
       ...captured,
       nativeVersion: selected.nativeVersion,
-      launcher: before.lock.launcher!,
+      launcher: before.lock.launcher,
     };
     writeFileSync(join(staged, "native-omp.lock"), `${JSON.stringify(lock, null, 2)}\n`, { mode: 0o600 });
-    const bundle = readSourceBundle(staged, true);
+    const bundle = readSourceBundle(staged);
     assertSourceBundle(checkout, bundle, home);
     try {
-      await dependencies(source, staged, before.lock.nativeVersion!, selected.nativeVersion, home);
-      validateNativeDependencies(source, staged, before.lock.nativeVersion!, selected.nativeVersion);
+      await dependencies(source, staged, before.lock.nativeVersion, selected.nativeVersion, home);
+      validateNativeDependencies(source, staged, before.lock.nativeVersion, selected.nativeVersion);
     } catch {
       return await hold("dependency-lock-refresh-failed");
     }

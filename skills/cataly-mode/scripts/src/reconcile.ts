@@ -28,7 +28,7 @@ export const reconcilePanes = (
       return {
         key: lane.key,
         status: statusOf(lane),
-        pane: lane.pane ?? null,
+        pane: lane.sessionRef?.id ?? null,
         paneState,
       };
     }),

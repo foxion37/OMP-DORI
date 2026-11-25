@@ -38,7 +38,7 @@ function nativeLaunch(
   const own = ompPart(argv);
   if (
     own.some((arg) =>
-      /^(?:-e|--extension|--extensions|--trusted-extension|--hook|--profile|--(?:cataly|dori)-(?:role|launch-model|monitor-bootstrap|lane-receiver))(?:=|$)/.test(
+      /^(?:-e|--extension|--extensions|--trusted-extension|--hook|--profile|--cataly-(?:role|launch-model|monitor-bootstrap|lane-receiver))(?:=|$)/.test(
         arg,
       ),
     )

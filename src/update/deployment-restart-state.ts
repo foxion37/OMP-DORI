@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { matchesDeploymentConfigHash } from "./deployment-config.ts";
 import { saveDeploymentJson } from "./deployment-files.ts";
 import { captureHandoff } from "./deployment-handoff.ts";
+import { currentRecord } from "./deployment-previous-main.ts";
 import { command, DeploymentHeld } from "./deployment-process.ts";
 import { forwardStopStarted } from "./deployment-stop.ts";
 import type { DeploymentConfig, DeploymentRecord } from "./deployment-types.ts";
@@ -19,7 +20,9 @@ export function readRestartIntent(config: DeploymentConfig): DeploymentRecord | 
     !matchesDeploymentConfigHash(config, intent.configHash)
   )
     throw new DeploymentHeld("pending restart intent differs");
-  const record = JSON.parse(readFileSync(join(intent.directory, "deployment.json"), "utf8")) as DeploymentRecord;
+  const record = currentRecord(
+    JSON.parse(readFileSync(join(intent.directory, "deployment.json"), "utf8")) as DeploymentRecord,
+  );
   if (
     record.id !== intent.id ||
     record.directory !== intent.directory ||

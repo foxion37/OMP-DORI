@@ -1,8 +1,7 @@
-import { LegacyRuntimeError } from "../runtime/registry.ts";
 import { saveActiveDeployment } from "./deployment-active.ts";
 import { ownReleaseRoot } from "./deployment-files.ts";
 import { captureStartedMonitors } from "./deployment-handoff.ts";
-import { assertHeadlessRecord, startHarness } from "./deployment-harness.ts";
+import { startHarness } from "./deployment-harness.ts";
 import { observeDeploymentHealth, waitDeploymentHealth } from "./deployment-health.ts";
 import { acquireRestartLock, DeploymentBusy, DeploymentHeld } from "./deployment-process.ts";
 import {
@@ -23,15 +22,12 @@ export async function restartDeployment(
   beforeForwardStop?: (record: DeploymentRecord) => Promise<void> | Promise<() => void | Promise<void>>,
 ): Promise<DeploymentRecord> {
   ownReleaseRoot(config);
-  const pending = readRestartIntent(config);
-  if (pending) assertHeadlessRecord(config, pending);
   const releaseLock = acquireRestartLock(config);
   let record: DeploymentRecord | undefined;
   let completed = false;
   const persist = (value: DeploymentRecord): void => saveRestartIntent(config, value);
   try {
     record = readRestartIntent(config) ?? (await newRestartIntent(config, signal));
-    assertHeadlessRecord(config, record);
     completed = record.status === "healthy";
     if (record.status === "failed") return record;
     if (record.status === "rolled-back" || record.step === "rollback") {
@@ -95,7 +91,7 @@ export async function restartDeployment(
     finishRestartIntent(config, record);
     return record;
   } catch (error) {
-    if (!record || error instanceof LegacyRuntimeError) throw error;
+    if (!record) throw error;
     record.error = error instanceof DeploymentHeld ? error.message : "managed restart failed";
     if (holdPendingStop(record)) {
       persist(record);

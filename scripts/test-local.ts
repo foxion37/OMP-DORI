@@ -1,18 +1,33 @@
 /**
  * `bun run test:local [root|skill|ext|all] [bun test args...]`: run the suites the way CI does, after
- * `bun run dev:setup`. Loads target/dev-env.sh, re-executes under the pinned Bun when another Bun started it, sets
- * umask 022 and a fresh private `mktemp -d /tmp/cataly-test-XXXXXX` TMPDIR (removed afterwards), then runs CI's
- * package.json suite scripts. Extra arguments go to `bun test`; file paths are relative to the suite's directory.
+ * `bun run dev:setup`. Loads target/dev-env.sh, re-executes under the pinned Bun when another Bun started it, rebuilds
+ * the native headless host (`cargo build --locked --release --bin cataly`, named by dev-env's
+ * CATALY_DISCORD_NATIVE_BIN), sets umask 022 and a fresh private `mktemp -d /tmp/cataly-test-XXXXXX` TMPDIR (removed
+ * afterwards), then runs CI's package.json suite scripts. Extra arguments go to `bun test`; file paths are relative to
+ * the suite's directory. A checkout from before the omp-ulw removal loses that former fixture (`ref/omp-ulw`) first.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import type { Subprocess } from "bun";
+import { removeUlwFixture } from "../src/update/ulw-fixture.ts";
 import { pinnedBunVersion, requirePosix, runUnderPinnedBun, withPrivateTmp } from "./dev-bun.ts";
 
 // CI runs these package.json scripts: test:ci within `bun run ci`, test:skill and test:extension after it.
 const SUITES = { root: "test:ci", skill: "test:skill", ext: "test:extension" } as const;
 type Suite = keyof typeof SUITES;
 const isSuite = (value: string | undefined): value is Suite => value !== undefined && Object.hasOwn(SUITES, value);
+
+/** Headless lanes, leads and duty run on the native binary; rebuild it so it matches this checkout's Rust sources. */
+const buildNativeHost = (root: string, env: Readonly<Record<string, string>>): void => {
+  if (env["CATALY_DISCORD_NATIVE_BIN"] !== join(root, "target", "release", "cataly"))
+    throw new Error("target/dev-env.sh does not name target/release/cataly; rerun `bun run dev:setup`");
+  const build = Bun.spawnSync(["cargo", "build", "--locked", "--release", "--bin", "cataly"], {
+    cwd: root,
+    stdio: ["ignore", "inherit", "inherit"],
+  });
+  if (build.exitCode !== 0) throw new Error(`cargo build of the native headless host failed (exit ${build.exitCode})`);
+};
+
 const ROOT_TEST_DIR = "./test/";
 
 /** The environment target/dev-env.sh produces when a POSIX shell sources it. */
@@ -55,6 +70,7 @@ const suiteCommand = (root: string, suite: Suite, extra: readonly string[]): str
 if (import.meta.main) {
   requirePosix("test:local");
   const root = resolve(import.meta.dir, "..");
+  removeUlwFixture(root, (line) => console.log(`test:local: ${line}`));
   const args = process.argv.slice(2);
   const first = args[0];
   const suites: readonly Suite[] = isSuite(first) ? [first] : ["root", "skill", "ext"];
@@ -65,6 +81,7 @@ if (import.meta.main) {
   if (!bun) throw new Error("target/dev-env.sh puts no bun on PATH; rerun `bun run dev:setup`");
   runUnderPinnedBun(version, bun, env);
   process.umask(0o022);
+  buildNativeHost(root, env);
 
   let current: Subprocess | undefined;
   let interrupted: NodeJS.Signals | undefined;

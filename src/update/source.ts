@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { chmodSync, copyFileSync, lstatSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { UpdateError } from "./config.ts";
-import { excludesSourcePath, isLocalNativeOutput, ULW_LIBRARY } from "./source-omissions.ts";
+import { excludesSourcePath, isLocalNativeOutput } from "./source-omissions.ts";
 import { catalyPin } from "./source-pin.ts";
 import type { SourceEntry, SourceManifest, UpdateInputs, UpdateJob } from "./types.ts";
 
@@ -22,12 +22,15 @@ export function assertSourceAdmission(manifest: SourceManifest, kind: SourceKind
         isLocalNativeOutput(path) ||
         [".DS_Store", ".env", "auth.json", "credentials.json"].includes(name) ||
         /^\.env\.(?!example$|sample$)/.test(name) ||
-        /\.(?:pem|key|p12|pfx)$/.test(name) ||
-        (path.startsWith(`${ULW_LIBRARY}/`) && (name === "auth" || name === "credentials"))
+        /\.(?:pem|key|p12|pfx)$/.test(name)
       )
     );
   });
-  if (omitted.length) throw new UpdateError(`${kind} source admission held: ${omitted.join(", ")}`);
+  if (omitted.length) {
+    // The former omp-ulw fixture is removed before local admission; what stays in ref/ is not Cataly's.
+    const ref = omitted.includes("ref") ? "; ref/ holds files Cataly did not create" : "";
+    throw new UpdateError(`${kind} source admission held: ${omitted.join(", ")}${ref}`);
+  }
 }
 
 /** Source only, including dirty/untracked local adaptations. Links and special files fail rather than following secrets. */
@@ -35,7 +38,6 @@ export function sourceManifest(root: string): SourceManifest {
   if (!lstatSync(root).isDirectory()) throw new UpdateError("source root must be a directory, never a link");
   const files: SourceEntry[] = [];
   const omitted: string[] = [];
-  let ulwPresent = false;
   const visit = (dir: string): void => {
     for (const name of readdirSync(join(root, dir)).sort()) {
       const path = dir ? `${dir}/${name}` : name;
@@ -47,10 +49,6 @@ export function sourceManifest(root: string): SourceManifest {
         omitted.push(path);
         continue;
       }
-      if ((path === "ref" || path === ULW_LIBRARY) && !stat.isDirectory()) {
-        throw new UpdateError(`source library path must be a real directory: ${path}`);
-      }
-      if (path === ULW_LIBRARY) ulwPresent = true;
       if (stat.isDirectory()) visit(path);
       else if (stat.isFile())
         files.push({ path, sha256: digest(readFileSync(full)), executable: (stat.mode & 0o111) !== 0 });
@@ -61,24 +59,20 @@ export function sourceManifest(root: string): SourceManifest {
   files.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
   return {
     version: 1,
-    hash: digest(JSON.stringify({ files, ulwPresent })),
+    hash: digest(JSON.stringify({ files })),
     files,
     excluded: omitted.sort(),
-    ulwPresent,
   };
 }
 
 export const sameManifest = (observed: SourceManifest, expected: SourceManifest): boolean =>
-  observed.hash === expected.hash &&
-  observed.ulwPresent === expected.ulwPresent &&
-  JSON.stringify(observed.files) === JSON.stringify(expected.files);
+  observed.hash === expected.hash && JSON.stringify(observed.files) === JSON.stringify(expected.files);
 
 export function freezeSource(source: string, destination: string, kind: SourceKind = "candidate"): SourceManifest {
   const before = sourceManifest(source);
   assertSourceAdmission(before, kind);
   if (!before.files.length) throw new UpdateError("source snapshot is empty");
   mkdirSync(destination, { recursive: false, mode: 0o700 });
-  if (before.ulwPresent) mkdirSync(join(destination, ULW_LIBRARY), { recursive: true, mode: 0o700 });
   for (const file of before.files) {
     const to = join(destination, file.path);
     mkdirSync(dirname(to), { recursive: true, mode: 0o700 });
@@ -100,7 +94,6 @@ export function changedPaths(base: SourceManifest, local: SourceManifest, incomi
   const index = (manifest: SourceManifest): Map<string, string> => {
     const paths = new Map<string, string>();
     for (const file of manifest.files) paths.set(file.path, `${file.sha256}:${file.executable}`);
-    paths.set(`${ULW_LIBRARY}/`, manifest.ulwPresent ? "present" : "absent");
     return paths;
   };
   const [from, ours, theirs] = [index(base), index(local), index(incoming)] as const;
@@ -137,22 +130,9 @@ export function assertSource(job: UpdateJob): void {
 }
 
 const sameCatalyPin = (local: SourceManifest, candidate: SourceManifest): boolean =>
-  local.ulwPresent === candidate.ulwPresent &&
   JSON.stringify(catalyPin(local)) === JSON.stringify(catalyPin(candidate));
-/** Carry only frozen source-bundle payloads and the local pin, never an old-source overlay or library fetch. */
+/** Carry only frozen source-bundle payloads, never an old-source overlay. */
 export function carryCatalyPin(local: string, candidate: string, expected: SourceManifest): void {
-  const incoming = sourceManifest(candidate);
-  const library = (manifest: SourceManifest): readonly SourceEntry[] =>
-    manifest.files.filter((file) => file.path.startsWith(`${ULW_LIBRARY}/`));
-  if (
-    (incoming.ulwPresent &&
-      (!expected.ulwPresent || JSON.stringify(library(incoming)) !== JSON.stringify(library(expected)))) ||
-    (!expected.files.some((file) => file.path === "omp-ulw.lock") &&
-      incoming.files.some((file) => file.path === "omp-ulw.lock"))
-  ) {
-    throw new UpdateError("new upstream conflicts with the frozen local ULW lock/library; Cataly-only staging held");
-  }
-  if (expected.ulwPresent) mkdirSync(join(candidate, ULW_LIBRARY), { recursive: true, mode: 0o700 });
   for (const file of catalyPin(expected)) {
     const to = join(candidate, file.path);
     mkdirSync(dirname(to), { recursive: true, mode: 0o700 });
@@ -160,14 +140,14 @@ export function carryCatalyPin(local: string, candidate: string, expected: Sourc
     chmodSync(to, file.executable ? 0o755 : 0o644);
   }
   if (!sameCatalyPin(expected, sourceManifest(candidate))) {
-    throw new UpdateError("prepared candidate did not preserve the frozen local ULW lock/library");
+    throw new UpdateError("prepared candidate did not preserve the frozen local source-bundle pin");
   }
 }
 
-/** Source-bundle payloads and the ULW library are frozen local pins, carried byte for byte by a Cataly-only port. */
+/** Source-bundle payloads are frozen local pins, carried byte for byte by a Cataly-only port. */
 export function assertCatalyScope(inputs: UpdateInputs, candidate: SourceManifest): void {
   if (!sameCatalyPin(inputs.local, candidate))
-    throw new UpdateError("Cataly-only update changed the frozen ULW lock/library");
+    throw new UpdateError("Cataly-only update changed the frozen source-bundle pin");
 }
 
 /** Git metadata that must not move during a port: HEAD, config, refs and the staged index (no staging, no commits). */

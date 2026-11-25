@@ -177,6 +177,8 @@ test.each([undefined, "file 800\n", "file -1\nshmem 0\nfile_mapped 0\nfile_dirty
 test("macOS does not read Linux cgroups", async () => {
   const s = await sampleHost(runner, "/", rts, {
     platform: "darwin",
+    // The platform adapter's macOS reader: the sample takes its answer, not a /proc/meminfo probe.
+    memFreePct: () => 80,
     readFile: () => {
       throw new Error("must not read Linux files");
     },

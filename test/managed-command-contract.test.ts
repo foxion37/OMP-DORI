@@ -20,30 +20,23 @@ test.each(["not json", "null", "{}", "[]", '["", "arg"]', '["omp", 1]', '"omp"']
 
 test("managed parent and descendant argv share the fence and exact prepared extension source", () => {
   const f = managedCommand();
-  const source = f.toolchain.ompUlw!.source;
+  const source = f.toolchain.extensionSource;
   environment({
     CATALY_AGENT_ARGV: '["stale executable", "stale argument"]',
     CATALY_AGENT_CMD: "stale shell command",
     CATALY_AGENT_EXECUTABLE: "retired executable",
-    CATALY_OMP_ULW_PATH: "stale overlay",
-    OMP_ULW_SCOPE_FILE: "process-local scope 'quote'",
   });
   const env = actorEnv(f.config, f.toolchain);
   expect(managedOmpCommand(f.toolchain, source)).toEqual(f.argv);
   expect(JSON.parse(env["CATALY_AGENT_ARGV"]!)).toEqual(f.argv);
   expect(env["CATALY_AGENT_EXECUTABLE"]).toBeUndefined();
   expect(env["CATALY_AGENT_CMD"]).toBeUndefined();
-  expect(env["CATALY_OMP_ULW_PATH"]).toBe(join(f.toolchain.ompUlw!.directory, "index.ts"));
-  expect(env["OMP_ULW_SCOPE_FILE"]).toBe("process-local scope 'quote'");
   expect(() => managedOmpCommand(f.toolchain, join(f.root, "different release"))).toThrow(
     "managed extension source differs",
   );
   expect(() => managedOmpCommand(f.toolchain, undefined)).toThrow("managed extension source differs");
-  const legacy = { ...f.toolchain };
-  delete legacy.ompUlw;
-  expect(managedOmpCommand(legacy, undefined)).toEqual([f.omp, "--config", legacy.nativeConfig]);
   const plain = actorEnv(f.config);
-  for (const key of ["CATALY_AGENT_ARGV", "CATALY_AGENT_CMD", "CATALY_AGENT_EXECUTABLE", "CATALY_OMP_ULW_PATH"])
+  for (const key of ["CATALY_AGENT_ARGV", "CATALY_AGENT_CMD", "CATALY_AGENT_EXECUTABLE"])
     expect(plain[key]).toBeUndefined();
 });
 

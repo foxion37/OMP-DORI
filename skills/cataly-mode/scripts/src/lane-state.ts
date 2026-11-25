@@ -38,11 +38,11 @@ export type PaneState = {
   readonly goal: { readonly status: GoalStatus; readonly objective?: string };
   /** A tool approval prompt is open in this session: never type into the pane. */
   readonly approvalPending: boolean;
-  /** Last native agent lifecycle event; absent in older records, independent of goal status. */
+  /** Last native agent lifecycle event; absent while unobserved, independent of goal status. */
   readonly agentStatus?: "idle" | "working";
   /** Native catalog and selected-model agreement, never billing authorization or a quota balance. */
   readonly modelReadback?: ModelReadback;
-  /** The main session's async jobs and the open approvals as last observed (src/native-observation.ts); absent in older records. */
+  /** The main session's async jobs and the open approvals as last observed (src/native-observation.ts); absent once retired. */
   readonly native?: NativeObservation;
 };
 
@@ -87,9 +87,7 @@ export const paneStatePath = (stateDir: string, paneId: string): string =>
 
 export const readPaneState = (stateDir: string, paneId: string): PaneState | null => {
   try {
-    const state = JSON.parse(readFileSync(paneStatePath(stateDir, paneId), "utf8")) as
-      PaneState | (Omit<PaneState, "role"> & { readonly role: "dori" });
-    return state?.role === "dori" ? { ...state, role: "cataly" } : state;
+    return JSON.parse(readFileSync(paneStatePath(stateDir, paneId), "utf8")) as PaneState;
   } catch {
     return null;
   }

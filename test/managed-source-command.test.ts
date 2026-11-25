@@ -11,36 +11,32 @@ const posix = test.skipIf(process.platform === "win32");
 
 const suffix = ["--cataly-role", "lane", "--model", "{model}", "{prompt}"];
 
-posix(
-  "reinstall preserves a historical lexical side default and managed selection recognizes its directory alias",
-  async () => {
-    const s = setup();
-    const physical = join(s.home, "physical side");
-    const alias = join(s.home, "side alias 'quote'");
-    mkdirSync(physical);
-    symlinkSync(physical, alias);
-    writeFileSync(join(physical, ".omp-cataly"), "side\n");
-    const stored = `${JSON.stringify(
-      {
-        agentCommand: [join(alias, "bin/omp"), ...suffix],
-        defaultModel: "owner/retained",
-        ompUlwPath: "",
-      },
-      null,
-      2,
-    )}\n`;
-    const path = join(alias, "config.json");
-    writeFileSync(path, stored);
-    const installed = s.install({ CATALY_INSTALL_MODE: "side", CATALY_NO_PULL: "1", OMP_CATALY_HOME: alias });
-    expect(installed.code).toBe(0);
-    expect(readFileSync(path, "utf8")).toBe(stored);
-    const f = managedCommand();
-    const loaded = await loadConfig(path, s.home);
-    expect(loaded.agentCommand).toEqual([...f.argv, ...suffix]);
-    expect(loaded.defaultModel).toBe("owner/retained");
-    expect(readFileSync(path, "utf8")).toBe(stored);
-  },
-);
+posix("reinstall preserves a lexical side default and managed selection recognizes its directory alias", async () => {
+  const s = setup();
+  const physical = join(s.home, "physical side");
+  const alias = join(s.home, "side alias 'quote'");
+  mkdirSync(physical);
+  symlinkSync(physical, alias);
+  writeFileSync(join(physical, ".omp-cataly"), "side\n");
+  const stored = `${JSON.stringify(
+    {
+      agentCommand: [join(alias, "bin/omp"), ...suffix],
+      defaultModel: "owner/retained",
+    },
+    null,
+    2,
+  )}\n`;
+  const path = join(alias, "config.json");
+  writeFileSync(path, stored);
+  const installed = s.install({ CATALY_INSTALL_MODE: "side", CATALY_NO_PULL: "1", OMP_CATALY_HOME: alias });
+  expect(installed.code).toBe(0);
+  expect(readFileSync(path, "utf8")).toBe(stored);
+  const f = managedCommand();
+  const loaded = await loadConfig(path, s.home);
+  expect(loaded.agentCommand).toEqual([...f.argv, ...suffix]);
+  expect(loaded.defaultModel).toBe("owner/retained");
+  expect(readFileSync(path, "utf8")).toBe(stored);
+});
 
 test.each([".omp-cataly", "releases/consumer-owner.json"])(
   "%s ownership recognizes only the configuration's lexical and canonical defaults even when omp is absent",
@@ -93,7 +89,7 @@ posix(
     const lane = Bun.spawnSync(argv);
     const cataly = Bun.spawnSync(["/bin/sh", "-c", agentCommand(defaultDeps(), "cataly") + " probe"]);
     console.log(JSON.stringify({
-      argv, ulw: config.ompUlwPath, scope: process.env.OMP_ULW_SCOPE_FILE,
+      argv,
       lane: { code: lane.exitCode, argv: lane.stdout.toString().split("\\0").slice(0, -1) },
       cataly: { code: cataly.exitCode, argv: cataly.stdout.toString().split("\\0").slice(0, -1) }
     }));
@@ -103,7 +99,6 @@ posix(
       HOME: s.home,
       CATALY_AGENT_CMD: "stale shell",
       CATALY_AGENT_EXECUTABLE: "retired",
-      OMP_ULW_SCOPE_FILE: "local scope",
     });
     expect(child.exitCode).toBe(0);
     const result = JSON.parse(child.stdout.toString());
@@ -115,18 +110,7 @@ posix(
       "fixture/model",
       "literal prompt",
     ]);
-    expect(result.ulw).toBe("");
-    expect(result.scope).toBe("local scope");
-    const wrapper = [
-      native,
-      "--no-extensions",
-      "-e",
-      join(s.src, "extension"),
-      "-e",
-      s.ulw,
-      "--config",
-      join(base, "omp.yml"),
-    ];
+    const wrapper = [native, "--no-extensions", "-e", join(s.src, "extension"), "--config", join(base, "omp.yml")];
     expect(result.lane).toEqual({ code: 0, argv: [...wrapper, ...result.argv.slice(1)] });
     expect(result.cataly).toEqual({ code: 0, argv: [...wrapper, "--cataly-role", "cataly", "probe"] });
   },

@@ -3,7 +3,7 @@ description: Install Bun 1.4.4, restore the Bun install cache, install the works
 
 inputs:
   fixtures:
-    description: Test fixtures to prepare; none installs dependencies only, host binds the native OMP host, all adds the ULW and compatibility fixtures.
+    description: Test fixtures to prepare; none installs dependencies only, host binds the native OMP host, all also builds the native Cataly binary that hosts headless lanes.
     required: false
     default: none
 
@@ -29,34 +29,20 @@ runs:
         host="$GITHUB_WORKSPACE/test/fixtures/omp-native-host/node_modules/@oh-my-pi/pi-coding-agent"
         bun -e 'const p = await Bun.file(process.argv[1] + "/package.json").json(); const lock = await Bun.file("native-omp.lock").json(); if (p.version !== lock.nativeVersion) throw new Error("unexpected native OMP fixture version: " + p.version)' "$host"
         printf 'CATALY_TEST_OMP_ROOT=%s\n' "$host" >> "$GITHUB_ENV"
-    - name: Prepare bound omp-ulw test fixture
-      if: ${{ inputs.fixtures == 'all' }}
-      shell: bash
-      run: |
-        mkdir -p "$RUNNER_TEMP/omp-cataly-ci-home"
-        bun "$GITHUB_WORKSPACE/scripts/source-dependencies.ts" ulw "$GITHUB_WORKSPACE" "$RUNNER_TEMP/omp-cataly-ci-home" "$GITHUB_WORKSPACE/ref/omp-ulw"
-    - name: Check out exact explicit-override compatibility fixture
-      if: ${{ inputs.fixtures == 'all' }}
-      shell: bash
-      run: |
-        pin=cbfe5ee72e5b2783af01616e7f4d3da5e3f9180d
-        compat="$RUNNER_TEMP/omp-cataly-compat-ulw"
-        git clone --quiet --no-checkout --shared "$GITHUB_WORKSPACE/ref/omp-ulw" "$compat"
-        git -C "$compat" fetch --quiet --no-tags https://github.com/dbc-hbin/omp-ulw.git "$pin"
-        git -C "$compat" -c advice.detachedHead=false checkout --quiet "$pin"
-        test "$(git -C "$compat" rev-parse HEAD)" = "$pin"
-        printf 'CATALY_TEST_COMPAT_ULW_ENTRY=%s/index.ts\n' "$compat" >> "$GITHUB_ENV"
-    - name: Make the historical rollback controller available
-      if: ${{ inputs.fixtures == 'all' }}
-      shell: bash
-      run: |
-        pin=e6b60c9f5efd45925645672e1841a8a9e20e5592
-        git cat-file -e "$pin^{commit}" ||
-          git fetch --quiet --no-tags --depth=1 https://github.com/vntrevx/Cataly.git "$pin"
-        git cat-file -e "$pin^{commit}"
     - name: Install root dependencies
       shell: bash
       run: cd "$GITHUB_WORKSPACE" && bun install --frozen-lockfile
     - name: Install cataly-mode script dependencies
       shell: bash
       run: cd "$GITHUB_WORKSPACE/skills/cataly-mode/scripts" && bun install --frozen-lockfile
+    - name: Build the native Cataly headless host
+      if: ${{ inputs.fixtures == 'all' }}
+      shell: bash
+      run: |
+        if ! command -v cargo >/dev/null; then
+          echo "Headless lane, lead and duty tests run on the native Cataly binary; install stable Rust (https://rustup.rs)." >&2
+          exit 1
+        fi
+        cargo --version
+        cargo build --locked --release --bin cataly --manifest-path "$GITHUB_WORKSPACE/Cargo.toml"
+        printf 'CATALY_DISCORD_NATIVE_BIN=%s\n' "$GITHUB_WORKSPACE/target/release/cataly" >> "$GITHUB_ENV"

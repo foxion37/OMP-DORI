@@ -53,7 +53,7 @@ export async function runNativeDiscord(executable: string, config: Config): Prom
       resolve(config.stateDir),
     );
   }
-  argv.push("--inbox", inbox, "--legacy-cursors", inbox);
+  argv.push("--inbox", inbox, "--import-cursors", inbox);
   for (const channel of channels) argv.push("--channel", channel);
   if (config.threads) argv.push("--follow-threads");
   if (config.gateway) argv.push("--gateway");

@@ -1,9 +1,9 @@
 //! `--wake-lanes`: start a retired Discord lane's exact saved OMP session (`discord-lane-wake.ts`,
 //! `discord-lane-headless-wake.ts`, `discord-lane-wake-pending.ts`, `discord-lane-wake-lease.ts`).
 //!
-//! Every wake runs under the detached Bun headless broker (`src/runtime/headless-broker.ts`), never in a herdr or hc
-//! pane: Rust reserves `<state>/headless/<uuid>/`, claims `started`, streams the `HostStart` record to the broker and
-//! attests the result through the broker's own `observe` endpoint and the lane extension's `discord-lane.json`.
+//! Every wake runs under a detached `cataly headless-host` started from this same binary, never in a terminal
+//! pane: Rust reserves `<state>/headless/<uuid>/`, claims `started`, streams the `HostStart` record to the host and
+//! attests the result through the host's own `observe` endpoint and the lane extension's `discord-lane.json`.
 //! Registry transitions are `discord-wake-pending:<uuid>` before any side effect, `discord-wake-pending:bound:<uuid>`
 //! once the new reservation is recorded, and `<uuid>` after attestation; a restarted monitor re-attests a bound wake
 //! and never starts a second process for it.
@@ -20,11 +20,11 @@ use tokio::io::AsyncReadExt as _;
 use super::command::{WakeCommand, headless_argv, wake_command};
 use super::guard::{Guard, can_launch};
 use super::headless::{self, HeadlessRef};
-use super::json::Json;
-use super::registry::{Lane, RESERVED_LANE_KEY, Registry, SessionRef, record_execution, valid_key};
+use super::registry::{Lane, Registry, SessionRef, record_execution, valid_key};
 use super::route::delivery_lock;
 use super::transcript;
-use super::util::{now_ms, uuid};
+use crate::json::Json;
+use crate::util::{now_ms, uuid};
 
 const PREFIX: &str = "discord-wake-pending:";
 const BOUND_PREFIX: &str = "discord-wake-pending:bound:";
@@ -38,18 +38,15 @@ const STARTUP_POLL: Duration = Duration::from_millis(250);
 pub(super) const LAUNCH_ENV: &str = "CATALY_DISCORD_LANE_LAUNCH";
 
 /// Never handed to a lane or to OMP: the monitor's IPC wiring, its secrets and its own launch context.
-const PRIVATE_ENV: [&str; 11] = [
+const PRIVATE_ENV: [&str; 8] = [
     "NODE_CHANNEL_FD",
     "NODE_CHANNEL_SERIALIZATION_MODE",
     "CATALY_MONITOR_ADMISSION",
     "CATALY_MONITOR_ADMISSION_PROTOCOL",
-    "DORI_MONITOR_ADMISSION",
     "CATALY_ASK_ROUTING_STATE",
     LAUNCH_ENV,
     "CATALY_DISCORD_TOKEN",
-    "DORI_DISCORD_TOKEN",
     "CATALY_TELEGRAM_TOKEN",
-    "DORI_TELEGRAM_TOKEN",
 ];
 
 pub(super) fn is_pending(epoch: Option<&str>) -> bool {
@@ -68,7 +65,6 @@ struct LaunchRecord {
     guard: Guard,
     env: BTreeMap<String, String>,
     wake_config: PathBuf,
-    broker: Vec<String>,
 }
 
 /// What a wake needs from the loaded TypeScript config.
@@ -78,7 +74,8 @@ pub(super) struct Launch {
     guard: Guard,
     lane_env: BTreeMap<String, String>,
     wake_config: PathBuf,
-    broker: Vec<String>,
+    /// This running binary, which also serves `headless-host` (resolved once, at monitor startup).
+    host: PathBuf,
     base_env: BTreeMap<String, String>,
 }
 
@@ -89,12 +86,8 @@ impl Launch {
         let record: LaunchRecord =
             serde_json::from_str(&raw).with_context(|| format!("invalid {LAUNCH_ENV}"))?;
         for path in [&record.sessions_dir, &record.wake_config] {
-            super::util::absolute(path, LAUNCH_ENV)?;
+            crate::util::absolute(path, LAUNCH_ENV)?;
         }
-        anyhow::ensure!(
-            record.broker.len() >= 2 && record.broker.iter().all(|p| Path::new(p).is_absolute()),
-            "{LAUNCH_ENV} broker must be absolute [runtime, headless-broker.ts]"
-        );
         // A variable that is not UTF-8 cannot cross the JSON start record; it is left out rather than mangled.
         let base_env = std::env::vars_os()
             .filter_map(|(key, value)| Some((key.into_string().ok()?, value.into_string().ok()?)))
@@ -106,7 +99,7 @@ impl Launch {
             guard: record.guard,
             lane_env: record.env,
             wake_config: record.wake_config,
-            broker: record.broker,
+            host: std::env::current_exe().context("cannot locate the running cataly binary")?,
             base_env,
         })
     }
@@ -407,7 +400,7 @@ async fn start_exact(
         let prior = HeadlessRef::of(&lane).ok_or_else(|| anyhow!("invalid headless ref"))?;
         retired_headless(state, launch, &lane, prior)?
     } else {
-        Err(held("lane uses the removed herdr/hc runtime"))
+        Err(held("only a headless lane can be woken"))
     };
     let retired = match retired {
         Ok(retired) => retired,
@@ -486,7 +479,6 @@ async fn launch_retired(
             let mut next = current;
             // A headless row keeps its fields.
             next.0.set("sessionRef", reference.json());
-            next.0.set("pane", Json::string(&reference.id));
             next.0.set("cwd", Json::string(&retired.cwd));
             next.0.set("sessionFile", Json::string(&retired.file));
             next.0.set(
@@ -529,7 +521,7 @@ async fn launch_retired(
     headless::start(
         state,
         &reference,
-        &launch.broker,
+        &launch.host,
         &argv,
         env,
         (retired.file.as_str(), retired.session.as_str()),
@@ -540,7 +532,7 @@ async fn launch_retired(
 
 /// `wakeDiscordLane`: request startup of the exact lane session; never types a message or resumes a goal.
 pub(super) async fn wake(state: &Path, launch: &Launch, seen: &Lane) -> Result<Wake> {
-    if !valid_key(seen.key()) || seen.key() == RESERVED_LANE_KEY {
+    if !valid_key(seen.key()) {
         return Ok(held("invalid lane key"));
     }
     let Some(lock) = delivery_lock(state, seen.key(), Duration::ZERO).await? else {
@@ -575,7 +567,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_removed_runtime_lane_is_held_without_reservation() {
+    async fn a_non_headless_lane_is_held_without_reservation() {
         use std::os::unix::fs::DirBuilderExt as _;
         let state = std::env::temp_dir().join(format!("cataly-lane-wake-{}", uuid().unwrap()));
         std::fs::DirBuilder::new()
@@ -583,7 +575,7 @@ mod tests {
             .mode(0o700)
             .create(state.join("lanes"))
             .unwrap();
-        let row = r#"{"key":"aa","thread":"discord:1","sessionRef":{"runtime":"herdr","id":"w1:p1"},"session":"s1","openedAt":"2026-01-01T00:00:00.000Z"}"#;
+        let row = r#"{"key":"aa","thread":"discord:1","sessionRef":{"runtime":"tern","id":"w1:p1"},"session":"s1","openedAt":"2026-01-01T00:00:00.000Z"}"#;
         std::fs::write(state.join("lanes/aa.json"), row).unwrap();
         let launch = Launch {
             command: wake_command(&["omp".to_owned(), "{prompt}".to_owned()]),
@@ -595,7 +587,7 @@ mod tests {
             },
             lane_env: BTreeMap::new(),
             wake_config: state.join("wake.yml"),
-            broker: Vec::new(),
+            host: state.join("cataly"),
             base_env: BTreeMap::new(),
         };
         let lane = Registry::new(&state).read("aa").unwrap().unwrap();
@@ -610,11 +602,17 @@ mod tests {
 
     #[test]
     fn launch_record_is_strict() {
-        let record = r#"{"agentCommand":["omp","{prompt}"],"sessionsDir":"/s","guard":{"loadAlert":1,"loadOk":1,"memFreeMinPct":20,"diskFreeMinGb":50,"panesMax":20},"env":{"CATALY_STATE_DIR":"/x"},"wakeConfig":"/w.yml","broker":["/bun","/b.ts"]}"#;
+        let record = r#"{"agentCommand":["omp","{prompt}"],"sessionsDir":"/s","guard":{"loadAlert":1,"loadOk":1,"memFreeMinPct":20,"diskFreeMinGb":50,"panesMax":20},"env":{"CATALY_STATE_DIR":"/x"},"wakeConfig":"/w.yml"}"#;
         let parsed: LaunchRecord = serde_json::from_str(record).unwrap();
-        assert_eq!(parsed.broker.len(), 2);
+        assert_eq!(parsed.wake_config, Path::new("/w.yml"));
+        // The host is this binary; a record still naming the retired Bun broker is refused, not ignored.
+        let broker = format!(
+            r#"{},"broker":["/bun","/b.ts"]}}"#,
+            record.strip_suffix('}').unwrap()
+        );
+        assert!(serde_json::from_str::<LaunchRecord>(&broker).is_err());
         assert!(
-            serde_json::from_str::<LaunchRecord>(&record.replace("\"broker\"", "\"other\""))
+            serde_json::from_str::<LaunchRecord>(&record.replace("\"wakeConfig\"", "\"other\""))
                 .is_err()
         );
     }

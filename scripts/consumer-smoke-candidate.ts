@@ -4,7 +4,8 @@ import { dirname, isAbsolute, join } from "node:path";
 import { realDirectory } from "../src/release/files.ts";
 import { publicReleasePath } from "../src/release/manifest.ts";
 import { digest } from "../src/update/source.ts";
-import { nativeReleasePath, packageReleaseTree } from "./release-build.ts";
+import { packageReleaseTree } from "./release-build.ts";
+import { nativeHosts, nativeReleasePath } from "./release-native.ts";
 import { git } from "./release-process.ts";
 
 /** Local consumer smoke only: dirty bytes go in an isolated Git tree, never in a commit or release publication. */
@@ -36,10 +37,9 @@ async function packageCandidate(root: string, scratch: string, dist: string) {
   // A local fixture deliberately cannot resolve as a public tag/commit, even when its source bytes match HEAD.
   const commit = digest(`consumer-smoke-local-tree:${base}:${tree}`).slice(0, 40);
   const manifest = await packageReleaseTree({ root: scratch, commit, tree }, dist, true);
+  const native = new Set(nativeHosts.map(nativeReleasePath));
   assert.deepEqual(
-    manifest.source.files.filter(
-      (entry) => !entry.path.startsWith("skills/dori-mode/") && entry.path !== nativeReleasePath,
-    ),
+    manifest.source.files.filter((entry) => !native.has(entry.path)),
     expected,
     "Local candidate tree changed the captured working bytes",
   );

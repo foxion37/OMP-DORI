@@ -14,7 +14,7 @@ test.skipIf(process.platform === "win32")(
     await assertNativeHost();
     // Bind the public entry point of the installed pinned host, not an optional extension peer.
     const { SessionManager } = await import(join(process.env["CATALY_TEST_OMP_ROOT"]!, "src/index.ts"));
-    const stateDir = useConfig(join(import.meta.dir, "fake-ulw.ts"));
+    const stateDir = useConfig();
     const root = dirname(stateDir);
     const journal = join(root, "journal");
     const saved = join(root, "saved-journal");

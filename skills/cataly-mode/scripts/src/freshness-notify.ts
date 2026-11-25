@@ -1,7 +1,7 @@
 import type { Runtimes } from "../../../../src/runtime/registry.ts";
 import type { HeadlessObservation } from "../../../../src/runtime/headless.ts";
 import type { SessionRef } from "../../../../src/runtime/types.ts";
-import { configuredHookEnv, fill } from "./config.ts";
+import { fill } from "./config.ts";
 import type { FlowDeps } from "./done-flow.ts";
 import { anchoredReportLine, scrubForThread } from "./freshness-report.ts";
 import type { SweepAct } from "./freshness.ts";
@@ -29,7 +29,7 @@ const mayInspectReport = (deps: FlowDeps, lane: Lane, now: number, heard: number
   if (!deps.config.hooks.threadReply && !hasPostingPolicy) return false;
   const threadActivity = Math.max(lastHeard(lane), lane.lastAutoReplyAt ?? 0, lane.lastRelayedAt ?? 0);
   const threadQuietMin = Math.round((now - threadActivity) / 60_000);
-  // Opt-in policies can notice held reports even while the legacy auto-post gate is closed.
+  // Opt-in policies can notice held reports even while the automatic post gate is closed.
   return (
     threadQuietMin >= deps.config.postAfterMin &&
     lane.thread !== "none" &&
@@ -37,7 +37,7 @@ const mayInspectReport = (deps: FlowDeps, lane: Lane, now: number, heard: number
   );
 };
 
-export const sampleLegacyReport = async (deps: FlowDeps, lane: Lane, ref: SessionRef, now: number) => {
+export const sampleScreenReport = async (deps: FlowDeps, lane: Lane, ref: SessionRef, now: number) => {
   if (!mayInspectReport(deps, lane, now, lastHeard(lane))) return undefined;
   return anchoredReportLine(await readScreen(runtimesOf(deps), ref, 200), lane.key);
 };
@@ -65,7 +65,7 @@ export const notifyFreshness = async (
   lane: Lane,
   ref: SessionRef,
   progress: Progress | null,
-  legacyReport: string | null | undefined,
+  screenReport: string | null | undefined,
   now: number,
   home: string,
   acts: SweepAct[],
@@ -159,12 +159,12 @@ export const notifyFreshness = async (
       entry && owner
         ? reportLine({ key: entry.key, at: entry.at, type: "report", kind: entry.kind, text: owner })
         : null;
-    const report = fromJournal ?? legacyReport;
+    const report = fromJournal ?? screenReport;
     const lastSeenReport = report ?? undefined;
     const kind = entry?.kind ?? report?.split("|")[1]?.trim();
     const allowAutomatic = mayAutoPost(current, heard);
     if (!allowAutomatic && !report) {
-      if (legacyReport === null && current.lastSeenReport !== undefined) {
+      if (screenReport === null && current.lastSeenReport !== undefined) {
         await rememberFreshness(deps, lane, { lastSeenReport: undefined, lastFreshnessNote: undefined });
       }
       return;
@@ -203,8 +203,7 @@ export const notifyFreshness = async (
     const text = `Progress (from the lane's last report): ${scrubForThread(ownerLine ?? report ?? "", home)}`;
     const latest = await deps.registry.read(lane.key);
     if (!latest || !sameLaneGeneration(lane, latest) || !sameReceipt(current, latest)) return;
-    const env = configuredHookEnv(deps.config.hooks, hook, deps.env);
-    const sent = await deps.run(fill(hook, { thread: lane.thread, text, key: lane.key }), env ? { env } : undefined);
+    const sent = await deps.run(fill(hook, { thread: lane.thread, text, key: lane.key }));
     // Only a delivered report counts as posted: a failed hook leaves it unposted, so the next tick sends it again. Like
     // a held-back report, the same failure is printed once, not on every retry.
     if (sent.code !== 0) {

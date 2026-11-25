@@ -1,4 +1,3 @@
-import { isLegacyRuntime } from "../../../../src/runtime/types.ts";
 import { withDeliveryLock } from "./delivery-lock.ts";
 import { type DeliveryRecord, DeliveryState } from "./delivery-state.ts";
 import type { FlowDeps } from "./done-flow.ts";
@@ -55,7 +54,6 @@ export const tellLane = async (
       lane.runId !== current.runId
     )
       return failed(current, "the lane identity changed");
-    if (isLegacyRuntime(ref.runtime)) return failed(current, "the lane runs on the removed herdr/hc runtime");
     if (ref.runtime === "headless" && !current.session)
       return failed(current, "the lane has no confirmed native session");
     const pending = state.read();

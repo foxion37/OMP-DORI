@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { readFileSync, statSync, writeFileSync } from "node:fs";
 import { ChannelPurposeError, DiscordChannels } from "../src/messenger/discord-channels.ts";
 import { ids, withDiscordCli } from "./discord-fakes.ts";
-import { withState } from "./fakes.ts";
+import { refusedOnWindows, withState } from "./fakes.ts";
 
 test("purposes are stored privately, replaced, cleared and validated before anything is written", async () => {
   const state = withState();
@@ -31,7 +31,8 @@ test("purposes are stored privately, replaced, cleared and validated before anyt
     expect(readFileSync(store.path, "utf8")).toBe("{not json");
     // A hand-edited purpose that set would refuse is damage too, not a record to rewrite.
     for (const purpose of ["", " padded ", "two\nlines", "x".repeat(501)]) {
-      const damaged = JSON.stringify({ "20": { purpose, updatedAt: "2026-11-17T00:00:00.000Z" } });
+      const notes = { "20": { purpose, updatedAt: "2026-11-17T00:00:00.000Z" } };
+      const damaged = JSON.stringify({ version: 1, notes, receipts: {} });
       writeFileSync(store.path, damaged);
       expect(() => store.read()).toThrow(ChannelPurposeError);
       await expect(store.set("30", "fine", undefined, 0)).rejects.toBeInstanceOf(ChannelPurposeError);
@@ -78,7 +79,7 @@ test("cataly channel discord sets a looked-up channel's purpose, lists and clear
       [["inbound", "telegram", "--context"], "--context is supported for discord only"],
     ] as const) {
       const r = await f.invoke([...args]);
-      expect([r.code, r.err, r.keys]).toEqual([1, err, []]);
+      expect([r.code, r.err, r.keys]).toEqual([1, refusedOnWindows(args, err), []]);
     }
   });
 }, 60_000);

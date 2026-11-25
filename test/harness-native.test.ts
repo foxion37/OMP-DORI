@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, 
 import { join, resolve } from "node:path";
 import { HeadlessRuntime, type HeadlessObservation } from "../src/runtime/headless.ts";
 import { Store } from "../src/store.ts";
+import { installNativeHost } from "./fixtures/native-host.ts";
 
 const enabled = process.env["CATALY_HEADLESS_SMOKE"] === "1" && process.platform !== "win32";
 const cli = resolve(import.meta.dir, "../src/cli.ts");
@@ -44,6 +45,8 @@ test.skipIf(!enabled)(
     mkdirSync(ompDir);
     mkdirSync(bin);
     symlinkSync(process.execPath, join(bin, "bun"));
+    // The CLI finds the Rust host where an installation keeps it, as a consumer's would.
+    installNativeHost(home);
     writeFileSync(brief, "Confirm the local smoke request. Do not run external commands.");
     writeFileSync(evidence, "native smoke evidence");
     const requests: string[] = [];
@@ -84,7 +87,6 @@ test.skipIf(!enabled)(
       config,
       JSON.stringify({
         stateDir,
-        ompUlwPath: "",
         defaultModel: "cataly-local/harness-fixture",
         agentCommand: [
           ...omp,
@@ -111,8 +113,6 @@ test.skipIf(!enabled)(
       CATALY_HOME: home,
       CATALY_CONFIG: config,
       CATALY_TELEMETRY: "0",
-      HERDR_PANE_ID: "w8:p8",
-      HC_TERMINAL_ID: "t8",
       NO_PROXY: "127.0.0.1",
     };
     const rt = new HeadlessRuntime(stateDir, env);

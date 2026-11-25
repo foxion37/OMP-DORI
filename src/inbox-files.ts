@@ -3,30 +3,25 @@ import { join } from "node:path";
 import type { SessionRef } from "./runtime/types.ts";
 import type { QueuedMessage } from "./store-types.ts";
 
-// Inbox files: one JSONL queue per session, prefixed by runtime (`headless--<uuid>.jsonl`, `tern--42.jsonl`). Legacy
-// herdr (`w1_p3.jsonl`) and hc (`hc--t7.jsonl`) queues written by an older binary still parse, so they are reported and
-// never lost. A queue is written aside and renamed in whole (writeQueue), so a reader that does not hold the inbox lock
-// still reads a whole queue and never half of one. Where an inbox moved is recorded beside it (inbox-forward.ts). A
-// message sent while the inbox lock is held waits in `<inbox>.spool/` for the holder (inbox-spool.ts).
+// Inbox files: one JSONL queue per session, prefixed by runtime (`headless--<uuid>.jsonl`, `tern--42.jsonl`). A queue
+// is written aside and renamed in whole (writeQueue), so a reader that does not hold the inbox lock still reads a whole
+// queue and never half of one. A message sent while the inbox lock is held waits in `<inbox>.spool/` for the holder
+// (inbox-spool.ts), which moves it in (inbox-merge.ts).
 
 export const INBOX_SUFFIX = ".jsonl";
 export const MOVING = ".moving";
-const HEADLESS_PREFIX = "headless--";
-const PREFIXED: readonly SessionRef["runtime"][] = ["hc", "tern"];
+const PREFIXES: readonly SessionRef["runtime"][] = ["headless", "tern"];
 const SPOOL = ".spool";
 
 export function inboxFile(root: string, ref: SessionRef): string {
-  const name = ref.runtime === "herdr" ? ref.id.replaceAll(":", "_") : `${ref.runtime}--${ref.id}`;
-  return join(root, "inbox", `${name}${INBOX_SUFFIX}`);
+  return join(root, "inbox", `${ref.runtime}--${ref.id}${INBOX_SUFFIX}`);
 }
 
-export function refOfInbox(name: string): SessionRef {
+/** The session an inbox file name belongs to; undefined for a name no runtime writes. */
+export function refOfInbox(name: string): SessionRef | undefined {
   const stem = name.slice(0, -INBOX_SUFFIX.length);
-  if (stem.startsWith(HEADLESS_PREFIX)) return { runtime: "headless", id: stem.slice(HEADLESS_PREFIX.length) };
-  const runtime = PREFIXED.find((kind) => stem.startsWith(`${kind}--`));
-  return runtime === undefined
-    ? { runtime: "herdr", id: stem.replaceAll("_", ":") }
-    : { runtime, id: stem.slice(runtime.length + 2) };
+  const runtime = PREFIXES.find((kind) => stem.startsWith(`${kind}--`));
+  return runtime === undefined ? undefined : { runtime, id: stem.slice(runtime.length + 2) };
 }
 
 /**
@@ -41,7 +36,7 @@ export const queuedRefs = (root: string): SessionRef[] =>
         .filter((f) => f.endsWith(INBOX_SUFFIX)),
     ),
   ]
-    .map(refOfInbox)
+    .flatMap((name) => refOfInbox(name) ?? [])
     .filter((ref) => {
       const path = inboxFile(root, ref);
       try {

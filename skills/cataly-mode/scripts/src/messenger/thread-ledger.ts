@@ -20,8 +20,6 @@ export const slackScope = (teamId: unknown, userId: unknown): SlackScope => {
 export type LedgerThread = { readonly channel: string; readonly rootTs: string; readonly seenTs: string };
 type ScopedThread = LedgerThread & { readonly scope: SlackScope };
 type Threads = Map<string, ScopedThread>;
-type Adoption = { readonly scope: SlackScope; readonly at: string; readonly count: number };
-type State = { threads: Threads; legacy: LedgerThread[]; adopted?: Adoption };
 
 const LOCK_RETRY_MS = 20;
 const LOCK_WAIT_MS = 10_000;
@@ -55,21 +53,16 @@ export class ThreadLedger {
     private readonly wait: (ms: number) => Promise<void> = (ms) => Bun.sleep(ms),
   ) {}
 
-  private read(): State {
-    const state: State = { threads: new Map(), legacy: [] };
+  private read(): Threads {
+    const threads: Threads = new Map();
     let raw: string;
     try {
       raw = readFileSync(this.file, "utf8");
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return state;
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return threads;
       throw error;
     }
-    const value: unknown = JSON.parse(raw);
-    if (Array.isArray(value)) {
-      state.legacy = value.map(threadOf);
-      return state;
-    }
-    const doc = object(value);
+    const doc = object(JSON.parse(raw));
     if (doc["version"] !== 2 || !Array.isArray(doc["threads"])) return invalid();
     for (const value of doc["threads"]) {
       const row = object(value);
@@ -77,39 +70,15 @@ export class ThreadLedger {
       const scope = slackScope(identity["teamId"], identity["userId"]);
       const thread = { ...threadOf(row), scope };
       const key = keyOf(scope, thread.channel, thread.rootTs);
-      if (state.threads.has(key)) return invalid();
-      state.threads.set(key, thread);
+      if (threads.has(key)) return invalid();
+      threads.set(key, thread);
     }
-    if (doc["adopted"] !== undefined) {
-      const receipt = object(doc["adopted"]);
-      const identity = object(receipt["scope"]);
-      const { at, count } = receipt;
-      if (
-        typeof at !== "string" ||
-        !Number.isFinite(Date.parse(at)) ||
-        typeof count !== "number" ||
-        !Number.isSafeInteger(count) ||
-        count <= 0
-      )
-        return invalid();
-      state.adopted = { scope: slackScope(identity["teamId"], identity["userId"]), at, count };
-    }
-    return state;
+    return threads;
   }
 
-  private scoped(): State {
-    const state = this.read();
-    if (state.legacy.length)
-      throw new MessengerError(
-        "unscoped Slack threads: confirm their account, then run cataly inbound slack --adopt-legacy-threads WORKSPACE:ACCOUNT",
-        0,
-      );
-    return state;
-  }
-
-  /** Check before posting: legacy records must never be silently assigned to the current token's account. */
-  assertScoped(): void {
-    this.scoped();
+  /** Check before posting: a post whose thread the ledger cannot record must not be sent. */
+  assertReadable(): void {
+    this.read();
   }
 
   /** Readers always reload; writers serialize the read/merge/atomic replace with the existing checkpoint lock. */
@@ -125,51 +94,17 @@ export class ThreadLedger {
     }
   }
 
-  private save(state: State): void {
+  private save(threads: Threads): void {
     const tmp = `${this.file}.${process.pid}.tmp`;
-    // An envelope makes old array-only writers fail closed instead of dropping another account's rows.
-    writeFileSync(
-      tmp,
-      JSON.stringify(
-        { version: 2, threads: [...state.threads.values()], ...(state.adopted ? { adopted: state.adopted } : {}) },
-        null,
-        1,
-      ),
-    );
+    writeFileSync(tmp, JSON.stringify({ version: 2, threads: [...threads.values()] }, null, 1));
     renameSync(tmp, this.file);
   }
 
   private async update(change: (threads: Threads) => boolean): Promise<void> {
     const release = await this.lock();
     try {
-      const state = this.scoped();
-      if (change(state.threads)) this.save(state);
-    } finally {
-      release();
-    }
-  }
-
-  /** Only an explicit operator decision can attach the old account-free array to an authenticated scope. */
-  async adoptLegacy(scope: SlackScope): Promise<Adoption> {
-    const release = await this.lock();
-    try {
-      const state = this.read();
-      if (state.adopted) {
-        if (!sameScope(state.adopted.scope, scope))
-          throw new MessengerError("legacy Slack threads were already adopted by another account", 0);
-        return state.adopted;
-      }
-      if (!state.legacy.length) throw new MessengerError("no unscoped Slack threads to adopt", 0);
-      for (const thread of state.legacy) {
-        const key = keyOf(scope, thread.channel, thread.rootTs);
-        if (state.threads.has(key)) return invalid();
-        state.threads.set(key, { ...thread, scope });
-      }
-      const receipt = { scope, at: new Date().toISOString(), count: state.legacy.length };
-      state.adopted = receipt;
-      state.legacy = [];
-      this.save(state);
-      return receipt;
+      const threads = this.read();
+      if (change(threads)) this.save(threads);
     } finally {
       release();
     }
@@ -204,7 +139,7 @@ export class ThreadLedger {
   }
 
   async list(scope: SlackScope): Promise<LedgerThread[]> {
-    return [...this.scoped().threads.values()]
+    return [...this.read().values()]
       .filter((t) => sameScope(t.scope, scope))
       .map(({ channel, rootTs, seenTs }) => ({ channel, rootTs, seenTs }));
   }

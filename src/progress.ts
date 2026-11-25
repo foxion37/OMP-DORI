@@ -12,14 +12,6 @@ export const ESCALATE_MINUTES = 40;
 
 const LINK_RE = /^(https?:\/\/\S+|[\w.-]+\/[\w.-]+#\d+)$/;
 
-/** When the lane last made progress; a record from before the clock existed counts its last start, report or READY. */
-export const progressOf = (lane: Lane): number =>
-  lane.progressAt ??
-  Math.max(
-    lane.createdAt,
-    ...lane.log.filter((e) => e.kind === "start" || e.kind === "report" || e.kind === "ready").map((e) => e.at),
-  );
-
 /** Why one --evidence value does not count as progress, or its file's modification time (0 for a link) when it does. */
 function counted(lane: Lane, ref: string, since: number): { why: string } | { mtime: number } {
   if (LINK_RE.test(ref)) return lane.evidenceSeen?.includes(ref) ? { why: "reported before" } : { mtime: 0 };
@@ -42,8 +34,7 @@ function counted(lane: Lane, ref: string, since: number): { why: string } | { mt
  * clearing its nudge count and escalation marker; anything else leaves them alone. Returns the CLI's PROGRESS lines.
  */
 export function applyEvidence(lane: Lane, evidence: readonly string[], now: number): string[] {
-  const since = progressOf(lane);
-  lane.progressAt = since;
+  const since = lane.progressAt;
   const skipped: string[] = [];
   let moved: string | undefined;
   for (const ref of evidence) {
@@ -64,7 +55,7 @@ export function applyEvidence(lane: Lane, evidence: readonly string[], now: numb
       ...skipped,
     ];
   lane.progressAt = now;
-  lane.progressEpoch = (lane.progressEpoch ?? 0) + 1;
+  lane.progressEpoch += 1;
   lane.nudges = 0;
   delete lane.escalatedAt;
   lane.lastEvidence = { ref: moved, at: now };
@@ -74,14 +65,11 @@ export function applyEvidence(lane: Lane, evidence: readonly string[], now: numb
 }
 
 /**
- * True when this progress epoch has stalled without a queued escalation. Older binaries could retain a marker at or
- * before their latest progress; that marker belongs to an earlier epoch. New evidence and READY explicitly clear it,
- * including after clock rollback. Legacy nudge counts prove no delivery: one renewed alert establishes a marker.
+ * True when this progress epoch has stalled without a queued escalation. New evidence and READY start a new epoch and
+ * clear the marker, including after clock rollback; a nudge count never stands in for it.
  */
-export const stalled = (lane: Lane, now: number): boolean => {
-  const since = progressOf(lane);
-  return now - since >= ESCALATE_MINUTES * 60_000 && (lane.escalatedAt === undefined || lane.escalatedAt <= since);
-};
+export const stalled = (lane: Lane, now: number): boolean =>
+  now - lane.progressAt >= ESCALATE_MINUTES * 60_000 && lane.escalatedAt === undefined;
 
 /**
  * A blocker named in report text: its first line (a CR or line separator ends one too) without a leading `WAITING:`,
@@ -90,20 +78,15 @@ export const stalled = (lane: Lane, now: number): boolean => {
 export const blockerOf = (text: string): string =>
   oneName(text.split(/[\n\r\u2028\u2029]/)[0]!.replace(/^\s*WAITING:\s*/i, "")).trim() || "?";
 
-/**
- * What a waiting lane waits on, on one line; a record from before `--for` names its last report's blocker. A target is
- * stored one-line, and one stored before that is made so here.
- */
+/** What a waiting lane waits on, on one line: its observed wait, else the one-line target `report` stored. */
 export const waitingTarget = (lane: Lane): string =>
-  lane.wait && lane.wait.target.kind !== "label"
-    ? renderWait(lane.wait)
-    : oneName(lane.waitingFor ?? blockerOf(lane.log.findLast((e) => e.kind === "report")?.text ?? "?")).trim() || "?";
+  lane.wait && lane.wait.target.kind !== "label" ? renderWait(lane.wait) : (lane.waitingFor ?? "?");
 
 /** What a waiting lane waits on, cut to 40 columns, or to `cols` when a line leaves it fewer. */
 export const waitingOn = (lane: Lane, cols = 40): string => fitEnd(waitingTarget(lane), Math.min(40, cols));
 
-/** When the lane started waiting; a record from before `waitingSince` counts from its last progress. */
-export const waitingSinceOf = (lane: Lane): number => lane.waitingSince ?? progressOf(lane);
+/** When the lane started waiting, which `report` stores with its target. */
+export const waitingSinceOf = (lane: Lane): number => lane.waitingSince ?? lane.progressAt;
 
 /** `line` alone when the `shown` part of it is `full` whole, else `line` and `full` on one indented line below it. */
 const withWhole = (line: string, shown: string, full: string): string[] =>
@@ -115,7 +98,7 @@ const withWhole = (line: string, shown: string, full: string): string[] =>
  * the counts get a line of their own so no cut can drop them. A target or evidence its line cut follows it whole.
  */
 export function escalation(lane: Lane, pane: string, now: number): string {
-  const since = progressOf(lane);
+  const since = lane.progressAt;
   const talk = lane.log.filter((e) => e.kind === "report" && e.at > since).length;
   const waiting = lane.status === "waiting";
   const head = `[ESCALATE ${lane.key}${waiting ? " WAITING" : ""}] no new evidence for ${ageText(now - since)} (since ${hhmm(since)})`;

@@ -22,8 +22,8 @@ afterEach(async () => {
     else process.env[name] = value;
   }
 });
-function fixture(sessionId = "legacy-session", lead = true) {
-  const stateDir = useConfig(join(import.meta.dir, "fake-ulw.ts"));
+function fixture(sessionId = "lead-session", lead = true) {
+  const stateDir = useConfig();
   const reservation = join(stateDir, "headless", HEADLESS);
   if (lead) {
     process.env.CATALY_HEADLESS_ID = HEADLESS;
@@ -62,18 +62,18 @@ const alive = (pid: number): boolean => {
 };
 
 posix(
-  "trusted first handoff replaces legacy specifications, observes real monitor identities and resumes without the file",
+  "trusted first handoff replaces recorded specifications, observes real monitor identities and resumes without the file",
   async () => {
     const f = fixture();
     const session = {
-      id: "legacy-session",
+      id: "lead-session",
       entries: [
         {
           type: "custom",
-          customType: "omp-dori:monitor",
+          customType: "omp-cataly:monitor",
           data: {
             op: "start",
-            name: "incompatible-legacy",
+            name: "incompatible-spec",
             argv: ["missing-command-fixture"],
             filter: ".",
             cwd: tmpdir(),
@@ -81,20 +81,20 @@ posix(
         },
       ],
     };
-    const first = await load({ session, flags: { "cataly-role": "cataly", "dori-monitor-bootstrap": f.bootstrap } });
+    const first = await load({ session, flags: { "cataly-role": "cataly", "cataly-monitor-bootstrap": f.bootstrap } });
     sessions.push(first);
     await first.emit("session_start");
     await until(() => JSON.parse(readFileSync(f.healthPath, "utf8")).monitors.length === 1);
     const health = JSON.parse(readFileSync(f.healthPath, "utf8")) as RuntimeHealth;
     expect(health).toMatchObject({ role: "cataly", paneId: HEADLESS, pid: process.pid, sessionId: session.id });
-    expect(health.presetLoaded).toBe(true);
+    expect(health.configLoaded).toBe(true);
     expect(health.monitors[0]).toMatchObject(f.monitor);
     expect(processIdentity(health.monitors[0]!.pid)?.startTicks).toBe(health.monitors[0]!.startTicks);
     expect(JSON.parse(readFileSync(join(f.stateDir, "monitors", `${session.id}.json`), "utf8"))).toMatchObject({
       intake: f.intake,
     });
     expect((await run(first, { op: "list" })).content[0]?.text).toContain("inbound");
-    expect((await run(first, { op: "list" })).content[0]?.text).not.toContain("incompatible-legacy");
+    expect((await run(first, { op: "list" })).content[0]?.text).not.toContain("incompatible-spec");
     const oldPid = health.monitors[0]!.pid;
     await first.emit("session_shutdown");
     await until(() => processIdentity(oldPid) === undefined);
@@ -104,70 +104,73 @@ posix(
     const after = JSON.parse(readFileSync(f.healthPath, "utf8")) as RuntimeHealth;
     expect(after.monitors[0]?.pid).not.toBe(oldPid);
     expect(after.monitors[0]?.argv).toEqual(f.monitor.argv);
-    expect(session.entries.filter((entry) => entry.customType === "omp-dori:monitor-bootstrap")).toHaveLength(1);
+    expect(session.entries.filter((entry) => entry.customType === "omp-cataly:monitor-bootstrap")).toHaveLength(1);
   },
 );
 
 // POSIX-only: the bootstrap file's 0o600 mode and owner uid are verified, and the monitor runs `sleep`.
-posix("ordinary bootstrap replaces legacy monitors and restores real children without the bootstrap file", async () => {
-  const f = fixture();
-  const session = {
-    id: "legacy-session",
-    entries: [
-      {
-        type: "custom",
-        customType: "omp-cataly:monitor",
-        data: { op: "start", ...f.monitor, name: "incompatible-legacy", argv: ["missing-command-fixture"] },
-      },
-    ],
-  };
-  const first = await load({ session, flags: { "cataly-role": "cataly", "cataly-monitor-bootstrap": f.bootstrap } });
-  sessions.push(first);
-  await first.emit("session_start");
-  const listed = (await run(first, { op: "list" })).content[0]?.text ?? "";
-  const oldPid = Number(/pid (\d+)/.exec(listed)?.[1]);
-  expect(alive(oldPid)).toBe(true);
-  expect(listed).toContain("inbound");
-  expect(listed).not.toContain("incompatible-legacy");
-  const metadata = join(f.stateDir, "monitors", `${session.id}.json`);
-  expect(JSON.parse(readFileSync(metadata, "utf8"))).toMatchObject({ monitors: [f.monitor], intake: f.intake });
-  const health = JSON.parse(readFileSync(f.healthPath, "utf8")) as RuntimeHealth;
-  expect(health).toMatchObject({ role: "cataly", paneId: HEADLESS, pid: process.pid, sessionId: session.id });
-  expect(health.presetLoaded).toBe(true);
-  expect(health.monitors.map(({ name, pid }) => [name, pid])).toEqual([[f.monitor.name, oldPid]]);
-  await first.emit("session_shutdown");
-  await until(() => !alive(oldPid));
-  unlinkSync(f.bootstrap);
-  const resumed = await load({ session });
-  sessions.push(resumed);
-  await resumed.emit("session_start");
-  const restored = (await run(resumed, { op: "list" })).content[0]?.text ?? "";
-  const newPid = Number(/pid (\d+)/.exec(restored)?.[1]);
-  expect(alive(newPid)).toBe(true);
-  expect(newPid).not.toBe(oldPid);
-  expect(restored).toContain(f.monitor.argv.join(" "));
-  expect(JSON.parse(readFileSync(metadata, "utf8"))).toMatchObject({ monitors: [f.monitor], intake: f.intake });
-  expect(session.entries.filter((entry) => entry.customType === "omp-dori:monitor-bootstrap")).toHaveLength(1);
-});
+posix(
+  "ordinary bootstrap replaces recorded monitors and restores real children without the bootstrap file",
+  async () => {
+    const f = fixture();
+    const session = {
+      id: "lead-session",
+      entries: [
+        {
+          type: "custom",
+          customType: "omp-cataly:monitor",
+          data: { op: "start", ...f.monitor, name: "incompatible-spec", argv: ["missing-command-fixture"] },
+        },
+      ],
+    };
+    const first = await load({ session, flags: { "cataly-role": "cataly", "cataly-monitor-bootstrap": f.bootstrap } });
+    sessions.push(first);
+    await first.emit("session_start");
+    const listed = (await run(first, { op: "list" })).content[0]?.text ?? "";
+    const oldPid = Number(/pid (\d+)/.exec(listed)?.[1]);
+    expect(alive(oldPid)).toBe(true);
+    expect(listed).toContain("inbound");
+    expect(listed).not.toContain("incompatible-spec");
+    const metadata = join(f.stateDir, "monitors", `${session.id}.json`);
+    expect(JSON.parse(readFileSync(metadata, "utf8"))).toMatchObject({ monitors: [f.monitor], intake: f.intake });
+    const health = JSON.parse(readFileSync(f.healthPath, "utf8")) as RuntimeHealth;
+    expect(health).toMatchObject({ role: "cataly", paneId: HEADLESS, pid: process.pid, sessionId: session.id });
+    expect(health.configLoaded).toBe(true);
+    expect(health.monitors.map(({ name, pid }) => [name, pid])).toEqual([[f.monitor.name, oldPid]]);
+    await first.emit("session_shutdown");
+    await until(() => !alive(oldPid));
+    unlinkSync(f.bootstrap);
+    const resumed = await load({ session });
+    sessions.push(resumed);
+    await resumed.emit("session_start");
+    const restored = (await run(resumed, { op: "list" })).content[0]?.text ?? "";
+    const newPid = Number(/pid (\d+)/.exec(restored)?.[1]);
+    expect(alive(newPid)).toBe(true);
+    expect(newPid).not.toBe(oldPid);
+    expect(restored).toContain(f.monitor.argv.join(" "));
+    expect(JSON.parse(readFileSync(metadata, "utf8"))).toMatchObject({ monitors: [f.monitor], intake: f.intake });
+    expect(session.entries.filter((entry) => entry.customType === "omp-cataly:monitor-bootstrap")).toHaveLength(1);
+  },
+);
 
 // POSIX-only: the product only accepts monitor metadata that is not group/world writable and is owned by the uid.
 posix("a consumed bootstrap never resurrects an explicitly stopped monitor", async () => {
   const f = fixture();
-  const session = { id: "legacy-session", entries: [] };
+  const session = { id: "lead-session", entries: [] };
   const cataly = await load({ session, flags: { "cataly-role": "cataly", "cataly-monitor-bootstrap": f.bootstrap } });
   sessions.push(cataly);
   await cataly.emit("session_start");
   await run(cataly, { op: "stop", name: "inbound" });
   await cataly.emit("session_start");
   expect((await run(cataly, { op: "list" })).content[0]?.text).toBe("no monitors running or recorded");
-  expect(JSON.parse(readFileSync(join(f.stateDir, "monitors", "legacy-session.json"), "utf8")).monitors).toEqual([]);
+  expect(JSON.parse(readFileSync(join(f.stateDir, "monitors", "lead-session.json"), "utf8")).monitors).toEqual([]);
 });
 
 // POSIX-only: the rejected bootstrap is read through the product's mode and owner-uid check.
 posix("a bootstrap bound to another native session launches nothing", async () => {
   const f = fixture("different-session");
   const cataly = await load({
-    session: { id: "legacy-session", entries: [] },
+    session: { id: "lead-session", entries: [] },
     flags: {
       "cataly-role": "cataly",
       "cataly-monitor-bootstrap": f.bootstrap,
@@ -182,7 +185,7 @@ posix("a bootstrap bound to another native session launches nothing", async () =
 posix("a rejected bootstrap leaves no half-initialized role session publishing runtime health", async () => {
   const f = fixture("different-session");
   const cataly = await load({
-    session: { id: "legacy-session", entries: [] },
+    session: { id: "lead-session", entries: [] },
     flags: { "cataly-role": "cataly", "cataly-monitor-bootstrap": f.bootstrap },
   });
   sessions.push(cataly);
@@ -214,7 +217,7 @@ posix(
   async () => {
     const f = fixture("different-session");
     const cataly = await load({
-      session: { id: "legacy-session", entries: [{ type: "custom", customType: "omp-cataly:role", data: "cataly" }] },
+      session: { id: "lead-session", entries: [{ type: "custom", customType: "omp-cataly:role", data: "cataly" }] },
       flags: { "cataly-monitor-bootstrap": f.bootstrap },
     });
     sessions.push(cataly);
@@ -235,8 +238,8 @@ posix(
 
 // Portable: monitor replacement needs no headless lead, so no runtime health is published.
 test("branch movement replaces a changed specification under the same monitor name", async () => {
-  const f = fixture("legacy-session", false);
-  const cataly = await load({ session: { id: "legacy-session", entries: [] }, flags: { "cataly-role": "cataly" } });
+  const f = fixture("lead-session", false);
+  const cataly = await load({ session: { id: "lead-session", entries: [] }, flags: { "cataly-role": "cataly" } });
   sessions.push(cataly);
   await cataly.emit("session_start");
   const sleeping = (milliseconds: number) => [process.execPath, "-e", `await Bun.sleep(${milliseconds})`];
@@ -260,7 +263,7 @@ test("branch movement replaces a changed specification under the same monitor na
   expect(newPid).not.toBe(oldPid);
   expect(after).toContain("Bun.sleep(61000)");
   expect(after).toContain("^changed");
-  expect(JSON.parse(readFileSync(join(f.stateDir, "monitors", "legacy-session.json"), "utf8"))).toMatchObject({
+  expect(JSON.parse(readFileSync(join(f.stateDir, "monitors", "lead-session.json"), "utf8"))).toMatchObject({
     monitors: [{ name: "inbound", argv: replacement, filter: "^changed", cwd: tmpdir() }],
   });
 }, 20_000);
@@ -273,7 +276,7 @@ posix(
     process.env.CATALY_MANAGED_STARTUP = "1";
     const cataly = await load({
       session: {
-        id: "legacy-session",
+        id: "lead-session",
         entries: [
           {
             type: "custom",
@@ -298,23 +301,3 @@ posix(
     expect(cataly.messages.at(-1)?.options).toMatchObject({ triggerTurn: true });
   },
 );
-
-// POSIX-only: runtime health is published only for the headless lead.
-posix("role health records a failed preset load even when role and PID metadata exist", async () => {
-  const f = fixture();
-  writeFileSync(
-    join(f.stateDir, "..", "config.json"),
-    JSON.stringify({
-      stateDir: f.stateDir,
-      ompUlwPath: join(f.stateDir, "absent-preset.ts"),
-    }),
-  );
-  const cataly = await load({ session: { id: "legacy-session", entries: [] }, flags: { "cataly-role": "cataly" } });
-  sessions.push(cataly);
-  await cataly.emit("session_start");
-  expect(JSON.parse(readFileSync(f.healthPath, "utf8"))).toMatchObject({
-    role: "cataly",
-    pid: process.pid,
-    presetLoaded: false,
-  });
-});

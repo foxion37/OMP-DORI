@@ -7,7 +7,8 @@ import { isRequestId } from "./request-identity.ts";
 
 export type QueueEntry = {
   readonly id: string;
-  readonly input: LaunchInput;
+  /** `cwd` is the canonical directory resolved at enqueue. */
+  readonly input: LaunchInput & { readonly cwd: string };
   readonly briefText: string;
   readonly after: readonly string[];
   readonly queuedAt: string;
@@ -48,7 +49,7 @@ export class LaunchQueue {
       typeof entry.input.title !== "string" ||
       typeof entry.input.brief !== "string" ||
       typeof entry.input.done !== "string" ||
-      (entry.input.cwd !== undefined && typeof entry.input.cwd !== "string") ||
+      typeof entry.input.cwd !== "string" ||
       (entry.input.requestId !== undefined && !isRequestId(entry.input.requestId)) ||
       typeof entry.briefText !== "string" ||
       !Array.isArray(entry.after) ||

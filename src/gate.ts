@@ -5,7 +5,6 @@ import { agentCommand, harnessLaunchEnv, prompt, type Deps } from "./harness.ts"
 import { Refusal } from "./refusal.ts";
 import { loadHooks, substitute } from "./hooks.ts";
 import { laneMessengerOverrides } from "./release/runtime.ts";
-import { legacyRecipeEnv } from "./runtime/recipe-env.ts";
 import type { MergeOutcome } from "./telemetry.ts";
 
 export type PrRef = { repo: string; number: number; id: string };
@@ -55,8 +54,7 @@ export async function review(
         ...(model ? ["--model", model] : []),
         text,
       ];
-  const env = hook && legacyRecipeEnv(hook, { configFile: join(d.store.root, "config.json"), env: process.env });
-  const res = await d.exec(cmd ?? d.agentCmd, argv, env ? { env } : undefined);
+  const res = await d.exec(cmd ?? d.agentCmd, argv);
   const verdicts = [...res.stdout.matchAll(/^VERDICT:\s*(CLEAR|BLOCK)\b/gm)];
   const last = verdicts.at(-1);
   if (!last) {

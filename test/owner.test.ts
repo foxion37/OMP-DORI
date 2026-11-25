@@ -34,12 +34,12 @@ function home() {
 }
 
 describe("owner profile in the lead's prompt", () => {
-  test("retained operator prompts resolve both command placeholders without changing their files", () => {
+  test("retained operator prompts resolve the command placeholder without changing their files", () => {
     const { d } = home();
     const old = process.env["CATALY_PROMPTS_DIR"];
     const dir = d.store.root;
-    const text = "{{dori}} / {{cataly}} / {{unknown}}";
-    expect(fill("{{dori}} owner snapshot / {{unknown}}", { cataly: d.catalyCmd })).toBe(
+    const text = "{{cataly}} / {{unknown}}";
+    expect(fill("{{cataly}} owner snapshot / {{unknown}}", { cataly: d.catalyCmd })).toBe(
       `${d.catalyCmd} owner snapshot / {{unknown}}`,
     );
     try {
@@ -47,7 +47,7 @@ describe("owner profile in the lead's prompt", () => {
       for (const name of ["lead.md", "duty.md", "lane-footer.md"] as const) {
         writeFileSync(join(dir, name), text);
         const value = name === "lane-footer.md" ? prompt(name, { cataly: d.catalyCmd }) : rolePrompt(d, name);
-        expect(value).toBe(`${d.catalyCmd} / ${d.catalyCmd} / {{unknown}}`);
+        expect(value).toBe(`${d.catalyCmd} / {{unknown}}`);
         expect(readFileSync(join(dir, name), "utf8")).toBe(text);
       }
     } finally {

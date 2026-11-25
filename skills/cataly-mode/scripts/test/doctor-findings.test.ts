@@ -12,7 +12,6 @@ import { Worklog } from "../src/worklog.ts";
 import { depsFor, fakeClock, nativeLead, newWorld, withState } from "./fakes.ts";
 
 const manifest = (command: string, filter: string, name = "custom-name"): Manifest => ({
-  kind: "omp",
   path: "/fixture",
   data: {
     version: 1,

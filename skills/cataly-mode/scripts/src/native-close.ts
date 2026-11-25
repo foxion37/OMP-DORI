@@ -1,5 +1,5 @@
 import { HeadlessRuntime } from "../../../../src/runtime/headless.ts";
-import { isLegacyRuntime, type Probe, type SessionRef } from "../../../../src/runtime/types.ts";
+import type { Probe, SessionRef } from "../../../../src/runtime/types.ts";
 import type { FlowDeps } from "./done-flow.ts";
 import type { LessonInput } from "./lessons.ts";
 import { confirmedLaneState, isBareLaneShell } from "./lifecycle-session.ts";
@@ -82,8 +82,6 @@ export const commitClose = async (deps: FlowDeps, seen: Lane, basis: CloseBasis)
   const target = sessionOf(seen);
   const initial = target?.runtime !== "headless" && seen.lifecycleEpoch === undefined && !saved;
   const hold = (reason: string): CloseCommit => ({ kind: "held", reason });
-  if ((target && isLegacyRuntime(target.runtime)) || (saved && isLegacyRuntime(saved.ref.runtime)))
-    return hold("the lane runs on the removed herdr/hc runtime");
   const unconfirmed = "native pane identity or approval state is unconfirmed";
   const busy = "main agent is still working";
   const mainBusy = (probe: Probe) =>
@@ -92,11 +90,11 @@ export const commitClose = async (deps: FlowDeps, seen: Lane, basis: CloseBasis)
   let lane = seen;
   let intent = saved;
   let session = lane.session;
-  const legacyClose = async (ref: SessionRef): Promise<CloseCommit> => {
+  const probeOnlyClose = async (ref: SessionRef): Promise<CloseCommit> => {
     try {
       if (mainBusy(await runtimesOf(deps).for(ref).probe(ref, { foregroundOnly: true }))) return hold(busy);
     } catch {
-      // An unknown initial lane retains the legacy policy, not a quiescence guarantee.
+      // An unconfirmed terminal lane keeps the probe-only close, not a quiescence guarantee.
     }
     return recordClosed(deps, lane, basis);
   };
@@ -107,7 +105,7 @@ export const commitClose = async (deps: FlowDeps, seen: Lane, basis: CloseBasis)
         const probe = await runtimesOf(deps).for(target).probe(target);
         if (mainBusy(probe)) return hold(busy);
         session ??= probe.sessionId;
-        // Unknown initial lanes retain their legacy close. This is not a quiescence guarantee.
+        // An unconfirmed terminal lane keeps the probe-only close. This is not a quiescence guarantee.
         if (!session || probe.pid === undefined) return recordClosed(deps, lane, basis);
       } catch {
         return recordClosed(deps, lane, basis);
@@ -119,7 +117,7 @@ export const commitClose = async (deps: FlowDeps, seen: Lane, basis: CloseBasis)
       if (lane.hold?.outcome) return hold(`terminal intent is already ${lane.hold.outcome}`);
       if (!target || !session) return hold(unconfirmed);
       const state = await confirmedLaneState(deps, { ...lane, session }, target);
-      if (!state) return initial ? legacyClose(target) : hold(unconfirmed);
+      if (!state) return initial ? probeOnlyClose(target) : hold(unconfirmed);
       if (state.agentStatus === "working") return hold(busy);
       if (target.runtime === "headless" && (state.agentStatus !== "idle" || state.sessionFile !== lane.sessionFile))
         return hold(unconfirmed);
@@ -128,7 +126,7 @@ export const commitClose = async (deps: FlowDeps, seen: Lane, basis: CloseBasis)
       try {
         process = processIdentity(deps, state.pid);
       } catch (error) {
-        if (initial) return legacyClose(target);
+        if (initial) return probeOnlyClose(target);
         throw error;
       }
       const prepared: NativeCloseIntent = {

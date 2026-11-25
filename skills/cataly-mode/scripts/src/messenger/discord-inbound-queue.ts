@@ -10,9 +10,9 @@ export type DiscordInboundRecord = {
   id: number;
   kind: string;
   payload: string;
-  /** Null denotes a legacy row or a channel without an admission cursor, not a delivery receipt. */
+  /** Null denotes a channel without an admission cursor, not a delivery receipt. */
   admittedAfter: string | null;
-  /** Established thread scope at admission; null for explicit/scope-all and legacy rows. */
+  /** Established thread scope at admission; null for explicit and scope-all rows. */
   parent: string | null;
 };
 
@@ -63,16 +63,12 @@ export const discordInboundQueue = (stateDir: string, nativeAdmission = false): 
       const channelId = "json_extract(payload, '$.channel_id')";
       const author = "json_extract(payload, '$.author.id')";
       const order = `length(${message}), ${message}, id`;
-      // Additive and atomic: index space counts against the same database budget; no queued payload array.
+      // Atomic: index space counts against the same database budget; no queued payload array.
       db.transaction(() => {
         db.exec(
-          "CREATE TABLE IF NOT EXISTS pending (id INTEGER PRIMARY KEY, kind TEXT NOT NULL, payload TEXT NOT NULL)",
+          "CREATE TABLE IF NOT EXISTS pending (id INTEGER PRIMARY KEY, kind TEXT NOT NULL, payload TEXT NOT NULL, " +
+            "admitted_after TEXT, thread_parent TEXT)",
         );
-        const columns = db.query<{ name: string }, []>("PRAGMA table_info(pending)").all();
-        if (!columns.some((column) => column.name === "admitted_after"))
-          db.exec("ALTER TABLE pending ADD COLUMN admitted_after TEXT");
-        if (!columns.some((column) => column.name === "thread_parent"))
-          db.exec("ALTER TABLE pending ADD COLUMN thread_parent TEXT");
         db.exec(
           `CREATE INDEX IF NOT EXISTS pending_channel ON pending (${channelId}, ${order}) WHERE kind = 'message'; ` +
             `CREATE INDEX IF NOT EXISTS pending_owner ON pending (${channelId}, ${author}, ${order}) WHERE kind = 'message'`,

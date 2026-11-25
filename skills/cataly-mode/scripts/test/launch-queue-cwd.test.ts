@@ -31,7 +31,7 @@ const linkedDirectories = async () => {
   return { config: await loadConfig(configPath, f.state.dir), physical, lexical, link };
 };
 
-test("an ordinary launch and relative Done check use the same legacy cwd with a symlink in the config", async () => {
+test("an ordinary launch and relative Done check use the same lexical cwd with a symlink in the config", async () => {
   const { config, lexical } = await linkedDirectories();
   let runtimeReadback: string | undefined;
   f.world.onCreate = (spec) => {

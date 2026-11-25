@@ -53,12 +53,8 @@ export async function reportPreAction(ctx: UpdateContext, job: UpdateJob, notice
         };
   const intentHash = (action: PreActionNotice["action"]) =>
     digest(JSON.stringify({ job: job.id, action, config: ctx.configHash, intent }));
-  const current = job.preActionNotices?.[notice.action];
-  const legacy = notice.action === "cataly-replacement" ? job.preActionNotices?.["dori-replacement"] : undefined;
-  if (current !== undefined && legacy !== undefined)
-    throw new Hold(`pre-action ${notice.action} has multiple retained receipts; action held`);
-  const retained = current ?? legacy;
-  const action = legacy === undefined ? notice.action : "dori-replacement";
+  const retained = job.preActionNotices?.[notice.action];
+  const action = notice.action;
   if (retained !== undefined) {
     if (
       retained.job === job.id &&

@@ -59,7 +59,7 @@ posix(
     });
     expect(readNativeArtifact(f.source, f.output)).toEqual(candidate!);
     const selected = join(f.root, "verified-checkout");
-    await checkoutSourceBundle(selected, readSourceBundle(f.output, true), f.root, f.remote);
+    await checkoutSourceBundle(selected, readSourceBundle(f.output), f.root, f.remote);
     expect(readFileSync(join(selected, "index.ts"), "utf8")).toContain('selected = "reviewed-overlay"');
     expect(readFileSync(join(selected, "new-upstream.ts"), "utf8")).toContain("incoming = true");
     expect(NATIVE_UPDATE_FILES.map((path) => readFileSync(join(f.source, path)))).toEqual(original);
@@ -119,7 +119,7 @@ posix("dirty source, invalid identity, mismatched version and rewritten tags are
   ).rejects.toThrow("digest");
   const moved = nativeUpdateFixture(roots);
   moved.advance();
-  fixtureGit(moved.remote, "tag", "-f", "v18.20.0");
+  fixtureGit(moved.remote, "tag", "-f", "v19.0.0");
   fixtureGit(moved.remote, "tag", "-d", "v19.0.1");
   await expect(prepareNativeUpdate(moved.source, moved.output, moved.remote, fixtureDependencyFiles)).rejects.toThrow(
     "moved",
@@ -146,7 +146,7 @@ posix("maintainer capture requires the exact staged checkout and package version
   await expect(captureNativeUpdate(f.source, f.remote, commit, "19.0.2")).rejects.toThrow("package version");
   const result = await captureNativeUpdate(f.source, f.remote, commit, "19.0.1");
   expect(result).toMatchObject({ commit, version: "19.0.1" });
-  expect(readSourceBundle(f.source, true).lock.nativeVersion).toBe("19.0.1");
+  expect(readSourceBundle(f.source).lock.nativeVersion).toBe("19.0.1");
 });
 
 posix("source movement during preparation is preserved and prevents emitting a candidate", async () => {

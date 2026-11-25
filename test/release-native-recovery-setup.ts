@@ -1,8 +1,8 @@
-import { chmodSync, copyFileSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { extractArchive, readArchive } from "../src/release/archive.ts";
 import type { VerifiedBundle } from "../src/release/bundle.ts";
-import { type ConsumerPaths, pointer, saveJson } from "../src/release/files.ts";
+import { type ConsumerPaths, pointer } from "../src/release/files.ts";
 import { installBundle } from "../src/release/install.ts";
 import { validateReleaseManifest } from "../src/release/manifest.ts";
 import { readSourceBundle } from "../src/release/source-bundle.ts";
@@ -10,44 +10,22 @@ import { digest, sourceManifest } from "../src/update/source.ts";
 import { archive, type ConsumerFixture, fixture, withArchive } from "./release-consumer-setup.ts";
 import { nativeCacheFixture, overlayFixture } from "./source-bundle-setup.ts";
 
+/** A release bound to its own native identity, or to `nativeSource`'s; `populateSource` adds files before binding. */
 export function boundRelease(
   f: ConsumerFixture,
   selected: string,
   nativeSource?: string,
-  options: { version?: string; populateSource?: (source: string) => void; headless?: boolean } = {},
+  options: { version?: string; populateSource?: (source: string) => void } = {},
 ) {
   const original = f.release(selected);
   const source = join(f.root, `bound-${selected}`);
   extractArchive(original.bundle.files, original.bundle.manifest, source);
-  const ulw = overlayFixture(source, join(f.root, `ulw-${selected}`), false, selected);
-  mkdirSync(join(source, "scripts/consumer"), { recursive: true, mode: 0o700 });
-  copyFileSync(
-    resolve(import.meta.dir, "../scripts/source-dependencies.ts"),
-    join(source, "scripts/source-dependencies.ts"),
-  );
-  copyFileSync(resolve(import.meta.dir, "../scripts/consumer/omp"), join(source, "scripts/consumer/omp"));
-  chmodSync(join(source, "scripts/consumer/omp"), 0o755);
-  // The source-bound marker that makes this a headless release target on both supported hosts. A frozen pre-19
-  // release keeps the historical source shape without it, so its own controller finds its native cache.
-  if (options.headless !== false)
-    writeFileSync(
-      join(source, "release-headless.json"),
-      JSON.stringify({
-        version: 1,
-        profiles: [
-          { platform: "linux", arch: "x64", runtime: "headless" },
-          { platform: "darwin", arch: "arm64", runtime: "headless" },
-        ],
-      }),
-      { mode: 0o600 },
-    );
   options.populateSource?.(source);
   if (nativeSource) {
-    mkdirSync(join(source, "native-addon"), { mode: 0o700 });
     for (const path of ["native-omp.lock", "native-omp.patch", "native-addon/package.json", "native-addon/bun.lock"])
       copyFileSync(join(nativeSource, path), join(source, path));
   } else {
-    const native = overlayFixture(source, join(f.root, `native-${selected}`), true, undefined, options.version);
+    const native = overlayFixture(source, join(f.root, `native-${selected}`), selected, options.version);
     nativeCacheFixture(source, f.paths.home, native.checkout);
   }
   const publicSource = sourceManifest(source);
@@ -62,23 +40,10 @@ export function boundRelease(
     validateReleaseManifest({
       ...original.bundle.manifest,
       source: publicSource,
-      requirements: {
-        ...original.bundle.manifest.requirements,
-        omp: readSourceBundle(source, true).lock.nativeVersion,
-      },
-      ompUlw: { repository: ulw.lock.repository, commit: ulw.commit },
+      requirements: { omp: readSourceBundle(source).lock.nativeVersion },
     }),
     bytes,
   );
-  const bundle = readSourceBundle(source);
-  const dependency = join(f.paths.dependencies, `omp-ulw-${ulw.commit}-${bundle.identity}`);
-  renameSync(ulw.checkout, dependency);
-  saveJson(`${dependency}.json`, {
-    version: 1,
-    repository: ulw.lock.repository,
-    commit: ulw.commit,
-    identity: bundle.identity,
-  });
   return { source, bundle: { manifest, files: readArchive(bytes, manifest) } };
 }
 
@@ -114,7 +79,7 @@ export function blockStatePublication(paths: ConsumerPaths, root: string, target
       ...paths,
       get state() {
         if (observed.length === 0 && pointer(paths.live) === target) {
-          observed.push(pointer(join(paths.dori, "bin/omp")));
+          observed.push(pointer(join(paths.cataly, "bin/omp")));
           return blocked;
         }
         return paths.state;
@@ -123,9 +88,9 @@ export function blockStatePublication(paths: ConsumerPaths, root: string, target
   };
 }
 
-export async function activationFixture(legacy: boolean) {
+export async function activationFixture() {
   const f = fixture();
-  const first = legacy ? { source: undefined, bundle: f.release("legacy").bundle } : boundRelease(f, "first");
+  const first = boundRelease(f, "first");
   const one = await installBundle(f.paths, first.bundle, undefined);
   const second = boundRelease(f, "second", first.source);
   const before = await installBundle(f.paths, second.bundle, one);
@@ -139,10 +104,10 @@ import { join } from "node:path";
 import { consumerPaths, pointer } from ${JSON.stringify(resolve(import.meta.dir, "../src/release/files.ts"))};
 import { activateRelease, loadInstalled, releasePath } from ${JSON.stringify(resolve(import.meta.dir, "../src/release/state.ts"))};
 const { home, before, after, phase } = JSON.parse(process.argv[1]);
-const paths = consumerPaths(home, join(home, ".dori"));
-const omp = join(paths.dori, "bin/omp");
+const paths = consumerPaths(home, join(home, ".cataly"));
+const omp = join(paths.cataly, "bin/omp");
 const target = releasePath(paths, after.current);
-const native = after.current.requirements.omp === "18.20.0" ? join(target, "scripts/consumer/omp") : undefined;
+const native = join(target, "scripts/consumer/omp");
 activateRelease({
   ...paths,
   get cataly() {

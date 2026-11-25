@@ -7,18 +7,16 @@ import { withState } from "./fakes.ts";
 const source = { botId: "70", ownerId: "7", channelId: "40", messageId: "50" } as const;
 const key = JSON.stringify(["70", "7", "40", "50", "30"]);
 
-test("legacy purpose maps migrate with their notes and a source receipt in one private file", async () => {
+test("purpose notes and their source receipt are written to one private file", async () => {
   const state = withState();
   try {
     const store = new DiscordChannels(state.dir);
-    const legacy = { "20": { purpose: "old note", name: "chat", updatedAt: "2026-11-19T00:00:00.000Z" } };
-    writeFileSync(store.path, JSON.stringify(legacy));
-    expect(store.read()).toEqual(legacy);
+    const note = await store.set("20", "old note", "chat", Date.parse("2026-11-19T00:00:00Z"));
     const entry = await store.set("30", "  goal  ", "tasks", 0, source);
-    expect(store.read()).toEqual({ ...legacy, "30": entry });
+    expect(store.read()).toEqual({ "20": note, "30": entry });
     expect(JSON.parse(readFileSync(store.path, "utf8"))).toEqual({
       version: 1,
-      notes: { ...legacy, "30": entry },
+      notes: { "20": note, "30": entry },
       receipts: { [key]: { source, channel: "30", purpose: "goal", result: entry } },
     });
     if (process.platform !== "win32") expect(statSync(store.path).mode & 0o777).toBe(0o600);
@@ -117,6 +115,7 @@ test("damaged source receipts are never silently discarded or overwritten", asyn
     const receipt = { source, channel: "30", purpose: "goal", result: entry };
     const good = { version: 1, notes: { "30": entry }, receipts: { [key]: receipt } };
     for (const damaged of [
+      { "30": entry },
       { ...good, version: 2 },
       { ...good, extra: true },
       { ...good, notes: [] },

@@ -49,7 +49,7 @@ export const telegramInbound = async (config: CatalyConfig, minutes: number, act
     throw new MessengerError("Telegram getWebhookInfo returned an invalid webhook status", 0);
   if (webhook.url !== "")
     throw new MessengerError("Telegram inbound refused an active webhook; use a polling bot (webhook unchanged)", 409);
-  using store = fileTgInboundStore(stateDir, identity.id);
+  const store = fileTgInboundStore(stateDir, identity.id);
   store.checkWritable();
   store.load();
   if (messengerProfileDefaultsEnabled() && typeof identity.first_name === "string")

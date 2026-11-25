@@ -61,7 +61,7 @@ export function pruneFixture(files = ownProcessFiles): PruneFixture {
   const refs = join(root, "refs");
   mkdirSync(refs);
   const native = (name: string, keepSource = false) => {
-    const f = overlayFixture(join(root, `source-${name}`), join(root, `upstream-${name}`), true, `${name} ${root}`);
+    const f = overlayFixture(join(root, `source-${name}`), join(root, `upstream-${name}`), `${name} ${root}`);
     const receipt = nativeCacheFixture(f.source, home, f.checkout);
     if (!keepSource) rmSync(f.source, { recursive: true });
     return receipt;

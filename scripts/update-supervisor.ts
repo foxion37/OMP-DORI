@@ -43,7 +43,7 @@ try {
 const env = { ...process.env };
 for (const key of Object.keys(env)) {
   if (
-    /^(?:CATALY|DORI)_.*(?:TOKEN|PASSWORD)$/.test(key) ||
+    /^CATALY_.*(?:TOKEN|PASSWORD)$/.test(key) ||
     ["SUDO_UID", "SUDO_GID", "SUDO_USER", "GH_TOKEN", "GITHUB_TOKEN"].includes(key)
   )
     delete env[key];

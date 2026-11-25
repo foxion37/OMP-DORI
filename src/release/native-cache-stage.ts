@@ -23,7 +23,7 @@ function openUnder(path: string, uses: UseHoldOptions): string[] {
 /**
  * What still uses a preparation whose owner ended: a lease on its identity, a process that names it or works or has a
  * file open in it (the owner's detached children: git, bun install), and everything the report cannot confirm (a
- * running Dori writer, unreadable working directories). Empty only when nothing may still finish or read it.
+ * running Cataly writer, unreadable working directories). Empty only when nothing may still finish or read it.
  */
 export function stageHolds(stage: string, readCwds: typeof processCwds, uses: UseHoldOptions): string[] {
   const cache = dirname(stage);

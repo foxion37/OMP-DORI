@@ -116,8 +116,8 @@ test("preview is side-effect free and actual launch ships the same prepared brie
     const launched = await launchLane(deps, input);
     // Then byte-for-byte shipped-copy equality protects preview/launch parity.
     expect(readFileSync(brief, "utf8")).toBe(preview.preamble);
-    expect(launched.lane.pane).toBe(sid(1));
-    expect(await deps.registry.read(lane.key)).toMatchObject({ key: lane.key, pane: sid(1), sessionRef: href(sid(1)) });
+    expect(launched.lane.sessionRef).toEqual(href(sid(1)));
+    expect(await deps.registry.read(lane.key)).toMatchObject({ key: lane.key, sessionRef: href(sid(1)) });
   } finally {
     state.done();
   }

@@ -34,14 +34,14 @@ posix.each(["normalization", "recovery"] as const)(
     const next = f.release("readback-next");
     const release = releasePath(f.paths, installed.current);
     // Native home lookup must see the real child startup environment, not an in-process HOME replacement.
-    const managed = join(f.paths.dori, "bin/omp");
+    const managed = join(f.paths.cataly, "bin/omp");
     const expected = [
       join(release, "scripts/consumer/omp"),
       "--no-extensions",
       "-e",
       join(release, "extension"),
       "--config",
-      join(f.paths.dori, "omp.yml"),
+      join(f.paths.cataly, "omp.yml"),
       "--config",
       join(f.paths.root, "consumer-discovery", basename(release), "omp.yml"),
     ];
@@ -65,7 +65,7 @@ posix.each(["normalization", "recovery"] as const)(
     };
     const probe = `
 const assert = (await import("node:assert/strict")).default;
-const { writeFileSync, renameSync } = await import("node:fs");
+const { writeFileSync } = await import("node:fs");
 const { dirname, join } = await import("node:path");
 const { homedir } = await import("node:os");
 const { loadConfig } = await import(process.argv[1]);
@@ -78,8 +78,6 @@ const mode = process.argv[4];
 if (mode === "recovery") {
   delete process.env.CATALY_AGENT_CMD;
   writeFileSync(config, JSON.stringify({ agentCommand: ["omp", ...suffix] }));
-  const dependency = dirname((await loadConfig(config, home)).ompUlwPath);
-  renameSync(dependency, dependency + ".held-by-fixture");
   const { consumerPaths } = await import(join(release, "src/release/files.ts"));
   const { loadInstalled } = await import(join(release, "src/release/state.ts"));
   const { acquireBundle } = await import(join(release, "src/release/bundle.ts"));
@@ -90,9 +88,8 @@ if (mode === "recovery") {
   const updated = await installBundle(paths, await acquireBundle({ from: nextDist }), rolled);
   assert.equal(updated.current.tag, nextTag);
   const receipt = await readback();
-  assert.equal(receipt.effective, "unavailable");
-  assert.equal(receipt.reason, "current-updater-runtime-unavailable");
-  assert.equal(receipt.overridden, null);
+  assert.equal(receipt.effective, "selected");
+  assert.deepEqual(receipt.overridden, []);
 } else if (mode === "foreign-home") {
   assert.notEqual(homedir(), home);
   assert.deepEqual((await loadConfig(config, home)).agentCommand, [...expected, ...suffix]);
@@ -110,7 +107,7 @@ if (mode === "recovery") {
   writeFileSync(config, JSON.stringify({ agentCommand: [managed, ...suffix] }));
   assert.deepEqual((await loadConfig(config, home)).agentCommand, [...expected, ...suffix]);
   process.env.CATALY_AGENT_ARGV = JSON.stringify(selected);
-  process.env.CATALY_AGENT_CMD = "touch ignored-legacy-command";
+  process.env.CATALY_AGENT_CMD = "touch ignored-shell-command";
   for (const first of ["omp", managed]) {
     writeFileSync(config, JSON.stringify({ agentCommand: [first, ...suffix] }));
     assert.deepEqual((await loadConfig(config, home)).agentCommand, [...selected, ...suffix]);
@@ -125,10 +122,10 @@ if (mode === "recovery") {
   process.env.CATALY_AGENT_CMD = managed;
   assert.deepEqual((await loadConfig(config, home)).agentCommand, [custom, ...suffix]);
   writeFileSync(config, JSON.stringify({ agentCommand: ["omp", ...suffix] }));
-  for (const legacy of [custom, "env CUSTOM='owner value' custom-agent --flag"]) {
-    process.env.CATALY_AGENT_CMD = legacy;
-    assert.equal(defaultDeps().agentCmd, legacy);
-    assert.deepEqual((await loadConfig(config, home)).agentCommand, [legacy, ...suffix]);
+  for (const command of [custom, "env CUSTOM='owner value' custom-agent --flag"]) {
+    process.env.CATALY_AGENT_CMD = command;
+    assert.equal(defaultDeps().agentCmd, command);
+    assert.deepEqual((await loadConfig(config, home)).agentCommand, [command, ...suffix]);
   }
   for (const raw of ["not json", "null", "{}", "[]", '["", "arg"]', '["omp", 1]', '"omp"']) {
     process.env.CATALY_AGENT_ARGV = raw;
@@ -155,7 +152,7 @@ console.log(JSON.stringify({ mode, checked: true }));
           env: {
             HOME: mode === "foreign-home" ? join(f.root, "foreign-home") : f.paths.home,
             PATH: process.env["PATH"],
-            CATALY_HOME: f.paths.dori,
+            CATALY_HOME: f.paths.cataly,
             CATALY_CONFIG: f.paths.config,
             CATALY_AGENT_CMD: managed,
             CATALY_TELEMETRY: "0",

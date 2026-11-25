@@ -6,10 +6,10 @@ import { doctorLocal } from "./doctor.ts";
 import type { FlowDeps } from "./done-flow.ts";
 import { holdLines } from "./holds.ts";
 import { shellQuote } from "./launch-footer.ts";
-import { hasTerminalScope, leadAddress } from "./lead-ref.ts";
+import { leadAddress } from "./lead-ref.ts";
 import type { Slack } from "./messenger/slack.ts";
 import { bootSessions } from "./boot-checks.ts";
-import { type BootLane, monitorCleanup, readMonitorManifests, terminalMonitorDirs } from "./boot-monitors.ts";
+import { type BootLane, monitorCleanup, readMonitorManifests } from "./boot-monitors.ts";
 import { type Lane, statusOf } from "./registry.ts";
 import { runtimesOf } from "./run.ts";
 import { ReportError } from "./report-events.ts";
@@ -29,7 +29,6 @@ export type BootDeps = Pick<FlowDeps, "run" | "registry" | "config" | "clock" | 
   readonly decisions?: Decisions;
   /** null when no Slack token is configured; boot then skips the check. */
   readonly slack: SlackCheck;
-  readonly monitorDirs?: readonly string[];
   /** How long the Slack step may take; withBackoff alone can retry for minutes. */
   readonly slackDeadlineMs?: number;
 };
@@ -161,14 +160,7 @@ export const bootCheck = async (deps: BootDeps): Promise<{ exitCode: number; lin
   const decisions = deps.decisions ? decisionBootLines(deps.decisions, deps.clock.now()) : undefined;
   lines.push(...(decisions?.lines ?? []));
   if (decisions?.failed) failed = true;
-  const terminal = hasTerminalScope(rts.choice?.kind, lanes, leadRef);
-  const { manifests, errors } = readMonitorManifests(
-    deps.config.sessionsDir,
-    deps.monitorDirs ?? (terminal ? terminalMonitorDirs(env) : []),
-    join(deps.config.stateDir, "monitors"),
-    terminal,
-  );
-  if (!terminal) lines.push("TERMINAL diagnostics skipped (no terminal session scope)");
+  const { manifests, errors } = readMonitorManifests(join(deps.config.stateDir, "monitors"));
   for (const path of errors) {
     failed = true;
     lines.push(`MONITORS unreadable ${shellQuote(path)}`);
@@ -177,25 +169,13 @@ export const bootCheck = async (deps: BootDeps): Promise<{ exitCode: number; lin
     `DOCTOR warn=${doctorLocal(deps.config, lanes, manifests).filter((finding) => finding.severity === "WARN").length} ignored=${deps.config.doctor?.ignore?.join(",") || "none"} (local advisory checks; run cataly doctor for details)`,
   );
   const cleanup = monitorCleanup(lanes, manifests);
-  // Live watches first, then delivery-paused ones (still running, so still stopped); an expired watch has ended on its
-  // own and gets no stop call.
   const now = deps.clock.now();
-  const expired = cleanup.filter((item) => item.expiresAt !== undefined && item.expiresAt <= now);
-  const running = cleanup.filter((item) => !expired.includes(item));
-  const ordered = [...running.filter((item) => !item.deliveryPaused), ...running.filter((item) => item.deliveryPaused)];
-  lines.push(
-    `MONITORS cleanupCandidates=${running.length} deliveryPaused=${running.filter((item) => item.deliveryPaused).length} expired=${expired.length} (from metadata; liveness unverified)`,
-  );
-  for (const item of ordered) {
+  lines.push(`MONITORS cleanupCandidates=${cleanup.length} (from metadata; liveness unverified)`);
+  for (const item of cleanup) {
     lines.push(
-      `CLEANUP ${item.lanes.join(",")} match=${item.match.join(",")} ownerSession=${item.sessionId} metadata=${shellQuote(item.metadata)}${item.suspended ? " suspended=true" : ""}${item.deliveryPaused ? " deliveryPaused=true" : ""}`,
+      `CLEANUP ${item.lanes.join(",")} match=${item.match.join(",")} ownerSession=${item.sessionId} metadata=${shellQuote(item.metadata)}`,
     );
     lines.push(`STOP in the owner session only: ${item.stop}`);
-  }
-  for (const item of expired) {
-    lines.push(
-      `EXPIRED ${item.lanes.join(",")} match=${item.match.join(",")} ownerSession=${item.sessionId} metadata=${shellQuote(item.metadata)} expiresAt=${new Date(item.expiresAt ?? 0).toISOString()}; nothing to stop`,
-    );
   }
   const scheduled = await (await import("./schedule-view.ts")).scheduleBoot(deps.config.stateDir, deps.run, now);
   lines.push(...scheduled.lines);

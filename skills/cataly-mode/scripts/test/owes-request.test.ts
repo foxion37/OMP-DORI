@@ -27,7 +27,7 @@ test("missing request or remote IDs are rejected before a marked owe can settle"
   });
 });
 
-test("legacy, malformed and foreign-request receipts never settle an owe", async () => {
+test("request-less, malformed and foreign-request receipts never settle an owe", async () => {
   await withDiscordCli(async (f) => {
     const state = dirname(f.tmp);
     const at = Date.now() - 100;

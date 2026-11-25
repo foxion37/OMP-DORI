@@ -8,27 +8,9 @@ import { flushInbox } from "../src/inbox.ts";
 import { lockInboxFiles, lockRoute, spoolMessage } from "../src/inbox-spool.ts";
 import { HeadlessRuntime, headlessArgv } from "../src/runtime/headless.ts";
 import { writePrivate } from "../src/runtime/headless-record.ts";
-import { LegacyRuntimeError, Runtimes } from "../src/runtime/registry.ts";
+import { Runtimes } from "../src/runtime/registry.ts";
 import { World } from "./fake.ts";
 import { captureIo } from "./inbox-setup.ts";
-
-test("up and stop leave a home with historical herdr/hc roles untouched; up names the upgrade steps", async () => {
-  const w = new World();
-  const d = w.deps();
-  const lead = { runtime: "hc", id: "t1" } as const;
-  const duty = { runtime: "herdr", id: "w1:p2" } as const;
-  d.store.setRole("lead", lead);
-  d.store.setRole("duty", duty);
-  try {
-    await expect(up(d, d.store.root)).rejects.toThrow(LegacyRuntimeError);
-    await expect(up(d, d.store.root)).rejects.toThrow("cataly update --retire-legacy-roles");
-    expect(w.created).toEqual([]);
-    expect((await captureIo(() => main(["stop"], d))).out).toInclude("STOPPED no owned native harness");
-    expect(d.store.roles()).toEqual({ lead, duty });
-  } finally {
-    rmSync(d.store.root, { recursive: true, force: true });
-  }
-});
 
 test.skipIf(process.platform === "win32")(
   "partial native start is retained until exact stop evidence exists",
@@ -141,7 +123,7 @@ test.skipIf(process.platform === "win32")("native stop and send refuse unowned r
     const lead = await rt.create({ name: "lead", role: "lead", cwd: root, env: {} });
     const duty = await rt.create({ name: "duty", role: "duty", cwd: root, env: {} });
     const ghost = await rt.create({ name: "lead", role: "lead", cwd: root, env: {} });
-    const terminal = { runtime: "hc", id: "t7" } as const;
+    const terminal = { runtime: "tern", id: "7" } as const;
     d.store.setRole("lead", lead);
     d.store.setRole("duty", duty);
     d.store.setRole("duty-loop", terminal);

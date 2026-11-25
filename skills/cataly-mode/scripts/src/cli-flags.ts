@@ -40,7 +40,6 @@ export const parseSkillFlags = (rest: string[]) =>
       context: { type: "boolean" },
       "activity-file": { type: "string" },
       "wake-lanes": { type: "boolean" },
-      "adopt-legacy-threads": { type: "string", multiple: true },
       purpose: { type: "string" },
       to: { type: "string" },
       for: { type: "string" },

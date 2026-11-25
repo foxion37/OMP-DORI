@@ -32,7 +32,7 @@ afterEach(() => {
 function fixture() {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "cataly-native-export-")));
   roots.push(root);
-  const upstream = overlayFixture(join(root, "bundle"), join(root, "upstream"), true);
+  const upstream = overlayFixture(join(root, "bundle"), join(root, "upstream"));
   const home = join(root, "home");
   const receipt = nativeCacheFixture(upstream.source, home, upstream.checkout);
   const checkout = join(receipt.directory, "source");
@@ -40,7 +40,7 @@ function fixture() {
   const manifestPath = join(checkout, "packages/coding-agent/src/export/html/viewer.generated.json");
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
   const viewer = join(assets, manifest.file);
-  const bundle = readSourceBundle(upstream.source, true);
+  const bundle = readSourceBundle(upstream.source);
   return { root, source: upstream.source, home, receipt, checkout, assets, manifestPath, manifest, viewer, bundle };
 }
 type Fixture = {
@@ -160,9 +160,4 @@ posix("valid export assets do not exempt unrelated untracked source or non-nativ
   expect(assertNativeExport(f.checkout)).toBe(true);
   expect(() => assertSourceBundle(f.checkout, f.bundle, f.home)).toThrow("unexpected untracked");
   expect(() => assertNativeSource(f.source, f.home)).toThrow("unexpected untracked");
-  const ulw = overlayFixture(join(f.root, "ulw-bundle"), join(f.root, "ulw-upstream"));
-  const assets = join(ulw.checkout, "packages/coding-agent/export-assets");
-  mkdirSync(assets, { recursive: true, mode: 0o700 });
-  writeFileSync(join(assets, f.manifest.file), readFileSync(f.viewer), { mode: 0o600 });
-  expect(() => assertSourceBundle(ulw.checkout, readSourceBundle(ulw.source), f.home)).toThrow("unexpected untracked");
 });

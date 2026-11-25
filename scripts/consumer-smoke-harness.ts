@@ -32,7 +32,7 @@ const manifest = validateReleaseManifest(
 assert.equal(source, join(side, "releases/releases", `${manifest.commit}-${manifest.source.hash.slice(0, 16)}`));
 assert.equal(realpathSync(join(side, "src")), source, "Installed source differs from the explicitly expected release");
 assert.deepEqual(JSON.parse(readFileSync(join(side, "releases/consumer-installed.json"), "utf8")).current, manifest);
-assert.equal(manifest.requirements.omp, readSourceBundle(source, true).lock.nativeVersion);
+assert.equal(manifest.requirements.omp, readSourceBundle(source).lock.nativeVersion);
 const harness = manifest.source.files.find((file) => file.path === "src/harness.ts");
 assert(harness, "Admitted release must contain its actual harness");
 const harnessHash = digest(readFileSync(join(source, harness.path)));
@@ -80,7 +80,6 @@ source "$observer_side/bin/cataly-harness" "$@"
         CATALY_STATE_DIR: "foreign-state",
         CATALY_RUNTIME: explicitRuntime,
         CATALY_PROMPTS_DIR: "foreign-prompts",
-        CATALY_OMP_ULW_PATH: "/foreign/ulw/index.ts",
         CATALY_MANAGED_STARTUP: "1",
       },
       stdin: "ignore",
@@ -114,13 +113,7 @@ source "$observer_side/bin/cataly-harness" "$@"
     explicitRuntime,
     "Explicit execution selection did not cross the wrapper",
   );
-  const cleared = [
-    "CATALY_AGENT_ARGV",
-    "CATALY_STATE_DIR",
-    "CATALY_PROMPTS_DIR",
-    "CATALY_OMP_ULW_PATH",
-    "CATALY_MANAGED_STARTUP",
-  ];
+  const cleared = ["CATALY_AGENT_ARGV", "CATALY_STATE_DIR", "CATALY_PROMPTS_DIR", "CATALY_MANAGED_STARTUP"];
   for (const key of cleared) assert.equal(process.env[key], undefined, `Foreign ${key} crossed the wrapper`);
   const discovery = join(side, "releases/consumer-discovery", basename(source), "omp.yml");
   assert(lstatSync(discovery).isFile(), "The admitted physical release's discovery config is missing");

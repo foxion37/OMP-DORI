@@ -21,7 +21,8 @@ test("shared inbound settings deduplicate legacy and plural channel IDs in their
   });
 });
 
-// Drives the real native receiver against a loopback REST stand-in; the receiver route is its published scope.
+// Drives the real native receiver against a loopback REST stand-in; the receiver route is its published scope, found
+// only when its process identity matches discord-ask-receiver.ts's for the same PID on Linux and macOS.
 test.skipIf(process.platform === "win32" || !nativeDiscordBinary())(
   "shared inbound settings preserve the receiver channel set across duplicate singular and plural IDs",
   async () => {

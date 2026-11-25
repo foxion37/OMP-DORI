@@ -29,7 +29,7 @@ process.env["CATALY_CONFIG"] = config;
 const lane = {
   key: "native-request", title: "Native Bash request", thread: "none", brief: "/brief", done: "file /done",
   openedAt: new Date().toISOString(), reportProtocol: "jsonl-v1", requestId: "discord:111111111111111111:222222222222222222",
-  runId, session: "native-bash-request", sessionRef: { runtime: "herdr", id: "w1:p9" },
+  runId, session: "native-bash-request", sessionRef: { runtime: "tern", id: "9" },
 } as const;
 await new Registry(stateDir).write(lane);
 recordExecution(stateDir, lane, Date.now());

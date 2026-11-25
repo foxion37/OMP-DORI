@@ -48,10 +48,7 @@ export function discordAskToken(route: DiscordAskRoute): string {
   const contents = readPrivateAskFile(route.tokenFile, 16_384);
   const token =
     route.tokenFileFormat === "dotenv"
-      ? (/^(?:export[ \t]+)?CATALY_DISCORD_TOKEN=.*$/m.test(contents ?? "")
-          ? /^(?:export[ \t]+)?CATALY_DISCORD_TOKEN=(?:"([\w.-]+)"|'([\w.-]+)'|([\w.-]+))[ \t]*\r?$/m
-          : /^(?:export[ \t]+)?DORI_DISCORD_TOKEN=(?:"([\w.-]+)"|'([\w.-]+)'|([\w.-]+))[ \t]*\r?$/m
-        )
+      ? /^(?:export[ \t]+)?CATALY_DISCORD_TOKEN=(?:"([\w.-]+)"|'([\w.-]+)'|([\w.-]+))[ \t]*\r?$/m
           .exec(contents ?? "")
           ?.slice(1)
           .find(Boolean)

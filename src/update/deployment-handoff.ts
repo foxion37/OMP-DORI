@@ -47,7 +47,7 @@ export function convergedHealth(
   const health = leadRuntimeHealth(config.stateDir, runtime);
   if (
     !health ||
-    !health.presetLoaded ||
+    !health.configLoaded ||
     realpathSync(health.source) !== realpathSync(source) ||
     Date.parse(health.updatedAt) < since ||
     Date.now() - Date.parse(health.updatedAt) > 5_000 ||

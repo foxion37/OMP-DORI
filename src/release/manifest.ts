@@ -11,8 +11,6 @@ const PRIVATE: Readonly<Record<string, true>> = {
   node_modules: true,
   ".cataly": true,
   ".omp-cataly": true,
-  ".dori": true,
-  ".omp-dori": true,
   ".omp": true,
   ".omo": true,
   ".cache": true,
@@ -34,6 +32,17 @@ const RUNTIME: Readonly<Record<string, true>> = {
   ".qa-home": true,
   evidence: true,
 };
+/** Every release ships its bound native OMP payload, headless profiles and consumer launcher. */
+const REQUIRED = [
+  "native-omp.lock",
+  "native-omp.patch",
+  "native-addon/package.json",
+  "native-addon/bun.lock",
+  "release-headless.json",
+  "scripts/source-dependencies.ts",
+  "scripts/previous-install/cli.ts",
+  "scripts/consumer/omp",
+] as const;
 
 function record(value: unknown, keys: string[], label: string): Record<string, unknown> {
   if (!object(value) || Object.keys(value).sort().join("\0") !== keys.sort().join("\0")) {
@@ -61,15 +70,14 @@ export function publicReleasePath(path: string): boolean {
 }
 
 function sourceManifest(value: unknown): SourceManifest {
-  const source = record(value, ["version", "hash", "files", "excluded", "ulwPresent"], "source manifest");
+  const source = record(value, ["version", "hash", "files", "excluded"], "source manifest");
   if (
     source["version"] !== 1 ||
-    source["ulwPresent"] !== false ||
     !matches(source["hash"], HASH) ||
     !Array.isArray(source["files"]) ||
     !source["files"].length ||
     !Array.isArray(source["excluded"]) ||
-    (source["excluded"].length > 0 && JSON.stringify(source["excluded"]) !== '["ref/omp-ulw"]')
+    source["excluded"].length > 0
   ) {
     throw new Error("Release source must be a complete public SourceManifest");
   }
@@ -94,10 +102,10 @@ function sourceManifest(value: unknown): SourceManifest {
     paths.add(path);
     files.push({ path, sha256: entry["sha256"], executable: entry["executable"] });
   }
-  if (digest(JSON.stringify({ files, ulwPresent: false })) !== source["hash"]) {
+  if (digest(JSON.stringify({ files })) !== source["hash"]) {
     throw new Error("Release source manifest hash does not match its files and executable modes");
   }
-  return { version: 1, hash: source["hash"], files, excluded: [...source["excluded"]], ulwPresent: false };
+  return { version: 1, hash: source["hash"], files, excluded: [] };
 }
 
 /** Validates metadata before any archive download, extraction, dependency fetch or source activation. */
@@ -115,14 +123,13 @@ export function validateReleaseManifest(value: unknown): ReleaseManifest {
       "archive",
       "source",
       "requirements",
-      "ompUlw",
     ],
     "manifest",
   );
   const version = manifest["releaseVersion"];
   if (
-    manifest["version"] !== 1 ||
-    manifest["product"] !== "omp-dori" ||
+    manifest["version"] !== 2 ||
+    manifest["product"] !== "cataly" ||
     !isReleaseVersion(version) ||
     manifest["tag"] !== `v${version}` ||
     !matches(manifest["commit"], COMMIT) ||
@@ -133,8 +140,8 @@ export function validateReleaseManifest(value: unknown): ReleaseManifest {
   }
   const archive = record(manifest["archive"], ["name", "root", "sha256", "bytes"], "archive");
   if (
-    archive["name"] !== `omp-dori-v${version}.tar.gz` ||
-    archive["root"] !== `omp-dori-${version}` ||
+    archive["name"] !== `cataly-v${version}.tar.gz` ||
+    archive["root"] !== `cataly-${version}` ||
     !matches(archive["sha256"], HASH) ||
     typeof archive["bytes"] !== "number" ||
     !Number.isSafeInteger(archive["bytes"]) ||
@@ -142,72 +149,31 @@ export function validateReleaseManifest(value: unknown): ReleaseManifest {
   ) {
     throw new Error("Release archive name/root/digest/size is invalid");
   }
-  const requirements = record(
-    manifest["requirements"],
-    ["platform", "arch", "bun", "omp", "runtime", "messenger"],
-    "requirements",
-  );
+  const requirements = record(manifest["requirements"], ["omp"], "requirements");
   const omp = requirements["omp"];
-  if (omp !== "18.18.8" && omp !== "18.20.0" && !matches(omp, /^19\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/))
+  if (!matches(omp, /^19\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/))
     throw new Error("Release requirements do not match the supported runtime");
-  // A frozen v1 schema: these literals no longer describe the host or session runtime (releases run headless on Linux
-  // x64 and macOS arm64, per release-headless.json), but older installed updaters validate them exactly.
-  const supported = {
-    platform: "linux",
-    arch: "x64",
-    bun: "1.4.4",
-    omp,
-    runtime: "herdr",
-    messenger: "discord",
-  } as const;
-  if (Object.entries(supported).some(([key, expected]) => requirements[key] !== expected)) {
-    throw new Error("Release requirements do not match the supported runtime");
-  }
-  const ompUlw = record(manifest["ompUlw"], ["repository", "commit"], "omp-ulw pin");
-  if (ompUlw["repository"] !== "https://github.com/dbc-hbin/omp-ulw.git" || !matches(ompUlw["commit"], COMMIT)) {
-    throw new Error("Release omp-ulw repository/pin is invalid");
-  }
   const publicSource = sourceManifest(manifest["source"]);
-  if (
-    supported.omp === "18.18.8" &&
-    publicSource.files.some((file) =>
-      ["native-omp.lock", "native-omp.patch", "omp-ulw.overlay.lock", "omp-ulw.patch"].includes(file.path),
-    )
-  )
-    throw new Error("New source-bundle payloads cannot use the older no-lock release protocol");
-  if (supported.omp !== "18.18.8") {
-    for (const path of [
-      "omp-ulw.lock",
-      "omp-ulw.overlay.lock",
-      "omp-ulw.patch",
-      "native-omp.lock",
-      "native-omp.patch",
-      "native-addon/package.json",
-      "native-addon/bun.lock",
-      "scripts/source-dependencies.ts",
-      "scripts/consumer/omp",
-    ])
-      if (!publicSource.files.some((file) => file.path === path))
-        throw new Error(`Release source bundle is incomplete: ${path}`);
-    if (!publicSource.files.find((file) => file.path === "scripts/consumer/omp")?.executable)
-      throw new Error("Release source bundle OMP wrapper must be executable");
-  }
+  for (const path of REQUIRED)
+    if (!publicSource.files.some((file) => file.path === path))
+      throw new Error(`Release source bundle is incomplete: ${path}`);
+  if (!publicSource.files.find((file) => file.path === "scripts/consumer/omp")?.executable)
+    throw new Error("Release source bundle OMP wrapper must be executable");
   return {
-    version: 1,
-    product: "omp-dori",
+    version: 2,
+    product: "cataly",
     releaseVersion: version,
     tag: `v${version}`,
     commit: manifest["commit"],
     tree: manifest["tree"],
     prerelease: manifest["prerelease"],
     archive: {
-      name: `omp-dori-v${version}.tar.gz`,
-      root: `omp-dori-${version}`,
+      name: `cataly-v${version}.tar.gz`,
+      root: `cataly-${version}`,
       sha256: archive["sha256"],
       bytes: archive["bytes"],
     },
     source: publicSource,
-    requirements: supported,
-    ompUlw: { repository: "https://github.com/dbc-hbin/omp-ulw.git", commit: ompUlw["commit"] },
+    requirements: { omp },
   };
 }

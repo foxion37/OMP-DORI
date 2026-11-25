@@ -146,7 +146,7 @@ pub(super) async fn run(options: Options) -> Result<()> {
     let inbox = Inbox::open(&cursors, bot, owner, ledger)?;
     let head = Head {
         ipc: ipc.as_ref(),
-        protocol: admission::protocol(),
+        protocol: admission::PROTOCOL,
     };
     head.reconcile(&inbox, &cursors).await?;
     if !options.gateway && inbox.has_pending()? {

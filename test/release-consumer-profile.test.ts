@@ -2,13 +2,14 @@ import { expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fixture } from "./release-consumer-setup.ts";
+import { boundRelease, releaseDist } from "./release-native-recovery-setup.ts";
 
 // POSIX-only: release installation refuses non-private directories by POSIX mode bits.
 const posix = test.skipIf(process.platform === "win32");
 
 function consumer(side: boolean, platform: string, arch: string) {
   const f = fixture(true);
-  const home = join(f.paths.home, side ? ".omp-dori" : ".dori");
+  const home = join(f.paths.home, side ? ".omp-cataly" : ".cataly");
   mkdirSync(home, { recursive: true });
   const config = join(home, "config.json");
   const env = { HOME: f.paths.home, PATH: process.env["PATH"] ?? "", CATALY_HOME: home, CATALY_CONFIG: config };
@@ -37,11 +38,16 @@ posix.each([
   ["linux/x64 side", { platform: "linux", arch: "x64", side: true }],
   ["darwin/arm64 primary", { platform: "darwin", arch: "arm64", side: false }],
   ["darwin/arm64 side", { platform: "darwin", arch: "arm64", side: true }],
-] as const)("%s refuses a historical terminal-only release target", (_, { platform, arch, side }) => {
+] as const)("%s refuses a release target without its host profile", (_, { platform, arch, side }) => {
   const c = consumer(side, platform, arch);
   const preserved = JSON.stringify({ defaultModel: "owner/model", ownerValue: "unchanged" });
   writeFileSync(c.config, preserved);
-  const release = c.f.release("historical profile\n");
+  const other = platform === "linux" ? { platform: "darwin", arch: "arm64" } : { platform: "linux", arch: "x64" };
+  const profiles = JSON.stringify({ version: 1, profiles: [{ ...other, runtime: "headless" }] });
+  const bound = boundRelease(c.f, "foreign profile", undefined, {
+    populateSource: (source) => writeFileSync(join(source, "release-headless.json"), profiles),
+  });
+  const release = { dist: releaseDist(join(c.f.root, "dist-foreign"), bound.bundle) };
   for (const command of ["check", "install"]) {
     const result = c.cli([command, "--home", c.home, "--from", release.dist]);
     expect(result.exitCode).toBe(2);
@@ -51,31 +57,35 @@ posix.each([
   }
 });
 
-posix.each([{ runtime: "herdr" }, { runtime: "hc" }, { sessionRuntime: "herdr" }, { sessionRuntime: "hc" }])(
-  "a preserved legacy selection %j stops check, install and rollback with upgrade instructions",
-  (selection) => {
+posix.each([
+  [{ runtime: "headless" }, "Preserved config runtime must be tern when present"],
+  [{ sessionRuntime: "terminal" }, "Preserved config sessionRuntime must be headless or tern when present"],
+] as const)(
+  "a preserved unsupported selection %j stops check and install by ordinary validation",
+  (selection, error) => {
     const c = consumer(false, "linux", "x64");
     const preserved = JSON.stringify({ defaultModel: "owner/model", ...selection });
     writeFileSync(c.config, preserved);
-    const release = c.f.release("legacy config\n");
-    for (const argv of [["check", "--from", release.dist], ["install", "--from", release.dist], ["rollback"]]) {
+    const release = c.f.release("unsupported config\n");
+    for (const argv of [
+      ["check", "--from", release.dist],
+      ["install", "--from", release.dist],
+    ]) {
       const result = c.cli([...argv, "--home", c.home]);
       expect(result.exitCode).toBe(2);
-      const stderr = result.stderr.toString();
-      expect(stderr).toContain("This Cataly home still uses the herdr/hc terminal runtime");
-      expect(stderr).toContain(`Remove "runtime" (if it names herdr or hc) and "sessionRuntime" from ${c.config}.`);
+      expect(result.stderr.toString()).toContain(error);
       expect(readFileSync(c.config, "utf8")).toBe(preserved);
       c.unchanged();
     }
   },
 );
 
-posix("the removed legacy release flags are rejected", () => {
+posix("unknown release commands and flags are rejected", () => {
   const c = consumer(false, "linux", "x64");
   for (const argv of [
-    ["install", "--runtime", "herdr"],
-    ["retire-legacy-roles", "--home", c.home],
-    ["install", "--legacy-session", "default"],
+    ["install", "--runtime", "tern"],
+    ["retire-roles", "--home", c.home],
+    ["install", "--session", "default"],
   ]) {
     const result = c.cli(argv);
     expect(result.exitCode).toBe(2);

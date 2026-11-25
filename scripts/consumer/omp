@@ -24,20 +24,10 @@ case $releases in
           consumer_home=${releases%/releases/releases}
           consumer_config=$consumer_home/config.json
           if [ "${CATALY_HOME-$consumer_home}" != "$consumer_home" ] || [ "${CATALY_CONFIG-$consumer_config}" != "$consumer_config" ]; then
-            unset CATALY_STATE_DIR CATALY_CMD CATALY_AGENT_CMD CATALY_AGENT_ARGV CATALY_OMP_ULW_PATH
+            unset CATALY_STATE_DIR CATALY_CMD CATALY_AGENT_CMD CATALY_AGENT_ARGV
             unset CATALY_PROMPTS_DIR
           fi
-          if [ "${DORI_HOME-$consumer_home}" != "$consumer_home" ] || [ "${DORI_CONFIG-$consumer_config}" != "$consumer_config" ]; then
-            unset DORI_STATE_DIR DORI_CMD DORI_AGENT_CMD DORI_AGENT_ARGV DORI_OMP_ULW_PATH
-            unset DORI_PROMPTS_DIR
-          fi
-          # A no-update fence survives conflicting context and either generation's environment import.
-          if [ "${CATALY_MANAGED_STARTUP:-}" = 1 ] || [ "${DORI_MANAGED_STARTUP:-}" = 1 ]; then
-            export CATALY_MANAGED_STARTUP=1 DORI_MANAGED_STARTUP=1
-          fi
-          # The next launcher may belong to the historical release after a source switch.
           export CATALY_HOME="$consumer_home" CATALY_CONFIG="$consumer_config"
-          export DORI_HOME="$consumer_home" DORI_CONFIG="$consumer_config"
         fi
         ;;
     esac

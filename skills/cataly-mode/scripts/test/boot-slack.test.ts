@@ -20,7 +20,7 @@ afterEach(() => state.done());
 
 const bootDeps = (world: World, slack: () => Promise<{ userId: string; teamId: string } | null> = async () => null) => {
   const sessionsDir = join(state.dir, "sessions");
-  const deps = depsFor(world, fakeClock(T0), state.dir, { sessionsDir, leadPane: "w2:p1" });
+  const deps = depsFor(world, fakeClock(T0), state.dir, { sessionsDir, leadPane: "tern:5001" });
   return { ...deps, reports: new Reports(state.dir), worklog: new Worklog(state.dir), slack, sessionsDir };
 };
 
@@ -152,7 +152,7 @@ test("Slack runs after the local checks and a stalled auth.test ends at the dead
   // When boot runs with a short deadline.
   const result = await bootCheck({ ...bootDeps(world, stalled), slackDeadlineMs: 20 });
   // Then the pane list ran first, the stall is reported as a timeout, and the run is incomplete.
-  expect(localCallsFirst).toBe(1);
+  expect(localCallsFirst).toBe(2);
   expect(result.lines).toContain("SLACK auth.test timed out after 20 ms");
   expect(result.lines.at(-1)).toBe("BOOT incomplete read-only; nothing restarted, written or stopped");
   expect(result.exitCode).toBe(1);

@@ -6,6 +6,7 @@
         "scripts/update-supervisor.ts",
         "scripts/source-dependencies.ts",
         "scripts/source-configuration.ts",
+        "scripts/previous-install/cli.ts",
         "scripts/check-native-doctor.ts",
         "scripts/verify-consumer-release.ts",
         "scripts/consumer-smoke-candidate.ts",
@@ -13,7 +14,7 @@
         "src/update/deployment-launcher.ts",
         "src/release/automatic.ts",
         "src/release/references.ts",
-        "src/runtime/headless-broker.ts",
+        "src/runtime/headless-loop.ts",
         "src/update/reviewer-guard.ts",
         "src/update/worker-guard.ts",
         "test/fixtures/headless-rpc.ts",
@@ -35,7 +36,7 @@
       "project": ["src/**/*.ts", "test/**/*.ts"]
     },
     "extension": {
-      "entry": ["index.ts", "test/**/*.test.ts", "test/fake-ulw.ts", "test/record-head-inbound.ts"],
+      "entry": ["index.ts", "test/**/*.test.ts", "test/record-head-inbound.ts"],
       "project": ["**/*.ts"]
     },
     "test/fixtures/omp-native-host": {

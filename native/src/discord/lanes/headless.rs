@@ -1,30 +1,24 @@
-//! The detached headless runtime's on-disk records and local HTTP endpoint (`src/runtime/headless-record.ts`,
-//! `headless-lifecycle.ts`, `discord-lane-headless-state.ts`).
-//!
-//! `<state>/headless/<uuid>/` holds `reservation.json`, `started`, `endpoint.json`, `stopped.json` and the lane
-//! extension's `discord-lane.json`, each owner-only. A broker (`headless-broker.ts`) serves `{"op":"observe"}` and
-//! friends over the Unix socket named in `endpoint.json`, authorized by its 64-hex key.
+//! The Discord lane's view of the detached headless runtime (`headless-lifecycle.ts`,
+//! `discord-lane-headless-state.ts`): observation, the extension's `discord-lane.json` receiver, reservation and
+//! the detached start. The shared owner-only records and the endpoint client live in `crate::headless`.
 
 use std::collections::BTreeMap;
 use std::fs::{self, DirBuilder, OpenOptions};
-use std::io::ErrorKind;
-use std::os::unix::fs::{DirBuilderExt as _, MetadataExt as _, OpenOptionsExt as _};
-use std::path::{Path, PathBuf};
+use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _};
+use std::path::Path;
 use std::process::Stdio;
-use std::time::Duration;
 
 use anyhow::{Context as _, Result, anyhow, bail, ensure};
 use serde::Serialize;
-use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+use tokio::io::AsyncWriteExt as _;
 
-use super::json::Json;
 use super::registry::{Lane, int_field};
-use super::util::{
-    RECORD_LIMIT, is_uuid, iso, now_ms, parse_iso, read_limited, replace_file, uuid,
+use crate::headless::http::client::request_host;
+use crate::headless::record::{
+    Entry, data_dir, lane_dir, lane_entry, private_dir, read_private, write_private,
 };
-
-const OBSERVE_DEADLINE: Duration = Duration::from_secs(20);
-const RESPONSE_LIMIT: usize = 4 * 1024 * 1024;
+use crate::json::Json;
+use crate::util::{is_uuid, iso, now_ms, parse_iso, uuid};
 
 /// A headless session reference (`{runtime:"headless", id, group?}`).
 #[derive(Clone, Debug, PartialEq)]
@@ -59,92 +53,6 @@ impl HeadlessRef {
         }
         Json::object(fields)
     }
-}
-
-fn data_dir(state: &Path) -> PathBuf {
-    state.join("headless")
-}
-
-/// `laneDir`: refuses an id that is not a lowercase UUID.
-pub(super) fn lane_dir(state: &Path, reference: &HeadlessRef) -> Result<PathBuf> {
-    ensure!(
-        is_uuid(&reference.id, false),
-        "invalid headless session ref"
-    );
-    Ok(data_dir(state).join(&reference.id))
-}
-
-fn uid() -> u32 {
-    rustix::process::getuid().as_raw()
-}
-
-/// `privateDir`.
-fn private_dir(dir: &Path) -> Result<()> {
-    let stat = fs::symlink_metadata(dir)?;
-    ensure!(
-        stat.is_dir() && stat.uid() == uid() && stat.mode().trailing_zeros() >= 6,
-        "headless state directory is not owner-only"
-    );
-    Ok(())
-}
-
-/// `readPrivate`: absent is `None`; a non-private file or non-object record is an error.
-pub(super) fn read_private(path: &Path) -> Result<Option<Json>> {
-    let stat = match fs::symlink_metadata(path) {
-        Ok(stat) => stat,
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error.into()),
-    };
-    ensure!(
-        stat.is_file() && stat.uid() == uid() && stat.mode().trailing_zeros() >= 6,
-        "headless state file is not owner-only"
-    );
-    let bytes = match read_limited(path, RECORD_LIMIT) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error.into()),
-    };
-    let value: Json = serde_json::from_slice(&bytes)?;
-    ensure!(value.is_object(), "invalid headless state record");
-    Ok(Some(value))
-}
-
-/// `writePrivate`: `JSON.stringify(value)` to `<path>.<uuid>` (exclusive, 0600), then rename.
-fn write_private(path: &Path, value: &Json) -> Result<()> {
-    let temporary = super::util::sibling(path, &format!(".{}", uuid()?));
-    replace_file(path, &temporary, &value.compact())
-}
-
-pub(super) struct Entry {
-    pub(super) dir: PathBuf,
-    pub(super) reservation: Json,
-}
-
-/// `laneEntry`.
-pub(super) fn lane_entry(state: &Path, reference: &HeadlessRef) -> Result<Option<Entry>> {
-    let dir = lane_dir(state, reference)?;
-    if !data_dir(state).exists() || !dir.exists() {
-        return Ok(None);
-    }
-    private_dir(&data_dir(state))?;
-    private_dir(&dir)?;
-    let reservation = read_private(&dir.join("reservation.json"))?;
-    let valid = reservation.as_ref().is_some_and(|reservation| {
-        let reference_ok = reservation.get("ref").is_some_and(|r| {
-            r.str("runtime") == Some("headless") && r.str("id") == Some(reference.id.as_str())
-        });
-        let role_ok = reservation.get("role").is_none_or(|role| {
-            matches!(
-                role.as_str(),
-                Some("lane" | "lead" | "duty" | "duty-loop" | "hourly-loop")
-            )
-        });
-        reference_ok && role_ok
-    });
-    let Some(reservation) = reservation.filter(|_| valid) else {
-        bail!("headless reservation identity unreadable");
-    };
-    Ok(Some(Entry { dir, reservation }))
 }
 
 /// A broker observation (`HeadlessObservation`) as far as lane checks read it.
@@ -191,7 +99,7 @@ impl Observation {
             None => None,
             Some(role) => match role.as_str() {
                 Some("lane") => Some("lane".to_owned()),
-                Some("cataly" | "dori") => Some("cataly".to_owned()),
+                Some("cataly") => Some("cataly".to_owned()),
                 _ => bail!("invalid headless runtime role"),
             },
         };
@@ -216,115 +124,9 @@ impl Observation {
     }
 }
 
-fn endpoint_socket(endpoint: &Json) -> Option<(&str, &str)> {
-    let socket = endpoint.str("socket")?;
-    let name = socket
-        .strip_prefix("/tmp/cataly-rpc-")?
-        .strip_suffix("/socket")?;
-    if name.is_empty() || !name.bytes().all(|b| b.is_ascii_alphanumeric()) {
-        return None;
-    }
-    endpoint.str("key").map(|key| (socket, key))
-}
-
-/// One HTTP/1.1 POST over the broker's Unix socket; returns the reply body.
-async fn post(socket: &str, key: &str, body: &str) -> Result<Vec<u8>> {
-    let mut stream = tokio::net::UnixStream::connect(socket).await?;
-    let request = format!(
-        "POST / HTTP/1.1\r\nHost: localhost\r\nAuthorization: {key}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-        body.len()
-    );
-    stream.write_all(request.as_bytes()).await?;
-    let mut bytes = Vec::new();
-    let mut chunk = vec![0_u8; 16 * 1024];
-    loop {
-        let read = stream.read(&mut chunk).await?;
-        if read == 0 {
-            break;
-        }
-        ensure!(
-            bytes.len() + read <= RESPONSE_LIMIT,
-            "headless reply too large"
-        );
-        bytes.extend_from_slice(&chunk[..read]);
-        if let Some(body) = complete_body(&bytes, false)? {
-            return Ok(body);
-        }
-    }
-    complete_body(&bytes, true)?.ok_or_else(|| anyhow!("incomplete headless reply"))
-}
-
-/// The body of a complete HTTP response in `bytes`, or `None` while more bytes are needed. At `eof`, a response
-/// without a length runs to the end of the stream.
-fn complete_body(bytes: &[u8], eof: bool) -> Result<Option<Vec<u8>>> {
-    let Some(end) = bytes.windows(4).position(|w| w == b"\r\n\r\n") else {
-        return Ok(None);
-    };
-    let head = std::str::from_utf8(&bytes[..end])?;
-    let mut lines = head.split("\r\n");
-    let status = lines.next().unwrap_or_default();
-    let code = status.split(' ').nth(1).unwrap_or_default();
-    ensure!(code.starts_with('2'), "HTTP {code}");
-    let mut length = None;
-    let mut chunked = false;
-    for line in lines {
-        let Some((name, value)) = line.split_once(':') else {
-            continue;
-        };
-        let value = value.trim();
-        if name.eq_ignore_ascii_case("content-length") {
-            length = Some(value.parse::<usize>()?);
-        } else if name.eq_ignore_ascii_case("transfer-encoding")
-            && value.eq_ignore_ascii_case("chunked")
-        {
-            chunked = true;
-        }
-    }
-    let rest = &bytes[end + 4..];
-    if chunked {
-        let mut body = Vec::new();
-        let mut at = 0;
-        loop {
-            let Some(line) = rest[at..].windows(2).position(|w| w == b"\r\n") else {
-                return Ok(None);
-            };
-            let size_text = std::str::from_utf8(&rest[at..at + line])?;
-            let size = usize::from_str_radix(size_text.split(';').next().unwrap_or("").trim(), 16)?;
-            at += line + 2;
-            if size == 0 {
-                return Ok(Some(body));
-            }
-            if rest.len() < at + size + 2 {
-                return Ok(None);
-            }
-            body.extend_from_slice(&rest[at..at + size]);
-            at += size + 2;
-        }
-    }
-    let complete = length.map_or(eof, |length| rest.len() >= length);
-    Ok(complete.then(|| rest[..length.unwrap_or(rest.len())].to_vec()))
-}
-
-/// `requestHost(stateDir, ref, request)`; transport failures are errors.
-async fn request_host(entry: &Entry, request: &Json) -> Result<Json> {
-    let endpoint = read_private(&entry.dir.join("endpoint.json"))?
-        .ok_or_else(|| anyhow!("headless host endpoint missing or invalid"))?;
-    let (socket, key) = endpoint_socket(&endpoint)
-        .ok_or_else(|| anyhow!("headless host endpoint missing or invalid"))?;
-    let body = tokio::time::timeout(OBSERVE_DEADLINE, post(socket, key, &request.compact()))
-        .await
-        .context("headless local transport unconfirmed")??;
-    let reply: Json = serde_json::from_slice(&body).context("invalid response")?;
-    match reply.get("ok") {
-        Some(Json::Bool(true)) => Ok(reply.get("value").cloned().unwrap_or(Json::Null)),
-        Some(Json::Bool(false)) => bail!("{}", reply.str("error").unwrap_or("headless host error")),
-        _ => bail!("invalid response"),
-    }
-}
-
 /// `observeHost`.
 pub(super) async fn observe(state: &Path, reference: &HeadlessRef) -> Result<Observation> {
-    let entry = lane_entry(state, reference)?;
+    let entry = lane_entry(state, &reference.id)?;
     let Some(entry) = entry else {
         return Ok(Observation::base("gone", reference, None));
     };
@@ -366,7 +168,7 @@ pub(super) async fn hosts(state: &Path) -> Result<Vec<(HeadlessRef, Observation)
     let mut out = Vec::new();
     for id in ids {
         let reference = HeadlessRef { id, group: None };
-        if lane_entry(state, &reference)?.is_none() {
+        if lane_entry(state, &reference.id)?.is_none() {
             continue;
         }
         let seen = observe(state, &reference).await?;
@@ -422,7 +224,7 @@ pub(super) fn receiver(state: &Path, lane: &Lane) -> Result<Option<Binding>> {
     else {
         return Ok(None);
     };
-    let Some(entry) = lane_entry(state, &reference)? else {
+    let Some(entry) = lane_entry(state, &reference.id)? else {
         return Ok(None);
     };
     let Some(receiver) = read_private(&entry.dir.join("discord-lane.json"))? else {
@@ -500,7 +302,7 @@ pub(super) fn reserve(
         .mode(0o700)
         .create(&base)?;
     private_dir(&base)?;
-    let dir = lane_dir(state, &reference)?;
+    let dir = lane_dir(state, &reference.id)?;
     DirBuilder::new().mode(0o700).create(&dir)?;
     write_private(
         &dir.join("reservation.json"),
@@ -515,7 +317,7 @@ pub(super) fn reserve(
     Ok(reference)
 }
 
-/// `HostStart`, streamed to the broker's stdin.
+/// `HostStart`, streamed to the host's stdin.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct HostStart<'a> {
@@ -526,28 +328,24 @@ struct HostStart<'a> {
 
 const SETSID: [&str; 2] = ["/usr/bin/setsid", "/bin/setsid"];
 
-const HOST_ENV_REMOVED: [&str; 7] = [
-    "HC_TERMINAL_ID",
-    "HERDR_PANE_ID",
-    "HERDR_WORKSPACE_ID",
-    "HERDR_TAB_ID",
+const HOST_ENV_REMOVED: [&str; 3] = [
     "CATALY_HEADLESS_ID",
     "CATALY_ASK_LAUNCHED_LANE",
     "CATALY_HARNESS_ROLE",
 ];
 
-/// `startHost` for a lane resume: claims `started`, then spawns the detached broker with the start record on stdin.
-/// Startup is proven later by attestation; this never waits for the native session.
+/// `startHost` for a lane resume: claims `started`, then spawns `<host> headless-host <dir>` detached with the start
+/// record on stdin. Startup is proven later by attestation; this never waits for the native session.
 pub(super) async fn start(
     state: &Path,
     reference: &HeadlessRef,
-    broker: &[String],
+    host: &Path,
     argv: &[String],
     mut env: BTreeMap<String, String>,
     resume: (&str, &str),
 ) -> Result<()> {
     let entry =
-        lane_entry(state, reference)?.ok_or_else(|| anyhow!("headless reservation missing"))?;
+        lane_entry(state, &reference.id)?.ok_or_else(|| anyhow!("headless reservation missing"))?;
     ensure!(
         entry.reservation.str("role").unwrap_or("lane") == "lane",
         "native start role mismatch"
@@ -574,24 +372,21 @@ pub(super) async fn start(
         env: &env,
         expected_resume_id: session,
     })?;
-    let (program, prefix) = broker
-        .split_first()
-        .ok_or_else(|| anyhow!("no headless broker"))?;
     // `spawn(..., { detached: true })` calls setsid(2). `unsafe_code = "forbid"` rules out `pre_exec`, so the
     // util-linux `setsid` program does it where present (it execs without forking: the child is no group leader);
-    // elsewhere the broker gets its own process group, which still keeps terminal job-control signals away.
+    // elsewhere the host gets its own process group, which still keeps terminal job-control signals away.
     let setsid = SETSID
         .into_iter()
         .map(Path::new)
         .find(|path| path.is_file());
-    let mut command = tokio::process::Command::new(setsid.unwrap_or_else(|| Path::new(program)));
+    let mut command = tokio::process::Command::new(setsid.unwrap_or(host));
     if setsid.is_some() {
-        command.arg(program);
+        command.arg(host);
     } else {
         command.process_group(0);
     }
     command
-        .args(prefix)
+        .arg("headless-host")
         .arg(&entry.dir)
         .env_clear()
         .stdin(Stdio::piped())
@@ -615,55 +410,62 @@ pub(super) async fn start(
         .write_all(&start)
         .await
         .context("headless supervisor start unconfirmed")?;
-    // EOF ends the record (`Bun.stdin.json()`).
+    // EOF ends the record.
     drop(stdin);
-    // Dropping the handle leaves the broker running; tokio reaps it if it exits while this process lives.
+    // Dropping the handle leaves the host running; tokio reaps it if it exits while this process lives.
     drop(child);
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
+    use std::os::unix::fs::PermissionsExt as _;
+    use std::time::{Duration, Instant};
+
     use super::*;
 
-    #[test]
-    fn http_bodies() {
-        let reply = b"HTTP/1.1 200 OK\r\ncontent-length: 11\r\n\r\n{\"ok\":true}";
+    /// A wake runs `<host> headless-host <dir>` with only PATH/HOME/TMPDIR, streaming the start record on stdin.
+    #[tokio::test]
+    async fn start_runs_the_native_host_with_the_start_record() {
+        let state = std::env::temp_dir().join(format!("cataly-lane-start-{}", uuid().unwrap()));
+        fs::create_dir_all(&state).unwrap();
+        let reference = reserve(&state, "lane", &state, None).unwrap();
+        let seen = state.join("seen");
+        let host = state.join("host");
+        let script = format!(
+            "#!/bin/sh\n{{ printf '%s\\n' \"$@\" \"${{SECRET-unset}}\" \"$PATH\"; cat; }} > {0}.tmp && mv {0}.tmp {0}\n",
+            seen.display()
+        );
+        fs::write(&host, script).unwrap();
+        fs::set_permissions(&host, fs::Permissions::from_mode(0o700)).unwrap();
+        let env = BTreeMap::from(
+            [
+                ("PATH", "/usr/bin:/bin"),
+                ("SECRET", "s"),
+                ("CATALY_HEADLESS_ID", "stale"),
+            ]
+            .map(|(key, value)| (key.to_owned(), value.to_owned())),
+        );
+        let argv = ["omp".to_owned()];
+        start(&state, &reference, &host, &argv, env, ("/s.jsonl", "sid"))
+            .await
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !seen.exists() && Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let recorded = fs::read_to_string(&seen);
+        let dir = lane_dir(&state, &reference.id).unwrap();
+        let started = dir.join("started").exists();
+        fs::remove_dir_all(&state).ok();
+        assert!(started, "the start claim precedes the spawn");
         assert_eq!(
-            complete_body(reply, false).unwrap().unwrap(),
-            b"{\"ok\":true}"
-        );
-        assert!(
-            complete_body(&reply[..reply.len() - 1], false)
-                .unwrap()
-                .is_none()
-        );
-        let chunked = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n0\r\n\r\n";
-        assert_eq!(complete_body(chunked, false).unwrap().unwrap(), b"abc");
-        assert!(
-            complete_body(
-                b"HTTP/1.1 403 Forbidden\r\ncontent-length: 0\r\n\r\n",
-                false
+            recorded.unwrap(),
+            format!(
+                "headless-host\n{}\nunset\n/usr/bin:/bin\n{}",
+                dir.display(),
+                r#"{"argv":["omp","--resume=/s.jsonl"],"env":{"PATH":"/usr/bin:/bin","SECRET":"s"},"expectedResumeId":"sid"}"#
             )
-            .is_err()
         );
-        assert_eq!(
-            complete_body(b"HTTP/1.1 200 OK\r\n\r\n{}", true)
-                .unwrap()
-                .unwrap(),
-            b"{}"
-        );
-    }
-
-    #[test]
-    fn endpoints_must_be_private_tmp_sockets() {
-        let ok: Json =
-            serde_json::from_str(r#"{"socket":"/tmp/cataly-rpc-Ab1/socket","key":"k"}"#).unwrap();
-        assert_eq!(
-            endpoint_socket(&ok),
-            Some(("/tmp/cataly-rpc-Ab1/socket", "k"))
-        );
-        let bad: Json = serde_json::from_str(r#"{"socket":"/tmp/x/socket","key":"k"}"#).unwrap();
-        assert_eq!(endpoint_socket(&bad), None);
     }
 }

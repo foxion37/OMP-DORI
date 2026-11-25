@@ -72,7 +72,7 @@ describe("duty notices survive queue and settlement retries", () => {
 
   test("killed before or after queueing the LOST notice: the lane is marked lost and the lead hears of it once", async () => {
     const { w, d, lane, told } = await quietLane();
-    w.panes.delete(lane.paneId);
+    w.panes.delete(lane.sessionRef.id);
     dieOnce(d, "queue");
     await dutyTick(d);
     dieOnce(d, "saveLane");
@@ -87,7 +87,7 @@ describe("duty notices survive queue and settlement retries", () => {
     const { w, d, lane, told } = await quietLane();
     writeFileSync(join(d.store.root, "config.json"), JSON.stringify({ hooks: { onLost: ["my-hook", "{key}"] } }));
     rmSync(join(d.store.root, "roles.json"));
-    w.panes.delete(lane.paneId);
+    w.panes.delete(lane.sessionRef.id);
     const first = await dutyTick(d);
     expect(first).toContainEqual({ lane: "talker", action: "lost" });
     expect(first).toContainEqual(expect.objectContaining({ lane: "talker", action: "lost-no-lead" }));
@@ -106,7 +106,7 @@ describe("duty notices survive queue and settlement retries", () => {
   test("a lane lost with no lead and started again under the same key: the lead still hears of the loss, once", async () => {
     const { w, d, lane, brief, told } = await quietLane();
     rmSync(join(d.store.root, "roles.json"));
-    w.panes.delete(lane.paneId);
+    w.panes.delete(lane.sessionRef.id);
     await dutyTick(d);
     expect(d.store.lane("talker")!.status).toBe("lost");
     // The new record replaces the lost one before any lead is registered.
@@ -123,7 +123,7 @@ describe("duty notices survive queue and settlement retries", () => {
   test("a move of the kept notices into the lead's inbox cut short after its append: the next pass adds none twice", async () => {
     const { w, d, lane, told } = await quietLane();
     rmSync(join(d.store.root, "roles.json"));
-    w.panes.delete(lane.paneId);
+    w.panes.delete(lane.sessionRef.id);
     await dutyTick(d);
     // The move appended the kept notice to the lead's inbox and stopped before removing the copy it renamed aside.
     const kept = join(d.store.root, "duty", "lead.jsonl");

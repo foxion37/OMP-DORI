@@ -37,7 +37,7 @@ let state: TestState;
 beforeEach(() => {
   state = withState();
   mkdirSync(join(state.dir, "state/lanes/fixture"), { recursive: true });
-  writeFileSync(join(state.dir, "config.json"), JSON.stringify({ stateDir: join(state.dir, "state"), ompUlwPath: "" }));
+  writeFileSync(join(state.dir, "config.json"), JSON.stringify({ stateDir: join(state.dir, "state") }));
   writeFileSync(
     join(state.dir, "state/lanes/fixture.json"),
     JSON.stringify({

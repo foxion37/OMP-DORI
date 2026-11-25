@@ -19,12 +19,10 @@ export function leaseNativePath(home: string, path: string, holder = process.pid
     }
   };
   const physical = real(path);
-  for (const legacy of [false, true]) {
-    const cache = nativeCacheRoot(home, legacy);
-    const identity = inside(path, cache) ?? inside(physical, cache) ?? inside(physical, real(cache));
-    if (!identity) continue;
-    leaseNativeIdentity(home, identity, holder, undefined, legacy);
-    if (!lstatSync(physical, { throwIfNoEntry: false })?.isFile())
-      throw new Error(`Selected native executable ${path} is gone from the native cache; prepare it again`);
-  }
+  const cache = nativeCacheRoot(home);
+  const identity = inside(path, cache) ?? inside(physical, cache) ?? inside(physical, real(cache));
+  if (!identity) return;
+  leaseNativeIdentity(home, identity, holder);
+  if (!lstatSync(physical, { throwIfNoEntry: false })?.isFile())
+    throw new Error(`Selected native executable ${path} is gone from the native cache; prepare it again`);
 }

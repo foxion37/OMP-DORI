@@ -1,6 +1,6 @@
 import { headlessDiscordLaneAvailable } from "../discord-lane-headless-state.ts";
 import { readPaneState } from "../lane-state.ts";
-import { type Lane, Registry, RESERVED_LANE_KEY, statusOf } from "../registry.ts";
+import { type Lane, Registry, statusOf } from "../registry.ts";
 
 export async function uniqueDiscordLane(
   stateDir: string,
@@ -12,8 +12,7 @@ export async function uniqueDiscordLane(
   return matchingDiscordLane(openDiscordLanes(scan.lanes), match, allowSharedChannel);
 }
 
-const openDiscordLanes = (lanes: readonly Lane[]) =>
-  lanes.filter((lane) => lane.key !== RESERVED_LANE_KEY && statusOf(lane) !== "closed");
+const openDiscordLanes = (lanes: readonly Lane[]) => lanes.filter((lane) => statusOf(lane) !== "closed");
 
 function matchingDiscordLane(open: readonly Lane[], match: (lane: Lane) => boolean, allowSharedChannel = false) {
   const matches = open.filter(match);

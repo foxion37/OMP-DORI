@@ -16,7 +16,7 @@ import { script, setup } from "./install-setup.ts";
 const posix = test.skipIf(process.platform === "win32");
 
 // Version/argv fixtures; the real installer runs while dependency installation is recorded by setup.
-const executable = '#!/bin/sh\nif [ "$1" = --version ]; then echo 18.20.0; else printf \'%s\\0\' "$0" "$@"; fi\n';
+const executable = '#!/bin/sh\nif [ "$1" = --version ]; then echo 19.0.1; else printf \'%s\\0\' "$0" "$@"; fi\n';
 
 for (const mode of ["primary", "side"]) {
   posix.each(["direct", "leaf chain", "parent alias", "directory prefix"])(

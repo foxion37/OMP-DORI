@@ -1,4 +1,3 @@
-import { Database } from "bun:sqlite";
 import { expect, spyOn, test } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -104,29 +103,6 @@ test("invalid manual arguments fail before accessing recall state; recall defaul
     );
     expect(await outputOf({ config: { stateDir }, rest: [...identity, "--purge"] })).toEqual(["RECALL_PURGED 0"]);
     expect(existsSync(stateDir)).toBe(false);
-  } finally {
-    state.done();
-  }
-});
-
-test.skipIf(process.getuid === undefined)("manual search and purge leave a legacy unscoped ledger intact", async () => {
-  const state = withState();
-  try {
-    const config = { stateDir: state.dir, recall: enabled };
-    const path = join(state.dir, "recall.sqlite");
-    const legacy = new Database(path);
-    try {
-      legacy.exec(`CREATE TABLE turns (at INTEGER, platform TEXT, channel TEXT, thread TEXT, role TEXT, text TEXT, ref TEXT);
-        INSERT INTO turns VALUES (${Date.now()}, 'telegram', '-1001', '-1001', 'owner', 'legacy rollout', '1');`);
-    } finally {
-      legacy.close();
-    }
-    const original = readFileSync(path);
-    expect(await outputOf({ config, rest: [...identity, "--purge"] })).toEqual(["RECALL_PURGED 0"]);
-    expect(existsSync(join(state.dir, scopedStore))).toBe(false);
-    expect(await outputOf({ config, rest: [...identity, space, "rollout"] })).toEqual(["RECALL_NONE"]);
-    expect(await outputOf({ config, rest: [...identity, "--purge"] })).toEqual(["RECALL_PURGED 0"]);
-    expect(readFileSync(path)).toEqual(original);
   } finally {
     state.done();
   }

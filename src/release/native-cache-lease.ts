@@ -34,8 +34,7 @@ const LEASE = /^([1-9]\d*)-(\d+)-([A-Za-z0-9-]+)$/;
 /** How long a writer waits for a running prune before it gives up. */
 const WAIT_MS = 300_000;
 
-export const nativeCacheRoot = (home: string, legacy = false): string =>
-  join(home, ".cache", legacy ? "omp-dori" : "omp-cataly");
+export const nativeCacheRoot = (home: string): string => join(home, ".cache", "omp-cataly");
 
 /** The running process `pid` as a holder; a process that is gone or a zombie cannot hold anything. */
 export function cacheHolder(pid: number): CacheHolder {
@@ -149,15 +148,9 @@ function pruneIdle(cache: string): boolean {
  * Lease `identity` for `holder` until that process ends, then wait while a prune holds the cache. Callers create,
  * verify or launch the identity only after this returns, so one a prune removed meanwhile fails their verification.
  */
-export function leaseNativeIdentity(
-  home: string,
-  identity: string,
-  holder = process.pid,
-  waitMs = WAIT_MS,
-  legacy = false,
-): void {
+export function leaseNativeIdentity(home: string, identity: string, holder = process.pid, waitMs = WAIT_MS): void {
   if (!IDENTITY.test(identity)) throw new Error(`Invalid native cache identity: ${identity}`);
-  const cache = nativeCacheRoot(home, legacy);
+  const cache = nativeCacheRoot(home);
   const leases = join(cache, LEASES, identity);
   const own = cacheHolder(holder);
   const name = leaseName(own);

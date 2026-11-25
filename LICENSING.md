@@ -10,7 +10,7 @@ existing scope without claiming a new license for someone else's material.
 | --- | --- | --- |
 | dori-superagent code and its derived changes | Sustainable Use License 1.0 | [LICENSE](LICENSE) |
 | Pre-existing omp-dori material incorporated from the local source, including its extension and OMP integration changes | MIT | [LICENSE.integration](LICENSE.integration) |
-| oh-my-pi, omp-ulw, and other third-party components | Their respective upstream licenses | The component's own license and [NOTICE](NOTICE) |
+| oh-my-pi and other third-party components | Their respective upstream licenses | The component's own license and [NOTICE](NOTICE) |
 
 These are source-provenance boundaries, not a claim that every file in a directory
 shares one license. An integration, dependency pin, or patch does not convert
@@ -35,14 +35,15 @@ non-commercial use limits, redistribution conditions, notice requirements, and
 other provisions remain in force. The complete terms, not this summary, govern
 that material.
 
-Cataly is a modified copy. [NOTICE](NOTICE) identifies the imported revisions,
-local integration, and bound source overlays. Keep the modified-copy notice and
-the applicable license with redistributed material.
+Cataly is a modified copy derived from dori-superagent. [NOTICE](NOTICE)
+identifies the imported revisions, local integration, and bound source overlay.
+Keep the modified-copy notice and the applicable license with redistributed
+material.
 
 ## Dependencies and prepared source
 
-The native OMP and ULW locks and patches bind exact upstream bases and modified
-source identities. They are not a replacement for those projects' licenses.
+The native OMP lock and patch bind an exact upstream base and modified source
+identity. They are not a replacement for that project's license.
 Copyright and license notices in upstream source and patch excerpts remain
 applicable. The official native addon also keeps its own license.
 

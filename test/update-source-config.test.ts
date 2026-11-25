@@ -1,7 +1,6 @@
 import { expect, test } from "bun:test";
 import { chmodSync, existsSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
-import { LegacyRuntimeError } from "../src/runtime/registry.ts";
 import {
   loadSourceUpdateConfig,
   parseSourceUpdateConfig,
@@ -40,11 +39,11 @@ for (const change of invalid)
     expect(() => parseSourceUpdateConfig({ ...f.settings, ...change }, f.path)).toThrow();
   });
 
-test("source configuration refuses a terminal-era stop mode and cannot count duplicate receivers", () => {
+test("source configuration refuses an unknown deployment setting and cannot count duplicate receivers", () => {
   const f = sourceFixture();
   expect(() =>
     parseSourceUpdateConfig({ ...f.settings, deployment: { ...f.settings.deployment, nativeStopMode: "ui" } }, f.path),
-  ).toThrow(LegacyRuntimeError);
+  ).toThrow("unknown setting");
   expect(() =>
     parseSourceUpdateConfig(
       { ...f.settings, activityFiles: [...f.settings.activityFiles, ...f.settings.activityFiles] },

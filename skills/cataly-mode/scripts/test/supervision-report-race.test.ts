@@ -19,7 +19,6 @@ test.each(["done", "halted", "blocker"] as const)(
         key: "terminal-race",
         title: "race",
         thread: "none",
-        pane: "5007",
         sessionRef: { runtime: "tern" as const, id: "5007" },
         brief: "/b.md",
         done: "file /done.md",

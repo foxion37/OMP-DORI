@@ -37,7 +37,7 @@ export async function enforceReviewTools(api: Pick<GuardApi, "getActiveTools" | 
   return active;
 }
 
-/** Loaded explicitly by this controller only; no role/ULW/global extension discovery or SDK dependency. */
+/** Loaded explicitly by this controller only; no role/global extension discovery or SDK dependency. */
 export default function installReviewerGuard(api: GuardApi): void {
   const path = process.env["CATALY_UPDATE_REVIEW_SCOPE"];
   const nonce = process.env["CATALY_UPDATE_REVIEW_NONCE"];

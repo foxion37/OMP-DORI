@@ -4,11 +4,10 @@ import { resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import * as localReader from "../skills/cataly-mode/scripts/src/config.ts";
 import { SourceBundleError } from "./release/source-bundle.ts";
-import { LegacyRuntimeError } from "./runtime/registry.ts";
 import { ConfigError as RuntimeConfigError, readRuntimeChoice } from "./runtime/select.ts";
 import { assertSetupFile, type SetupSnapshot } from "./setup-files.ts";
 
-const readerOverrideKeys = ["agentCommand", "stateDir", "ompUlwPath", "leadPane"] as const;
+const readerOverrideKeys = ["agentCommand", "stateDir", "leadPane"] as const;
 export const setupOverrideKeys = [...readerOverrideKeys, "sessionRuntime"] as const;
 
 /** Observe configuration with the caller's bound reader; never start native OMP or probe an account. */
@@ -30,13 +29,7 @@ export async function setupReadback(
     ((await Bun.file(selected).exists()) && realpathSync(selected) === realpathSync(snapshot.path));
   const env = { ...process.env };
   const baselineEnv = { ...env };
-  for (const key of [
-    "CATALY_AGENT_ARGV",
-    "CATALY_AGENT_CMD",
-    "CATALY_STATE_DIR",
-    "CATALY_OMP_ULW_PATH",
-    "CATALY_LEAD_PANE",
-  ])
+  for (const key of ["CATALY_AGENT_ARGV", "CATALY_AGENT_CMD", "CATALY_STATE_DIR", "CATALY_LEAD_PANE"])
     delete baselineEnv[key];
   delete baselineEnv["CATALY_RUNTIME"];
   const overridden: string[] = [];
@@ -60,7 +53,7 @@ export async function setupReadback(
     }
   } catch (error) {
     reason =
-      error instanceof reader.ConfigError || error instanceof RuntimeConfigError || error instanceof LegacyRuntimeError
+      error instanceof reader.ConfigError || error instanceof RuntimeConfigError
         ? "invalid-effective-configuration"
         : error instanceof SourceBundleError
           ? "current-updater-runtime-unavailable"

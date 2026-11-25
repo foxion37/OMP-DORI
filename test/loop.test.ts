@@ -23,7 +23,7 @@ describe("hourly loop", () => {
     expect(run.started).toEqual(["urgent (p1)", "old-five (p5)"]);
     expect(run.held).toEqual(["2 item(s) waiting: 1 free of 3 lanes, max 2/run"]);
     expect(d.store.item("urgent")!.status).toBe("running");
-    expect(w.panes.get(d.store.lane("urgent")!.paneId)!.received[0]).toStartWith("Read your brief at ");
+    expect(w.panes.get(d.store.lane("urgent")!.sessionRef.id)!.received[0]).toStartWith("Read your brief at ");
     expect(lead.received.filter((m) => m.startsWith("[START"))).toHaveLength(2);
     const loopMsg = lead.received.find((m) => m.startsWith("[LOOP"))!;
     expect(loopMsg).toContain("lanes 2/3");
@@ -77,10 +77,10 @@ describe("hourly loop", () => {
 
     const a = d.store.lane("item-a")!;
     await ready(d, "item-a", "fixed", ["note.txt"]);
-    w.panes.get(a.paneId)!.status = "idle";
+    w.panes.get(a.sessionRef.id)!.status = "idle";
     await done(d, "item-a");
 
-    w.panes.delete(d.store.lane("item-b")!.paneId);
+    w.panes.delete(d.store.lane("item-b")!.sessionRef.id);
     const lost = d.store.lane("item-b")!;
     lost.status = "lost";
     d.store.saveLane(lost);
@@ -124,13 +124,13 @@ describe("hourly loop", () => {
     await startLane(d, "fresh", brief, { group: "w1" });
     await report(d, "wait-ci", "WAITING: CI on acme/app#3\nretry at 14:00", { status: "waiting" });
     await ready(d, "finished", "done", ["https://github.com/acme/app/pull/3"]);
-    for (const l of [quiet, wait, fin]) w.panes.get(l.paneId)!.status = "idle";
-    w.panes.get(busy.paneId)!.status = "working";
-    w.panes.delete(gone.paneId);
+    for (const l of [quiet, wait, fin]) w.panes.get(l.sessionRef.id)!.status = "idle";
+    w.panes.get(busy.sessionRef.id)!.status = "working";
+    w.panes.delete(gone.sessionRef.id);
     w.gh = () => ({ code: 0, stdout: JSON.stringify({ state: "OPEN" }) });
 
     w.clock += 30 * 60_000;
-    expect((await tick({ maxStarts: 0 })).findings).toEqual([expect.stringContaining(gone.paneId)]);
+    expect((await tick({ maxStarts: 0 })).findings).toEqual([expect.stringContaining(gone.sessionRef.id)]);
     w.clock += 4 * HOUR;
     await dutyTick(d);
     expect(d.store.lane("busy")!.lastActivityAt).toBe(w.clock);

@@ -143,8 +143,8 @@ test.skipIf(process.platform === "win32")(
   "live discovery rejects unsafe sockets and selection rejects ambiguous IDs",
   async () => {
     const { stateDir } = fixture();
-    const { target } = await startTestEndpoint(stateDir, cleanup, { legacyLead: true });
-    expect(await liveSessions(stateDir)).toEqual([{ ...target, role: "cataly" }]);
+    const { target } = await startTestEndpoint(stateDir, cleanup, { role: "cataly" });
+    expect(await liveSessions(stateDir)).toEqual([target]);
     expect(() => selectSession([target, { ...target, session: "native-002" }], "native")).toThrow("Ambiguous");
     chmodSync(remoteSocketPath(stateDir, target.session), 0o666);
     expect(await liveSessions(stateDir)).toEqual([]);

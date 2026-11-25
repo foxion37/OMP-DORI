@@ -11,6 +11,8 @@ mod activity;
 mod admission;
 mod api;
 mod context;
+#[cfg(any(target_os = "macos", test))]
+mod darwin;
 mod gateway;
 mod inbound;
 mod inbox;
@@ -35,9 +37,9 @@ pub use send::{SendOptions, send};
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Args, Debug)]
 pub struct Options {
-    /// Import the previous monitor's per-channel cursor only when the native cursor is absent.
+    /// Import the TypeScript monitor's per-channel cursor only when the native cursor is absent, and mirror it.
     #[arg(long)]
-    legacy_cursors: Option<PathBuf>,
+    import_cursors: Option<PathBuf>,
     /// Private directory for Discord cursors, OMP sessions and confirmed replies.
     #[arg(
         long,
@@ -46,7 +48,7 @@ pub struct Options {
     )]
     state_dir: Option<PathBuf>,
     /// Absolute Cataly state directory: TS-compatible intake that hands head messages to the OMP extension.
-    #[arg(long, conflicts_with_all = ["legacy_cursors", "head_channel", "ask_state", "inbox"])]
+    #[arg(long, conflicts_with_all = ["import_cursors", "head_channel", "ask_state", "inbox"])]
     cataly_state: Option<PathBuf>,
     /// Admit head messages over the supervising extension's IPC channel on standard input.
     #[arg(long, requires = "cataly_state")]

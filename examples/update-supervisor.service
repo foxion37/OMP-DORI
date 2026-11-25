@@ -10,7 +10,7 @@ WorkingDirectory=%h
 Environment=PATH=%h/.cataly/toolchains/bun-1.4.4:%h/.bun/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 Environment=CATALY_TELEMETRY=0
 Environment=DO_NOT_TRACK=1
-UnsetEnvironment=CATALY_DISCORD_TOKEN CATALY_SUDO_PASSWORD DORI_DISCORD_TOKEN DORI_SUDO_PASSWORD SUDO_UID SUDO_GID SUDO_USER GH_TOKEN GITHUB_TOKEN
+UnsetEnvironment=CATALY_DISCORD_TOKEN CATALY_SUDO_PASSWORD SUDO_UID SUDO_GID SUDO_USER GH_TOKEN GITHUB_TOKEN
 ExecStart=%h/.cataly/toolchains/bun-1.4.4/bun %h/.cataly/update/controller/scripts/update-supervisor.ts --config %h/.cataly/update/config.json --controller %h/.cataly/update/controller --bun %h/.cataly/toolchains/bun-1.4.4/bun
 Restart=always
 RestartSec=5

@@ -1,12 +1,11 @@
 import { expect, test } from "bun:test";
-import { join } from "node:path";
 import { readPaneState, writePaneState } from "../../skills/cataly-mode/scripts/src/lane-state";
 import { load, useConfig } from "./fake-pi";
 
 test.each(["absent", "retired", "live-owner", "replaced"] as const)(
   "Tern pane status writes respect %s pane ownership",
   async (record) => {
-    const stateDir = useConfig(join(import.meta.dir, "fake-ulw.ts"));
+    const stateDir = useConfig();
     const previousPane = process.env.TERN_PANE;
     process.env.TERN_PANE = "5007";
     const owner =

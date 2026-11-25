@@ -27,10 +27,8 @@ export type Lane = {
   readonly requestId?: string;
   /** Local launch invocation, not a native admission or completion receipt. */
   readonly runId?: string;
-  /** The lane's session on its runtime. `pane`/`tab` mirror its id and container for older readers. */
+  /** The lane's session on its runtime. */
   readonly sessionRef?: SessionRef;
-  readonly pane?: string | undefined;
-  readonly tab?: string;
   readonly session?: string;
   readonly sessionFile?: string;
   readonly sessionVia?: string;
@@ -82,22 +80,10 @@ export type Lane = {
   readonly receipt?: unknown;
 };
 
-/** Records written before runtimes existed name a herdr pane (and tab): the only runtime the skill spoke then. */
-const LEGACY_RUNTIME = "herdr" as const;
+export const sessionOf = (lane: Lane): SessionRef | undefined => lane.sessionRef;
 
-/** A record as read: an older one gains `sessionRef` from its `pane`/`tab`; a newer one keeps what it stored. */
-export const upgradeLane = (lane: Lane): Lane =>
-  lane.sessionRef || !lane.pane
-    ? lane
-    : { ...lane, sessionRef: { runtime: LEGACY_RUNTIME, id: lane.pane, ...(lane.tab ? { container: lane.tab } : {}) } };
-export const sessionOf = (lane: Lane): SessionRef | undefined => upgradeLane(lane).sessionRef;
-
-/** The fields a lane record stores for a session: the ref itself and the `pane`/`tab` mirror. */
-export const sessionFields = (ref: SessionRef): Pick<Lane, "sessionRef" | "pane" | "tab"> => ({
-  sessionRef: ref,
-  pane: ref.id,
-  ...(ref.container ? { tab: ref.container } : {}),
-});
+/** The fields a lane record stores for a session. */
+export const sessionFields = (ref: SessionRef): Pick<Lane, "sessionRef"> => ({ sessionRef: ref });
 
 const sameSession = (a: SessionRef | undefined, b: SessionRef): boolean =>
   a !== undefined && a.runtime === b.runtime && a.id === b.id;
@@ -157,13 +143,17 @@ export class Registry {
     return this.locked(key, () => fn(this.readNow(key)));
   }
 
+  /** A missing record is null; a present one that is not a JSON object is unreadable, never mistaken for missing. */
   private readNow(key: string): Lane | null {
+    let lane: unknown;
     try {
-      return upgradeLane(JSON.parse(readFileSync(this.path(key), "utf8")) as Lane);
+      lane = JSON.parse(readFileSync(this.path(key), "utf8"));
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
       throw error;
     }
+    if (lane === null || typeof lane !== "object") throw new Error(`lane record ${key} is not an object`);
+    return lane as Lane;
   }
   private writeNow(lane: Lane): void {
     const tmp = `${this.path(lane.key)}.${process.pid}.tmp`;
@@ -237,9 +227,9 @@ export class Registry {
   async open(): Promise<Lane[]> {
     return (await this.list()).filter((l) => statusOf(l) !== "closed");
   }
-  /** The open lane in ref, excluding the legacy reserved lead record (still readable, listable and closable). */
+  /** The open lane in ref. */
   async bySession(ref: SessionRef | undefined): Promise<Lane | null> {
     if (!ref) return null;
-    return (await this.open()).find((l) => sameSession(l.sessionRef, ref) && l.key !== RESERVED_LANE_KEY) ?? null;
+    return (await this.open()).find((l) => sameSession(l.sessionRef, ref)) ?? null;
   }
 }

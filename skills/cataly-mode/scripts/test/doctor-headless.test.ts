@@ -14,7 +14,7 @@ import { depsFor, fakeClock, newWorld, sid, withState } from "./fakes.ts";
 import { doctorCommand } from "./doctor-fixture.ts";
 
 test.skipIf(process.platform === "win32")(
-  "boot and doctor find the durable lead, prove its native role, and skip obsolete terminal metadata",
+  "boot and doctor find the durable lead, prove its native role, and never scan the sessions tree for monitors",
   async () => {
     const state = withState();
     try {
@@ -49,13 +49,14 @@ test.skipIf(process.platform === "win32")(
       const ref = await rt.create({ name: "lead", role: "lead", cwd: state.dir, env: {} });
       leadRef = ref;
       writeFileSync(join(state.dir, "roles.json"), JSON.stringify({ lead: `headless:${ref.id}` }));
-      const legacy = join(state.dir, "legacy");
-      writeFileSync(legacy, "this is not a terminal sessions directory");
+      // Boot and doctor read monitor metadata from the state directory only, never the sessions tree.
+      const notSessions = join(state.dir, "not-sessions");
+      writeFileSync(notSessions, "this is not a sessions directory");
       const world = newWorld();
       const base = depsFor(world, fakeClock(now), state.dir, {
         sessionRuntime: "headless",
-        leadPane: "<your herdr pane id, from: herdr pane current>",
-        sessionsDir: legacy,
+        leadPane: "",
+        sessionsDir: notSessions,
         agentCommand: doctorCommand(state.dir),
       });
       const deps = {
@@ -74,7 +75,6 @@ test.skipIf(process.platform === "win32")(
       });
       expect(boot.exitCode).toBe(0);
       expect(boot.lines.join("\n")).toContain(`lead=headless:${ref.id} leadState=live`);
-      expect(boot.lines.join("\n")).toContain("TERMINAL diagnostics skipped");
       const doctor = await doctorCheck(deps);
       expect(doctor.exitCode).toBe(0);
       expect(doctor.findings).toContainEqual(expect.objectContaining({ check: "runtime", severity: "OK" }));

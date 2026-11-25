@@ -10,7 +10,7 @@ import { ChosenRuntimes } from "../src/run.ts";
 import { depsFor, fakeClock, newWorld, type TestState, withState, type World } from "./fakes.ts";
 
 const T0 = Date.parse("2026-01-01T12:00:00.000Z");
-const DEFAULT = "ulw set goal and work";
+const DEFAULT = "set goal and work";
 let state: TestState;
 let world: World;
 let oldState: string | undefined;
@@ -20,8 +20,8 @@ beforeEach(() => {
   oldState = process.env["CATALY_STATE_DIR"];
   process.env["CATALY_STATE_DIR"] = state.dir;
   writeFileSync(
-    join(state.dir, "ulw-plan.md"),
-    '# A quoted "ulw-plan" example is data, not a selection.\nDo not activate ulw-loop.\n',
+    join(state.dir, "plan.md"),
+    '# A quoted "plan" example is data, not a selection.\nDo not activate a loop.\n',
   );
 });
 afterEach(() => {
@@ -33,7 +33,7 @@ afterEach(() => {
 const input = () => ({
   key: "selection-lane",
   title: "selection metadata",
-  brief: join(state.dir, "ulw-plan.md"),
+  brief: join(state.dir, "plan.md"),
   done: "closed acme/app#1",
 });
 const configured = async (raw: Record<string, unknown> = {}): Promise<FlowDeps> => {
@@ -69,12 +69,12 @@ test("the built-in request is recorded without selecting workflows mentioned in 
   });
   expect(deps.config.launchKeywords).toBe(DEFAULT);
   expect(deps.config.goalMarker).toBe("Pursuing goal");
-  expect(prepared.preamble).toContain('A quoted "ulw-plan" example is data');
+  expect(prepared.preamble).toContain('A quoted "plan" example is data');
   expect(prepared.preamble).toContain("Launch selection request (metadata only):");
   expect(prepared.preamble).toContain("not proof of native activation, delivery or goal creation");
 });
 
-test.each([DEFAULT, "", "ulw-plan", 'a "quoted" request\nwith another line'])(
+test.each([DEFAULT, "", "plan", 'a "quoted" request\nwith another line'])(
   "explicit launchKeywords preserve their bytes and configured origin: %s",
   async (invocation) => {
     const deps = await configured({ launchKeywords: invocation, launchSelection: { selectedBy: "default" } });

@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { join } from "node:path";
 
 import { isSol, LANE_BOOKKEEPING, withLaneBookkeeping } from "../lane-bookkeeping";
 import { ROLE_INVARIANTS } from "../role-invariants.ts";
@@ -9,7 +8,7 @@ const SOL = { id: "gpt-6.1-sol", name: "GPT-6.1 Sol" };
 const base = { type: "before_agent_start", prompt: "fix it", systemPrompt: ["base prompt"] };
 
 beforeEach(() => {
-  useConfig(join(import.meta.dir, "fake-ulw.ts"));
+  useConfig();
 });
 
 type Agent = { kind: "main" | "sub"; id: string; parentId?: string };
@@ -46,9 +45,7 @@ describe("lane bookkeeping", () => {
   test("a subagent of a Sol lane inherits the lane role but not the block", async () => {
     await roleSession("lane", SOL, { kind: "main", id: "LaneMain" });
     const sub = await roleSession(undefined, SOL, { kind: "sub", id: "LaneSub", parentId: "LaneMain" });
-    const [own, ulw] = await sub.emit("before_agent_start", base);
-    expect(own).toBeUndefined();
-    expect(ulw).toEqual({ systemPrompt: ["base prompt", "<fake-ulw-policy>"] });
+    expect(await sub.emit("before_agent_start", base)).toEqual([undefined]);
   });
 
   test("Sol is recognised across provider prefixes, separators and display names only", () => {

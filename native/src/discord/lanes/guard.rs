@@ -1,15 +1,19 @@
 //! The host launch guard a wake must pass: `sampleHost` + `canLaunch` (`host-guard.ts`, `routing.ts`,
 //! `cgroup-memory.ts`).
 //!
-//! The session count cannot ask herdr or hc (both runtimes are removed). It counts every live headless broker; an
-//! unknown or failed headless observation makes it unknown (-1), as before.
+//! `canLaunch` holds on memory, the cgroup budgets, disk and the session count; load and swap only feed the TypeScript
+//! alert loop, so they are not sampled here. macOS memory is `src/platform/darwin.ts` `darwinMemFreePct`, read the
+//! same way.
+//!
+//! The session count is every live headless broker; an unknown or failed headless observation makes it unknown (-1),
+//! as before.
 
 use std::path::Path;
 
 use serde::Deserialize;
 
 use super::headless;
-use super::util::{RECORD_LIMIT, read_limited};
+use crate::util::{RECORD_LIMIT, read_limited};
 
 /// `GuardThresholds` from the loaded config.
 #[derive(Clone, Debug, Deserialize)]
@@ -45,6 +49,7 @@ fn read(path: &str) -> Option<String> {
         .and_then(|bytes| String::from_utf8(bytes).ok())
 }
 
+#[cfg(any(not(target_os = "macos"), test))]
 fn meminfo_kb(info: &str, key: &str) -> Option<f64> {
     info.lines().find_map(|line| {
         let rest = line.strip_prefix(key)?.strip_prefix(':')?;
@@ -61,6 +66,7 @@ fn meminfo_kb(info: &str, key: &str) -> Option<f64> {
 }
 
 /// `Math.round(available / total * 100)`, or 100 when unreadable.
+#[cfg(not(target_os = "macos"))]
 fn mem_free_pct() -> f64 {
     let info = read("/proc/meminfo").unwrap_or_default();
     match (
@@ -72,11 +78,82 @@ fn mem_free_pct() -> f64 {
     }
 }
 
-/// `df -k <path>` available space in GB (the TypeScript guard's 1024³ unit).
+/// `kern.memorystatus_level`: XNU's `memorystatus_level`, which `memory_pressure` prints as "System-wide memory free
+/// percentage".
+#[cfg(target_os = "macos")]
+const LEVEL: &str = "kern.memorystatus_level";
+
+/// `os.freemem()`/`os.totalmem()` on macOS: `hw.memsize`, then the free and speculative pages `host_statistics` adds
+/// into `free_count`, then the kernel page size both count in.
+#[cfg(target_os = "macos")]
+const FREE_PAGES: [&str; 4] = [
+    "hw.memsize",
+    "vm.page_free_count",
+    "vm.page_speculative_count",
+    "vm.pagesize",
+];
+
+/// darwin.ts `darwinMemFreePct` over the bounded `/usr/sbin/sysctl` reader.
+#[cfg(target_os = "macos")]
+fn mem_free_pct() -> f64 {
+    use crate::discord::darwin::sysctl;
+    f64::from(darwin_mem_free_pct(sysctl(&[LEVEL], 16).as_deref(), || {
+        sysctl(&FREE_PAGES, 128)
+    }))
+}
+
+/// darwin.ts `darwinMemFreePct`: the level when it is a whole percentage, else free pages over physical memory, else
+/// 0. Both are kernel interfaces every macOS host has, so neither answering holds the launch instead of admitting it.
+#[cfg(any(target_os = "macos", test))]
+fn darwin_mem_free_pct(level: Option<&str>, free_pages: impl FnOnce() -> Option<String>) -> u8 {
+    level
+        .and_then(whole_percent)
+        .or_else(|| free_pages().as_deref().and_then(free_page_pct))
+        .unwrap_or(0)
+}
+
+/// darwin.ts: `/^\d{1,3}$/` after trimming, at most 100.
+#[cfg(any(target_os = "macos", test))]
+fn whole_percent(text: &str) -> Option<u8> {
+    let text = text.trim();
+    if text.is_empty() || text.len() > 3 || !text.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    text.parse().ok().filter(|level| *level <= 100)
+}
+
+/// `Math.round(freemem() / totalmem() * 100)` from the four `FREE_PAGES` lines; `None` unless it is 0 to 100.
+#[cfg(any(target_os = "macos", test))]
+fn free_page_pct(text: &str) -> Option<u8> {
+    let values = text
+        .lines()
+        .map(|line| line.trim().parse::<u64>().ok())
+        .collect::<Option<Vec<_>>>()?;
+    let [memsize, free, speculative, page] = values[..] else {
+        return None;
+    };
+    let free = u128::from(free.checked_add(speculative)?) * u128::from(page);
+    let total = u128::from(memsize);
+    if total == 0 {
+        return None;
+    }
+    // floor(free * 100 / total + 1/2), in integers.
+    u8::try_from((free * 200 + total) / (total * 2))
+        .ok()
+        .filter(|pct| *pct <= 100)
+}
+
+/// `df -k <path>` available space in GB (the TypeScript guard's 1024³ unit). macOS `df` reads `statfs`; its
+/// `statvfs` narrows block counts to 32 bits (Libc `emulated/statvfs.c`), which would understate 16 TiB free or more.
 fn disk_free_gb(path: &Path) -> f64 {
-    rustix::fs::statvfs(path).map_or(0.0, |stat| {
-        let mib = stat.f_bavail.saturating_mul(stat.f_frsize) >> 20;
-        f64::from(u32::try_from(mib).unwrap_or(u32::MAX)) / 1024.0
+    #[cfg(target_os = "macos")]
+    let available =
+        rustix::fs::statfs(path).map(|stat| stat.f_bavail.saturating_mul(u64::from(stat.f_bsize)));
+    #[cfg(not(target_os = "macos"))]
+    let available =
+        rustix::fs::statvfs(path).map(|stat| stat.f_bavail.saturating_mul(stat.f_frsize));
+    available.map_or(0.0, |bytes| {
+        f64::from(u32::try_from(bytes >> 20).unwrap_or(u32::MAX)) / 1024.0
     })
 }
 
@@ -389,5 +466,126 @@ mod tests {
         );
         assert_eq!(parent_dir("/sys/fs"), "/sys");
         assert_eq!(decode_mount("/a\\040b"), "/a b");
+    }
+
+    /// darwin.ts `darwinMemFreePct`: a whole-percent level wins without reading free pages, a malformed one falls
+    /// back to them, and with neither the guard reads 0, which holds the launch.
+    #[test]
+    fn darwin_memory_policy_matches_darwin_ts() {
+        let unread = || -> Option<String> { panic!("a readable level never reads free pages") };
+        assert_eq!(darwin_mem_free_pct(Some("72\n"), unread), 72);
+        assert_eq!(darwin_mem_free_pct(Some("0"), unread), 0);
+        assert_eq!(darwin_mem_free_pct(Some(" 100 "), unread), 100);
+        // 131072 free and speculative pages of 16 KiB in 16 GiB is 12.5%, which Math.round takes up.
+        let pages = || Some("17179869184\n100000\n31072\n16384\n".to_owned());
+        for level in [
+            None,
+            Some(""),
+            Some("garbage"),
+            Some("101"),
+            Some("-1"),
+            Some("7.5"),
+            Some("0072"),
+            Some("1e2"),
+        ] {
+            assert_eq!(darwin_mem_free_pct(level, pages), 13, "{level:?}");
+        }
+        assert_eq!(free_page_pct("8589934592\n0\n0\n4096\n"), Some(0));
+        assert_eq!(free_page_pct("8589934592\n2097152\n0\n4096\n"), Some(100));
+        for pages in [
+            None,
+            Some(""),
+            Some("1\n2\n3\n"),
+            Some("1\n2\n3\n4\n5\n"),
+            Some("0\n1\n1\n16384\n"),
+            Some("1024\n1\n0\n4096\n"),
+            Some("8589934592\n-1\n0\n4096\n"),
+        ] {
+            assert_eq!(
+                darwin_mem_free_pct(None, || pages.map(str::to_owned)),
+                0,
+                "{pages:?}"
+            );
+        }
+    }
+
+    /// The guard reads what TypeScript reads on this Mac: `darwinMemFreePct` (the level host-guard.ts samples),
+    /// `memoryFreePct` (its free-pages fallback) and `df -k` for disk. Memory moves, so each TypeScript value must
+    /// fall between two Rust reads taken around it, give or take a small slack.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_readers_match_typescript() {
+        use crate::discord::darwin::sysctl;
+
+        let rust = || {
+            let level =
+                whole_percent(&sysctl(&[LEVEL], 16).expect("kern.memorystatus_level answers"));
+            let free =
+                free_page_pct(&sysctl(&FREE_PAGES, 128).expect("the free-page sysctls answer"));
+            (
+                f64::from(level.expect("a whole percentage")),
+                f64::from(free.expect("a free-page share")),
+            )
+        };
+        let root = env!("CARGO_MANIFEST_DIR");
+        let script = format!(
+            r#"import {{ darwinMemFreePct }} from "{root}/src/platform/darwin.ts";
+import {{ memoryFreePct }} from "{root}/src/platform/shared.ts";
+console.log(JSON.stringify({{ level: darwinMemFreePct(), free: memoryFreePct() }}));"#
+        );
+        let before = rust();
+        let guard = mem_free_pct();
+        let out = std::process::Command::new("bun")
+            .args(["-e", &script])
+            .stdin(std::process::Stdio::null())
+            .output()
+            .expect("bun runs the TypeScript memory readers");
+        let after = rust();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let ts: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        let within = |value: f64, a: f64, b: f64, slack: f64| {
+            a.min(b) - slack <= value && value <= a.max(b) + slack
+        };
+        let level = ts["level"].as_f64().unwrap();
+        assert!(
+            within(level, before.0, after.0, 2.0),
+            "TypeScript level {level}, Rust {before:?} then {after:?}"
+        );
+        assert!(
+            within(guard, before.0, after.0, 2.0),
+            "guard {guard}, Rust {before:?} then {after:?}"
+        );
+        // Free pages swing more than the level: bun's own start takes some, so this slack is wider.
+        let free = ts["free"].as_f64().unwrap();
+        assert!(
+            within(free, before.1, after.1, 5.0),
+            "TypeScript free pages {free}, Rust {before:?} then {after:?}"
+        );
+
+        let df = std::process::Command::new("/bin/df")
+            .args(["-k", "/"])
+            .env_clear()
+            .env("LC_ALL", "C")
+            .output()
+            .unwrap();
+        let kib: f64 = String::from_utf8(df.stdout)
+            .unwrap()
+            .lines()
+            .last()
+            .unwrap()
+            .split_whitespace()
+            .nth(3)
+            .unwrap()
+            .parse()
+            .unwrap();
+        let disk = disk_free_gb(Path::new("/"));
+        assert!(
+            (disk - kib / 1_048_576.0).abs() < 1.0,
+            "statfs {disk} GB, df -k {kib} KiB"
+        );
     }
 }
