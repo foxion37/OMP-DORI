@@ -150,6 +150,9 @@ pub(crate) struct DiscordSettings {
     pub(crate) token_file: Option<PathBuf>,
     pub(crate) guild: Option<Snowflake>,
     pub(crate) api_base: Option<Base>,
+    /// The category `cataly setup` puts `#cataly` and `#cataly-ops` in (default `Cataly`); `None`
+    /// (`category = ""`) leaves them where they are, at the top of the server (issue #278).
+    pub(crate) category: Option<String>,
     /// The owner's account; intake runs only with an owner and at least one channel.
     pub(crate) owner: Option<Snowflake>,
     /// Watched channels, threads, DMs and forums, without duplicates (at most 256).
@@ -174,6 +177,12 @@ pub(crate) struct DiscordSettings {
     pub(crate) others_drop: Duration,
 }
 
+/// The default `[discord] category`.
+pub(crate) const DISCORD_CATEGORY: &str = "Cataly";
+
+/// Longest Discord channel name.
+const DISCORD_NAME_MAX: usize = 100;
+
 /// Most watched Discord channels (DISC-IN req. 5).
 pub(crate) const DISCORD_CHANNELS_MAX: usize = 256;
 
@@ -183,6 +192,7 @@ impl Default for DiscordSettings {
             token_file: None,
             guild: None,
             api_base: None,
+            category: Some(DISCORD_CATEGORY.to_string()),
             owner: None,
             channels: Vec::new(),
             follow_threads: true,
@@ -625,6 +635,14 @@ fn sections(errors: &mut Vec<ConfigError>, root: &mut Section<'_>, config: &mut 
                     errors.push(d.error("api_base", "the test override must point at localhost"));
                 }
                 Err(e) => errors.push(d.error("api_base", &e)),
+            }
+        }
+        if let Some(name) = d.string(errors, "category") {
+            let name = name.trim();
+            if name.chars().count() > DISCORD_NAME_MAX {
+                errors.push(d.error("category", "at most 100 characters"));
+            } else {
+                config.discord.category = (!name.is_empty()).then(|| name.to_string());
             }
         }
         discord_intake(errors, &mut d, &mut config.discord);

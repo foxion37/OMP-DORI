@@ -225,7 +225,7 @@ pub(crate) async fn serve<R: AsyncBufRead + Unpin>(
     }
     let role_name = if role == Role::Lane { "lane" } else { "lead" };
     let notes = crate::jobs::notes::Notes::new(&hub.paths.state_dir).exists();
-    let mut answer = welcome(&key, sub, lane_pin.as_ref(), notes);
+    let mut answer = welcome(&key, sub, lane_pin.as_ref(), notes, &persona_text(hub));
     if let (Some(_), Some(map)) = (&port, answer.as_object_mut()) {
         map.insert("tern".into(), Value::Bool(true));
     }
@@ -340,7 +340,13 @@ async fn pump(mut writer: OwnedWriteHalf, mut rx: mpsc::Receiver<Response>) {
 
 /// The hello answer: the role with its guidance and tools and, for a lane, its pin and shell rules.
 /// A worker in its own realm gets only the rules, no guidance and no tool.
-fn welcome(key: &str, sub: bool, lane: Option<&(String, String)>, notes: bool) -> Value {
+fn welcome(
+    key: &str,
+    sub: bool,
+    lane: Option<&(String, String)>,
+    notes: bool,
+    persona: &str,
+) -> Value {
     match lane {
         Some((lane_key, pin)) => json!({
             "role": "lane",
@@ -357,10 +363,12 @@ fn welcome(key: &str, sub: bool, lane: Option<&(String, String)>, notes: bool) -
             "role": "lead",
             "key": key,
             // The owner notes are named only when they exist, never embedded (COORD req. 48).
-            "guidance": match (sub, notes) {
-                (true, _) => String::new(),
-                (false, true) => format!("{LEAD_GUIDANCE}\n{NOTES_LINE}"),
-                (false, false) => LEAD_GUIDANCE.to_string(),
+            "guidance": match (sub, notes, persona.is_empty()) {
+                (true, _, _) => String::new(),
+                (false, true, true) => format!("{LEAD_GUIDANCE}\n{NOTES_LINE}"),
+                (false, true, false) => format!("{LEAD_GUIDANCE}\n{NOTES_LINE}\n{persona}"),
+                (false, false, true) => LEAD_GUIDANCE.to_string(),
+                (false, false, false) => format!("{LEAD_GUIDANCE}\n{persona}"),
             },
             "tools": if sub { json!([]) } else { json!([super::tool::definition()]) },
             // The hub judges the lead's shell calls by the built-in rule 0 (DESIGN 9.2).
@@ -369,6 +377,29 @@ fn welcome(key: &str, sub: bool, lane: Option<&(String, String)>, notes: bool) -
             "status": "",
         }),
     }
+}
+/// The persona line and paragraph from `[lead] name`/`persona` (issue 278): absent keys, or the
+/// default name alone, add nothing and the guidance stays byte-identical to the built-in one.
+fn persona_text(hub: &Hub) -> String {
+    let config = hub.config();
+    let Some(lead) = config.lead.as_ref() else {
+        return String::new();
+    };
+    let mut extra = String::new();
+    if let Some(name) = lead.name.as_deref()
+        && name != "Cataly"
+    {
+        let _ = write!(
+            extra,
+            "\nYour name is {name}: you introduce yourself as {name}, never as Cataly. Cataly is only the harness that runs you.\n"
+        );
+    }
+    if let Some(persona) = lead.persona.as_deref() {
+        extra.push_str("\nYour personality and tone, chosen by the owner:\n");
+        extra.push_str(persona.trim());
+        extra.push('\n');
+    }
+    extra
 }
 
 /// Answers a request off the read loop, so a slow lane action never stalls the connection. Shell
@@ -576,5 +607,23 @@ mod tests {
         assert_eq!(root_session(&nested), id);
         assert_eq!(root_session("/h/x/0-Worker.jsonl"), "/h/x/0-Worker.jsonl");
         assert_eq!(root_session(""), "");
+    }
+
+    #[test]
+    fn the_persona_reaches_the_leads_guidance_and_the_default_does_not_change_it() {
+        // No name or persona: the guidance is the built-in file, byte-identical.
+        let plain = welcome("k", false, None, false, "");
+        assert_eq!(plain["guidance"], LEAD_GUIDANCE);
+        let noted = welcome("k", false, None, true, "");
+        assert_eq!(noted["guidance"], format!("{LEAD_GUIDANCE}\n{NOTES_LINE}"));
+        // A persona joins after the contract and the notes line.
+        let extra = "\nYour name is Mi: you introduce yourself as Mi, never as Cataly.\n";
+        let named = welcome("k", false, None, true, extra);
+        let guidance = named["guidance"].as_str().unwrap();
+        assert!(guidance.starts_with(LEAD_GUIDANCE));
+        assert!(guidance.contains(NOTES_LINE));
+        assert!(guidance.contains("you introduce yourself as Mi"));
+        // A subagent still gets nothing.
+        assert_eq!(welcome("k", true, None, false, extra)["guidance"], "");
     }
 }

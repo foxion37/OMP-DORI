@@ -70,6 +70,9 @@ pub(super) struct Found {
     guilds: Vec<Value>,
     guild: Option<Value>,
     channels: Vec<Value>,
+    /// The category the channels go in: its name, ID (`null` until made) and state; `null` when
+    /// the config opts out.
+    category: Option<Value>,
     owner: Option<Value>,
 }
 
@@ -86,6 +89,7 @@ impl Found {
             "guilds": self.guilds,
             "guild": self.guild,
             "channels": self.channels,
+            "category": self.category,
             "owner": self.owner,
         })
     }
@@ -146,8 +150,26 @@ pub(super) struct Discord {
     /// The two channels; `None` until created.
     pub(super) lead: Option<Snowflake>,
     pub(super) ops: Option<Snowflake>,
+    /// The category the two channels belong in, when the config asks for one.
+    grouping: Option<Grouping>,
     pub(super) owner: Snowflake,
     pub(super) owner_source: &'static str,
+}
+
+/// The category for `#cataly` and `#cataly-ops` (`[discord] category`; issue #278).
+struct Grouping {
+    name: String,
+    /// The category channel; `None` until created.
+    id: Option<Snowflake>,
+    /// Existing channels of the two that sit outside every category; only these are moved in.
+    loose: Vec<(&'static str, Snowflake)>,
+}
+
+/// What the channel step found.
+struct Channels {
+    lead: Option<Snowflake>,
+    ops: Option<Snowflake>,
+    grouping: Option<Grouping>,
 }
 
 /// Why the run stopped: the report so far and the step that still needs the owner.
@@ -179,7 +201,17 @@ pub(super) async fn discover(
         found: Found::default(),
     };
     match flow.steps().await {
-        Ok((rest, (app, me), (guild, server), (lead, ops), (owner, owner_source))) => {
+        Ok((
+            rest,
+            (app, me),
+            (guild, server),
+            Channels {
+                lead,
+                ops,
+                grouping,
+            },
+            (owner, owner_source),
+        )) => {
             flow.found.stage = "ready";
             Ok(Discord {
                 rest,
@@ -195,6 +227,7 @@ pub(super) async fn discover(
                 server,
                 lead,
                 ops,
+                grouping,
                 owner,
                 owner_source,
             })
@@ -208,7 +241,7 @@ type Steps = (
     // The application and the bot account.
     (Value, Value),
     (Snowflake, String),
-    (Option<Snowflake>, Option<Snowflake>),
+    Channels,
     (Snowflake, &'static str),
 );
 
@@ -506,35 +539,43 @@ impl Flow<'_> {
     }
 
     /// `#cataly` and `#cataly-ops`: the text channels with those names; `None` for one to create.
-    async fn channels(
-        &mut self,
-        rest: &Rest,
-        guild: Snowflake,
-    ) -> Result<(Option<Snowflake>, Option<Snowflake>), String> {
+    /// With a `[discord] category`, also the category of that name (a type 4 channel, matched
+    /// exactly like the channel names: Discord lowercases text channel names, a category keeps its
+    /// case) and which of the two channels sit outside every category.
+    async fn channels(&mut self, rest: &Rest, guild: Snowflake) -> Result<Channels, String> {
         let all = rest
             .guild_channels(guild)
             .await
             .map_err(|e| self.stop("channels", format!("reading the server's channels: {e}")))?;
+        let id_of = |c: &Value| {
+            c.get("id")
+                .and_then(Value::as_str)
+                .and_then(Snowflake::parse)
+        };
         let mut ids = Vec::new();
+        let mut loose = Vec::new();
         for name in [LEAD, OPS] {
-            let same: Vec<Snowflake> = all
+            let same: Vec<&Value> = all
                 .iter()
                 .filter(|c| {
                     c.get("type").and_then(Value::as_u64) == Some(0)
                         && c.get("name").and_then(Value::as_str) == Some(name)
                 })
-                .filter_map(|c| {
-                    c.get("id")
-                        .and_then(Value::as_str)
-                        .and_then(Snowflake::parse)
-                })
                 .collect();
             match same.as_slice() {
                 [one] => {
-                    self.found
-                        .channels
-                        .push(json!({ "name": name, "id": one.to_string(), "state": "existing" }));
-                    ids.push(Some(*one));
+                    let id = id_of(one);
+                    if let Some(id) = id
+                        && one.get("parent_id").is_none_or(Value::is_null)
+                    {
+                        loose.push((name, id));
+                    }
+                    self.found.channels.push(json!({
+                        "name": name,
+                        "id": id.map(|id| id.to_string()),
+                        "state": "existing",
+                    }));
+                    ids.push(id);
                 }
                 [] => {
                     self.found
@@ -553,10 +594,42 @@ impl Flow<'_> {
                 }
             }
         }
-        Ok((
-            ids.first().copied().flatten(),
-            ids.get(1).copied().flatten(),
-        ))
+        let grouping = match self.config.discord.category.clone() {
+            None => None,
+            Some(name) => {
+                let same: Vec<&Value> = all
+                    .iter()
+                    .filter(|c| {
+                        c.get("type").and_then(Value::as_u64) == Some(4)
+                            && c.get("name").and_then(Value::as_str) == Some(name.as_str())
+                    })
+                    .collect();
+                let id = match same.as_slice() {
+                    [one] => id_of(one),
+                    [] => None,
+                    more => {
+                        return Err(self.stop(
+                            "channels",
+                            format!(
+                                "{} categories are named {name}; rename all but one, or set [discord] category, then run setup again",
+                                more.len()
+                            ),
+                        ));
+                    }
+                };
+                self.found.category = Some(json!({
+                    "name": name,
+                    "id": id.map(|id| id.to_string()),
+                    "state": if id.is_some() { "existing" } else { "missing" },
+                }));
+                Some(Grouping { name, id, loose })
+            }
+        };
+        Ok(Channels {
+            lead: ids.first().copied().flatten(),
+            ops: ids.get(1).copied().flatten(),
+            grouping,
+        })
     }
 
     /// The owner's user ID: `--owner`, else the config's, else the application's owner, else
@@ -610,13 +683,33 @@ impl Flow<'_> {
 }
 
 impl Discord {
-    /// Creates the channels that are missing (after the owner's yes). No other channel is changed.
+    /// Whether the channels are where setup wants them: both exist and none waits to be moved
+    /// into its category.
+    pub(super) fn grouped(&self) -> bool {
+        self.lead.is_some()
+            && self.ops.is_some()
+            && self.grouping.as_ref().is_none_or(|g| g.loose.is_empty())
+    }
+
+    /// Creates the channels and the category that are missing, and moves existing channels that
+    /// sit outside every category into it (after the owner's yes). A channel in any category stays
+    /// there; no other channel is changed.
     pub(super) async fn create_missing(&mut self) -> Result<(Snowflake, Snowflake), String> {
+        let parent = self.settle_category().await?;
         if self.lead.is_none() {
-            self.lead = Some(self.create_one(LEAD).await?);
+            self.lead = Some(self.create_one(LEAD, parent).await?);
         }
         if self.ops.is_none() {
-            self.ops = Some(self.create_one(OPS).await?);
+            self.ops = Some(self.create_one(OPS, parent).await?);
+        }
+        if let Some(parent) = parent {
+            let loose = self
+                .grouping
+                .as_mut()
+                .map_or_default(|g| std::mem::take(&mut g.loose));
+            for (name, id) in loose {
+                self.move_one(name, id, parent).await?;
+            }
         }
         match (self.lead, self.ops) {
             (Some(lead), Some(ops)) => Ok((lead, ops)),
@@ -624,13 +717,87 @@ impl Discord {
         }
     }
 
-    async fn create_one(&mut self, name: &'static str) -> Result<Snowflake, String> {
+    /// The category the channels go in, made when it is needed and missing; `None` without one.
+    async fn settle_category(&mut self) -> Result<Option<Snowflake>, String> {
+        let needed = self.lead.is_none()
+            || self.ops.is_none()
+            || self.grouping.as_ref().is_some_and(|g| !g.loose.is_empty());
+        let Some(g) = self.grouping.as_ref().filter(|_| needed) else {
+            return Ok(None);
+        };
+        if g.id.is_some() {
+            return Ok(g.id);
+        }
+        let name = g.name.clone();
+        match self.rest.create_category(self.guild, &name).await {
+            Ok(v) => {
+                let id = v
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .and_then(Snowflake::parse)
+                    .filter(|_| v.get("name").and_then(Value::as_str) == Some(name.as_str()))
+                    .ok_or_else(|| {
+                        format!("Discord's answer named no category {name}; run setup again, it finds the category if it was made")
+                    })?;
+                self.found.category =
+                    Some(json!({ "name": name, "id": id.to_string(), "state": "created" }));
+                if let Some(g) = &mut self.grouping {
+                    g.id = Some(id);
+                }
+                Ok(Some(id))
+            }
+            Err(e) if e.status == Some(403) => Err(format!(
+                "the bot may not create channels ({e}): give it Manage Channels by opening {}, \
+                 or create the category {name} yourself, then run setup again",
+                self.found.invite.as_deref().unwrap_or(INVITE)
+            )),
+            Err(e) if e.uncertain => Err(format!(
+                "Discord did not confirm the category {name} ({e}); run setup again, it finds the category if it was made"
+            )),
+            Err(e) => Err(format!("creating the category {name}: {e}")),
+        }
+    }
+
+    /// Moves the existing channel `name` into the category.
+    async fn move_one(
+        &mut self,
+        name: &'static str,
+        id: Snowflake,
+        parent: Snowflake,
+    ) -> Result<(), String> {
+        match self.rest.move_channel(id, parent).await {
+            Ok(_) => {
+                for c in &mut self.found.channels {
+                    if c.get("name").and_then(Value::as_str) == Some(name) {
+                        *c = json!({ "name": name, "id": id.to_string(), "state": "moved" });
+                    }
+                }
+                Ok(())
+            }
+            Err(e) if e.status == Some(403) => Err(format!(
+                "the bot may not move #{name} ({e}): give it Manage Channels by opening {}, \
+                 or move the channel yourself, then run setup again",
+                self.found.invite.as_deref().unwrap_or(INVITE)
+            )),
+            Err(e) => Err(format!("moving #{name} into its category: {e}")),
+        }
+    }
+
+    async fn create_one(
+        &mut self,
+        name: &'static str,
+        parent: Option<Snowflake>,
+    ) -> Result<Snowflake, String> {
         let topic = if name == LEAD {
             "Talk with Cataly's lead here."
         } else {
             "Cataly's status panel and alerts."
         };
-        match self.rest.create_text_channel(self.guild, name, topic).await {
+        match self
+            .rest
+            .create_text_channel(self.guild, name, topic, parent)
+            .await
+        {
             Ok(v) => {
                 let id = v
                     .get("id")
@@ -677,9 +844,12 @@ impl Discord {
                 && mine.and_then(|m| m.get("hash")).and_then(Value::as_str) == current;
             let fresh = mine.and_then(|m| m.get("image")).and_then(Value::as_str)
                 == Some(sha256_hex(bytes).as_str());
-            if force || current.is_none() || (ours && !fresh) {
+            // An image the owner chose in chat (`onboarding.avatar`) is recorded like Cataly's own
+            // but stays his: a changed default never replaces it.
+            let chosen = ours && mine.and_then(|m| m.get("chosen")) == Some(&Value::Bool(true));
+            if force || current.is_none() || (ours && !fresh && !chosen) {
                 plan.set.push(field);
-            } else if ours {
+            } else if ours && !chosen {
                 plan.cataly.push(field);
             } else {
                 plan.kept.push(field);
@@ -723,21 +893,34 @@ impl Discord {
                 set.extend(v);
             }
         }
-        let mut record = read_record(state_dir, &self.me);
-        record.insert(
-            "bot".into(),
-            self.me.get("id").cloned().unwrap_or(Value::Null),
-        );
-        for (field, bytes) in chosen() {
-            record.insert(
-                (*field).to_string(),
-                json!({ "hash": set.get(*field), "image": sha256_hex(bytes) }),
-            );
-        }
-        let text = serde_json::to_string(&record).map_err(|e| e.to_string())?;
-        crate::sys::fs::write_atomic(&state_dir.join(PROFILE_RECORD), text.as_bytes())
-            .map_err(|e| e.to_string())
+        let images: Vec<(&str, &[u8])> = chosen().map(|(f, b)| (*f, *b)).collect();
+        record_images(state_dir, &self.me, &images, &set, false)
     }
+}
+
+/// Records that Cataly set `images` (Discord field, bytes) on the bot `me`, with the hashes Discord
+/// answered in `set`, so a later setup run tells them from images the owner set himself. `chosen`
+/// marks images the owner picked in chat: setup keeps those even when its own default changes.
+pub(crate) fn record_images(
+    state_dir: &Path,
+    me: &Value,
+    images: &[(&str, &[u8])],
+    set: &serde_json::Map<String, Value>,
+    chosen: bool,
+) -> Result<(), String> {
+    let mut record = read_record(state_dir, me);
+    record.insert("bot".into(), me.get("id").cloned().unwrap_or(Value::Null));
+    for (field, bytes) in images {
+        let entry = if chosen {
+            json!({ "hash": set.get(*field), "image": sha256_hex(bytes), "chosen": true })
+        } else {
+            json!({ "hash": set.get(*field), "image": sha256_hex(bytes) })
+        };
+        record.insert((*field).to_string(), entry);
+    }
+    let text = serde_json::to_string(&record).map_err(|e| e.to_string())?;
+    crate::sys::fs::write_atomic(&state_dir.join(PROFILE_RECORD), text.as_bytes())
+        .map_err(|e| e.to_string())
 }
 
 /// Cataly's default profile images: Discord's field and the bundled JPEG. The application's icon
@@ -791,7 +974,7 @@ fn read_record(state_dir: &Path, me: &Value) -> serde_json::Map<String, Value> {
 }
 
 /// Standard base64 with padding.
-fn base64(bytes: &[u8]) -> String {
+pub(crate) fn base64(bytes: &[u8]) -> String {
     const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for chunk in bytes.chunks(3) {

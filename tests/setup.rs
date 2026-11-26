@@ -87,9 +87,11 @@ fn config_dir(hub: &TestHub) -> PathBuf {
     hub.root.join("config/cataly")
 }
 
+/// The names of the text channels created; the category is counted by `categories`.
 fn creates(fake: &FakeDiscord) -> Vec<String> {
     fake.calls("POST", "/guilds/")
         .into_iter()
+        .filter(|s| s.body["type"] == 0)
         .map(|s| s.body["name"].as_str().unwrap_or_default().to_string())
         .collect()
 }
@@ -401,4 +403,141 @@ fn steps_that_need_the_owner_stop_a_script() {
     assert_eq!(report["discord"]["stage"], "guild");
     assert!(stderr.contains("--guild"), "{stderr}");
     assert_eq!(creates(&fake), Vec::<String>::new());
+}
+
+/// The names of the categories (channel type 4) created.
+fn categories(fake: &FakeDiscord) -> Vec<String> {
+    fake.calls("POST", "/guilds/")
+        .into_iter()
+        .filter(|s| s.body["type"] == 4)
+        .map(|s| s.body["name"].as_str().unwrap_or_default().to_string())
+        .collect()
+}
+
+/// A home with the fake joined to the guild, and the flags of a scripted run that applies.
+fn scripted_sandbox() -> (TestHub, FakeDiscord, Vec<String>) {
+    let (hub, fake) = sandbox(false);
+    let token = hub.private_file("discord-token", TOKEN);
+    fake.join(GUILD, "home");
+    let flags = [
+        "--discord-token-file",
+        token.to_str().unwrap(),
+        "--owner",
+        "100000000000000001",
+        "--lead-model",
+        "openai-codex/gpt-5",
+        "--backup",
+        "off",
+        "--service",
+        "off",
+        "--yes",
+    ]
+    .map(String::from)
+    .to_vec();
+    (hub, fake, flags)
+}
+
+#[test]
+fn a_fresh_server_gets_one_category_holding_both_channels() {
+    let (hub, fake, flags) = scripted_sandbox();
+    let flags: Vec<&str> = flags.iter().map(String::as_str).collect();
+    let (ok, done, stderr) = json_run(&hub, &flags);
+    assert!(ok, "{stderr}");
+    assert_eq!(done["applied"], true);
+    assert_eq!(categories(&fake), ["Cataly"]);
+    assert_eq!(creates(&fake), ["cataly", "cataly-ops"]);
+    let category = done["discord"]["category"]["id"].as_str().unwrap();
+    assert_eq!(done["discord"]["category"]["state"], "created");
+    let posts = fake.calls("POST", "/guilds/");
+    assert_eq!(posts[0].body["type"], 4, "the category comes first");
+    for post in &posts[1..] {
+        assert_eq!(post.body["parent_id"], category, "{:?}", post.body);
+    }
+    assert!(fake.calls("PATCH", "/channels/").is_empty());
+}
+
+#[test]
+fn a_second_run_makes_no_second_category_and_no_second_channel() {
+    let (hub, fake, flags) = scripted_sandbox();
+    let flags: Vec<&str> = flags.iter().map(String::as_str).collect();
+    let (ok, _, stderr) = json_run(&hub, &flags);
+    assert!(ok, "{stderr}");
+    let posts = fake.calls("POST", "/guilds/").len();
+    assert_eq!(posts, 3);
+    let (ok, done, stderr) = json_run(&hub, &flags);
+    assert!(ok, "{stderr}");
+    assert_eq!(fake.calls("POST", "/guilds/").len(), posts);
+    assert!(fake.calls("PATCH", "/channels/").is_empty());
+    assert_eq!(done["discord"]["category"]["state"], "existing");
+    assert_eq!(categories(&fake), ["Cataly"]);
+}
+
+#[test]
+fn channels_at_the_root_are_moved_into_the_category() {
+    let (hub, fake, flags) = scripted_sandbox();
+    let flags: Vec<&str> = flags.iter().map(String::as_str).collect();
+    fake.named(LEAD, "cataly", 0, GUILD);
+    fake.named(OPS, "cataly-ops", 0, GUILD);
+    let (ok, done, stderr) = json_run(&hub, &flags);
+    assert!(ok, "{stderr}");
+    assert_eq!(done["applied"], true);
+    assert_eq!(categories(&fake), ["Cataly"]);
+    assert_eq!(creates(&fake), Vec::<String>::new());
+    let category = done["discord"]["category"]["id"].as_str().unwrap();
+    let patches = fake.calls("PATCH", "/channels/");
+    let moved: Vec<&str> = patches
+        .iter()
+        .map(|m| m.path.trim_start_matches("/channels/"))
+        .collect();
+    assert_eq!(moved, [LEAD, OPS]);
+    for m in &patches {
+        assert_eq!(m.body["parent_id"], category, "{:?}", m.body);
+    }
+
+    // Now both sit in the category: a rerun moves nothing.
+    let (ok, _, stderr) = json_run(&hub, &flags);
+    assert!(ok, "{stderr}");
+    assert_eq!(fake.calls("PATCH", "/channels/").len(), 2);
+    assert_eq!(categories(&fake), ["Cataly"]);
+}
+
+/// An avatar the owner chose in chat (`onboarding.avatar` records it with `chosen`) is kept by a
+/// plain run even though its image is not Cataly's default; without the mark the same record is
+/// Cataly's stale default and is replaced.
+#[test]
+fn an_avatar_chosen_in_chat_is_kept_by_setup() {
+    let (hub, fake, flags) = scripted_sandbox();
+    let flags: Vec<&str> = flags.iter().map(String::as_str).collect();
+    let (ok, _, stderr) = json_run(&hub, &flags);
+    assert!(ok, "{stderr}");
+    assert_eq!(fake.calls("PATCH", "/users/@me").len(), 1);
+    let path = hub.state().join("discord-profile.json");
+    let mut record: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    for field in ["avatar", "icon"] {
+        record[field]["image"] = json!("0".repeat(64));
+    }
+    std::fs::write(&path, record.to_string()).unwrap();
+
+    // The image is not the default and nothing says the owner chose it: Cataly's own, stale.
+    let (ok, again, stderr) = json_run(&hub, &["--yes"]);
+    assert!(ok, "{stderr}");
+    assert_eq!(fake.calls("PATCH", "/users/@me").len(), 2, "{again}");
+
+    let mut record: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    for field in ["avatar", "icon"] {
+        record[field]["image"] = json!("0".repeat(64));
+        record[field]["chosen"] = json!(true);
+    }
+    std::fs::write(&path, record.to_string()).unwrap();
+    let (ok, kept, stderr) = json_run(&hub, &["--yes"]);
+    assert!(ok, "{stderr}");
+    assert_eq!(fake.calls("PATCH", "/users/@me").len(), 2, "{kept}");
+    let profile = item(&kept, "profile");
+    assert!(
+        profile["value"]
+            .as_str()
+            .unwrap()
+            .contains("avatar and icon: yours, kept"),
+        "{profile}"
+    );
 }

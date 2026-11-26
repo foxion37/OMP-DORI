@@ -50,7 +50,14 @@ pub(crate) fn definition() -> Value {
     Host: lane.admission (cwd?), lane.slots. Onboarding (read-only while it runs: posts, questions, lanes and jobs are \
     refused): onboarding (state), onboarding.start (reopen?, message?: only when the owner raised it again), \
     onboarding.consent (answer yes|no, message), onboarding.tool (name, answer allowed|declined, reads, message), \
-    onboarding.finish (text: short summary of what is known, tools used or skipped, and gaps).",
+    onboarding.finish (text: short summary of what is known, tools used or skipped, and gaps). The owner's answers \
+    about who you are, taken while onboarding runs and again later when he changes his mind (never before \
+    onboarding.start): onboarding.name (name: 1-100 characters on one line, message; writes [lead] name), \
+    onboarding.persona (persona: 1-2000 characters, message; writes [lead] persona; an empty persona cannot be \
+    set here, `cataly setup --lead-persona` also refuses an empty value, so the owner clears it by deleting the \
+    persona line from the config file), onboarding.avatar (url: the https:// address of the image the owner \
+    attached, message; JPEG, PNG or GIF up to 10 MiB; sets the bot's avatar and the application icon and records \
+    them so setup keeps them; needs the Discord intake).",
         "parameters": {
             "type": "object",
             "properties": {
@@ -68,7 +75,7 @@ pub(crate) fn definition() -> Value {
                 "option": int("the chosen option, from 1"),
                 "settle": text("owner (default) or lead"),
                 "request": int("the request-log item the question belongs to"),
-                "name": text("job name"),
+                "name": text("job name; for onboarding.name the assistant's name, for onboarding.tool the integration"),
                 "argv": { "type": "array", "items": { "type": "string" } },
                 "filter": text("regular expression an output line must match"),
                 "restarts": int("restarts allowed, 0 to 100 (default 5)"),
@@ -80,6 +87,8 @@ pub(crate) fn definition() -> Value {
                 "calls": { "type": "array", "items": { "type": "string" } },
                 "answer": text("onboarding: yes|no for consent, allowed|declined for a tool"),
                 "reads": text("onboarding: what the tool would read and why"),
+                "persona": text("onboarding.persona: the personality and tone the owner described, up to 2000 characters"),
+                "url": text("onboarding.avatar: the https:// address of the image the owner attached"),
                 "reopen": { "type": "boolean", "description": "onboarding.start after the owner raised it again" }
             },
             "required": ["op"]

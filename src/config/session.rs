@@ -117,6 +117,10 @@ pub(crate) struct LeadSettings {
     pub(crate) session_id: Option<String>,
     /// Owner-only file with the role instructions (`--append-system-prompt`).
     pub(crate) instructions: Option<PathBuf>,
+    /// The assistant's name in chat; default "Cataly" reproduces the built-in voice.
+    pub(crate) name: Option<String>,
+    /// A few lines of extra personality guidance appended to the lead's instructions.
+    pub(crate) persona: Option<String>,
     /// Start the lead when the hub starts (default true).
     pub(crate) autostart: bool,
 }
@@ -232,44 +236,8 @@ pub(super) fn parse(
         runtime(errors, &mut s, sessions);
         s.finish(errors);
     }
-    if let Some(mut l) = root.table(errors, "lead") {
-        let model = l.required_string(errors, "model").map(str::to_string);
-        if let Some(m) = &model
-            && !model_selector(m)
-        {
-            errors.push(l.error("model", "expected provider/id"));
-        }
-        let thinking = l.string(errors, "thinking").map(str::to_string);
-        if let Some(t) = &thinking
-            && !THINKING.contains(&t.as_str())
-        {
-            errors.push(l.error(
-                "thinking",
-                &format!("expected one of {}", THINKING.join(", ")),
-            ));
-        }
-        let cwd = l
-            .string(errors, "cwd")
-            .and_then(|v| absolute(errors, &l, "cwd", v));
-        let instructions = l
-            .string(errors, "instructions")
-            .and_then(|v| absolute(errors, &l, "instructions", v));
-        let session_id = l
-            .string(errors, "session_id")
-            .filter(|v| !v.trim().is_empty())
-            .map(str::to_string);
-        let autostart = l.bool(errors, "autostart").unwrap_or(true);
-        l.finish(errors);
-        if let Some(model) = model.filter(|m| model_selector(m)) {
-            *lead = Some(LeadSettings {
-                model,
-                thinking,
-                cwd,
-                session_id,
-                instructions,
-                autostart,
-            });
-        }
+    if let Some(l) = root.table(errors, "lead") {
+        parse_lead(errors, l, lead);
     }
     if let Some(mut f) = root.table(errors, "fallback") {
         if let Some(on) = f.string(errors, "on") {
@@ -297,6 +265,58 @@ pub(super) fn parse(
             }
         }
         f.finish(errors);
+    }
+}
+
+/// The `[lead]` table: the model the standing lead runs on, its working folder and persona (HOST
+/// req. 17-18). Blank `name`/`persona` behave as unset; unknown keys fail the load.
+fn parse_lead(errors: &mut Vec<ConfigError>, mut l: Section<'_>, lead: &mut Option<LeadSettings>) {
+    let model = l.required_string(errors, "model").map(str::to_string);
+    if let Some(m) = &model
+        && !model_selector(m)
+    {
+        errors.push(l.error("model", "expected provider/id"));
+    }
+    let thinking = l.string(errors, "thinking").map(str::to_string);
+    if let Some(t) = &thinking
+        && !THINKING.contains(&t.as_str())
+    {
+        errors.push(l.error(
+            "thinking",
+            &format!("expected one of {}", THINKING.join(", ")),
+        ));
+    }
+    let cwd = l
+        .string(errors, "cwd")
+        .and_then(|v| absolute(errors, &l, "cwd", v));
+    let instructions = l
+        .string(errors, "instructions")
+        .and_then(|v| absolute(errors, &l, "instructions", v));
+    let session_id = l
+        .string(errors, "session_id")
+        .filter(|v| !v.trim().is_empty())
+        .map(str::to_string);
+    let autostart = l.bool(errors, "autostart").unwrap_or(true);
+    let name = l
+        .string(errors, "name")
+        .filter(|v| !v.trim().is_empty())
+        .map(str::to_string);
+    let persona = l
+        .string(errors, "persona")
+        .filter(|v| !v.trim().is_empty())
+        .map(str::to_string);
+    l.finish(errors);
+    if let Some(model) = model.filter(|m| model_selector(m)) {
+        *lead = Some(LeadSettings {
+            model,
+            thinking,
+            cwd,
+            session_id,
+            instructions,
+            name,
+            persona,
+            autostart,
+        });
     }
 }
 
@@ -352,5 +372,26 @@ mod tests {
         ] {
             assert!(paths.contains(&p), "{p}: {paths:?}");
         }
+    }
+
+    #[test]
+    fn lead_name_and_persona_parse_with_their_defaults() {
+        let bare = crate::config::parse("[lead]\nmodel = \"p/m\"\n").unwrap();
+        let lead = bare.lead.unwrap();
+        assert_eq!(lead.name, None);
+        assert_eq!(lead.persona, None);
+        let named = crate::config::parse(
+            "[lead]\nmodel = \"p/m\"\nname = \"Mi\"\npersona = \"dry wit, short sentences\"\n",
+        )
+        .unwrap()
+        .lead
+        .unwrap();
+        assert_eq!(named.name.as_deref(), Some("Mi"));
+        assert_eq!(named.persona.as_deref(), Some("dry wit, short sentences"));
+        // Blank values behave as unset; unknown keys are still refused.
+        let blank = crate::config::parse("[lead]\nmodel = \"p/m\"\nname = \"  \"\n").unwrap();
+        assert_eq!(blank.lead.unwrap().name, None);
+        let errors = crate::config::parse("[lead]\nmodel = \"p/m\"\nunknown = 1\n").unwrap_err();
+        assert!(errors.iter().any(|e| e.path.starts_with("lead")));
     }
 }

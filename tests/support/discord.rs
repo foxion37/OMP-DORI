@@ -85,6 +85,8 @@ struct State {
     app_flags: u64,
     guilds: Vec<Value>,
     profile: HashMap<String, (String, String)>,
+    /// Attachments served at `GET /files/<name>` (the owner's uploads, as the CDN would).
+    files: HashMap<String, Vec<u8>>,
 }
 
 pub struct FakeDiscord {
@@ -322,6 +324,16 @@ impl FakeDiscord {
             .insert(field.into(), (hash.into(), String::new()));
     }
 
+    /// Serves `bytes` at `<base>/files/<name>` without authorization, as an attachment's CDN link.
+    pub fn serve_file(&self, name: &str, bytes: &[u8]) -> String {
+        self.state
+            .lock()
+            .unwrap()
+            .files
+            .insert(name.into(), bytes.to_vec());
+        format!("{}/files/{name}", self.base())
+    }
+
     /// The bot's avatar or banner, or the application's icon: its hash and the data URI it was set
     /// from.
     pub fn image(&self, field: &str) -> Option<(String, String)> {
@@ -553,15 +565,28 @@ fn setup_route(
         ("POST", ["guilds", guild, "channels"]) => {
             s.next_id += 1;
             let id = s.next_id.to_string();
-            let channel = json!({ "id": id, "type": body["type"], "name": body["name"],
+            let mut channel = json!({ "id": id, "type": body["type"], "name": body["name"],
                 "topic": body["topic"], "guild_id": guild });
+            if let Some(parent) = body.get("parent_id") {
+                channel["parent_id"] = parent.clone();
+            }
             s.channels.insert(id, channel.clone());
             reply(201, &channel)
         }
+        ("PATCH", ["channels", id]) => match s.channels.get_mut(*id) {
+            Some(channel) => {
+                if let Some(parent) = body.get("parent_id") {
+                    channel["parent_id"] = parent.clone();
+                }
+                reply(200, channel)
+            }
+            None => reply(404, &json!({ "message": "Unknown Channel", "code": 10003 })),
+        },
         _ => return None,
     })
 }
 
+#[allow(clippy::too_many_lines)]
 async fn answer(
     req: Request<Incoming>,
     state: Arc<Mutex<State>>,
@@ -603,6 +628,14 @@ async fn answer(
     let unknown = json!({ "message": "Unknown Message", "code": 10008 });
     let response = match (method.as_str(), parts.as_slice()) {
         ("GET", ["applications", "@me"]) => reply(200, &application(&s)),
+        ("GET", ["files", name]) => match s.files.get(*name) {
+            Some(bytes) => Response::builder()
+                .status(200)
+                .header("content-type", "application/octet-stream")
+                .body(Full::new(Bytes::from(bytes.clone())))
+                .unwrap(),
+            None => reply(404, &json!({ "message": "Unknown", "code": 0 })),
+        },
         ("GET", ["gateway"]) => {
             let url = s
                 .channels

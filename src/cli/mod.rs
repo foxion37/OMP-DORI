@@ -6,8 +6,8 @@ mod home;
 mod install;
 mod lead;
 pub(crate) mod out;
-mod setup;
-mod setup_discord;
+pub(crate) mod setup;
+pub(crate) mod setup_discord;
 mod slot;
 mod transcribe;
 

@@ -121,6 +121,7 @@ These flags write their keys as given:
 | `--fallback-on` | `[fallback] on` |
 | `--fallback-chain` (comma-separated `provider/id`) | `[fallback.chains] default` |
 | `--lead-model` (`provider/id`), `--lead-cwd` (absolute folder) | `[lead] model`, `cwd` |
+| `--lead-name`, `--lead-persona` | `[lead] name`, `persona` |
 
 A new file also gets `[hub] log_level = "info"` and `[omp] path = "omp"`.
 
@@ -222,6 +223,8 @@ Present means the hub keeps one standing lead session. Absent means no lead.
 | `cwd` | string | your home folder | absolute path | Working folder of a new lead session. A resumed lead keeps the folder its session recorded (a real folder you own), even when this setting or the default changed since. |
 | `session_id` | string | none | any non-blank | The lead resumes exactly this OMP session. |
 | `instructions` | string | none | absolute path to an owner-only file | Role instructions appended to the lead's system prompt. |
+| `name` | string | `Cataly` | any non-blank | How the assistant introduces itself in chat. The default keeps the built-in voice. |
+| `persona` | string | none | any text, a few lines | Personality and tone guidance appended to the lead's instructions. Unset keeps the built-in voice. |
 | `autostart` | boolean | `true` | | Start the lead when the hub starts. |
 
 ```toml
@@ -229,6 +232,8 @@ Present means the hub keeps one standing lead session. Absent means no lead.
 model = "anthropic/claude-sonnet-4-5"
 thinking = "medium"
 cwd = "/home/me/work"
+# name = "Cataly"     # how the assistant introduces itself; the default keeps the built-in voice
+# persona = ""        # personality guidance appended to the lead's instructions
 ```
 
 ## `[fallback]`
@@ -266,6 +271,7 @@ when both `owner` and `channels` are set; setting one without the other is an er
 | `home` | string | the one watched channel, if there is exactly one | one of `channels` | Where the lead's questions go. | `#cataly` when there are several |
 | `remote_approvals` | boolean | `false` | | Let you approve OMP permission requests by button, on a card in `[hub] language` with the command in a code block. Cataly's own tools and a fixed list of read-only commands (`ls`, `cat`, `grep`, `git status`, `git log`, `git diff` and the like) never ask; anything else still does. | `--approvals on\|off` (setup's default: on) |
 | `form_default_after` | duration | `"3m"` | 1s–1h | A question with one recommended choice takes it after this long. | |
+| `category` | string | `Cataly` | at most 100 characters; empty means no grouping | The channel category setup creates or reuses and puts `#cataly` and `#cataly-ops` into; existing channels found at the server root are moved into it. Empty keeps the channels at the root. | |
 | `profile` | boolean | `true` | | `cataly setup` puts Cataly's avatar and banner on the bot where the bot has none (or still has Cataly's older ones); an image you set yourself is kept. Off: setup leaves the profile alone. | `--profile` re-applies them |
 | `away` | duration | `"3h"` | 1s–720h | You count as back when your message comes this long after your previous one. | |
 | `others` | list of strings | `[]` | subset of `channels` | Watched rooms where you talk with other people. | |

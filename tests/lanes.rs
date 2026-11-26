@@ -1065,3 +1065,93 @@ fn onboarding_consent_is_stored_and_writes_wait() {
     drop(b);
     hub.stop();
 }
+
+/// Issue 278: the owner's name answer lands in the config file (and still loads), and an image he
+/// attached is applied to the bot and the application and recorded so setup keeps it. Both wait
+/// for onboarding to start, and a refused avatar leaves Discord untouched.
+#[test]
+fn onboarding_name_and_avatar_are_written_applied_and_recorded() {
+    let fake = FakeDiscord::start();
+    let (mut hub, work) = lane_hub("");
+    let token = hub.private_file("token", "fake-token");
+    fake.channel(CH, 0, None);
+    let text = std::fs::read_to_string(hub.config_path()).unwrap();
+    hub.write_config(&format!(
+        "{text}[lead]\nmodel = \"fake/primary\"\ncwd = \"{}\"\n{}",
+        work.display(),
+        fake.config(&token, OWNER, &[CH])
+    ));
+    start(&mut hub);
+    let (mut b, meta) = lead_bridge(&hub);
+    let s = meta["session"].clone();
+    let name = json!({ "op": "onboarding.name", "name": "Mi", "message": "m1" });
+    let (why, err) = lead_tool(&mut b, &s, "n0", name.clone());
+    assert!(err && why.contains("onboarding.start"), "{why}");
+    assert!(
+        !std::fs::read_to_string(hub.config_path())
+            .unwrap()
+            .contains("name = ")
+    );
+    lead_tool(&mut b, &s, "n1", json!({ "op": "onboarding.start" }));
+
+    let (why, err) = lead_tool(&mut b, &s, "n2", name);
+    assert!(!err, "{why}");
+    let after = std::fs::read_to_string(hub.config_path()).unwrap();
+    assert!(
+        after.contains("[lead]\nmodel = \"fake/primary\""),
+        "{after}"
+    );
+    assert!(after.contains("name = \"Mi\""), "{after}");
+    let check = hub.cli(&["config", "check"]);
+    assert!(check.status.success(), "{check:?}");
+    let persona =
+        json!({ "op": "onboarding.persona", "persona": "dry wit, short", "message": "m2" });
+    let (why, err) = lead_tool(&mut b, &s, "n3", persona);
+    assert!(!err, "{why}");
+    assert!(
+        std::fs::read_to_string(hub.config_path())
+            .unwrap()
+            .contains("persona = \"dry wit, short\"")
+    );
+    let multi = json!({ "op": "onboarding.name", "name": "a\nb", "message": "m3" });
+    assert!(lead_tool(&mut b, &s, "n4", multi).1);
+
+    // Not an image: nothing reaches Discord.
+    let page = fake.serve_file("page", b"<html>sign in</html>");
+    let bad = json!({ "op": "onboarding.avatar", "url": page, "message": "m4" });
+    let (why, err) = lead_tool(&mut b, &s, "a0", bad);
+    assert!(
+        err && why.contains("HTML") && why.contains("JPEG, PNG or GIF"),
+        "{why}"
+    );
+    assert!(fake.calls("PATCH", "/users/@me").is_empty());
+    // An image: the bot's avatar and the application's icon are set and recorded.
+    let png = [&[0x89, b'P', b'N', b'G', 13, 10, 26, 10][..], &[7u8; 64]].concat();
+    let url = fake.serve_file("me.png", &png);
+    let good = json!({ "op": "onboarding.avatar", "url": url, "message": "m5" });
+    let (why, err) = lead_tool(&mut b, &s, "a1", good);
+    assert!(!err, "{why}");
+    let users = fake.calls("PATCH", "/users/@me");
+    let apps = fake.calls("PATCH", "/applications/@me");
+    assert_eq!((users.len(), apps.len()), (1, 1));
+    let data = users[0].body["avatar"].as_str().unwrap();
+    assert!(
+        data.starts_with("data:image/png;base64,iVBORw0KGgo"),
+        "{data}"
+    );
+    assert_eq!(apps[0].body["icon"], users[0].body["avatar"]);
+    let (avatar, _) = fake.image("avatar").unwrap();
+    let (icon, _) = fake.image("icon").unwrap();
+    let record: Value =
+        serde_json::from_slice(&std::fs::read(hub.state().join("discord-profile.json")).unwrap())
+            .unwrap();
+    assert_eq!(record["bot"], support::discord::BOT);
+    assert_eq!(record["avatar"]["hash"], avatar);
+    assert_eq!(record["icon"]["hash"], icon);
+    assert_eq!(record["avatar"]["image"].as_str().unwrap().len(), 64);
+    assert_eq!(record["avatar"]["image"], record["icon"]["image"]);
+    let (state, _) = lead_tool(&mut b, &s, "a2", json!({ "op": "onboarding" }));
+    assert!(state.contains("\"phase\":\"running\""), "{state}");
+    drop(b);
+    hub.stop();
+}

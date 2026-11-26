@@ -583,20 +583,59 @@ impl Rest {
         list(v, "Discord sent no channel list")
     }
 
-    /// Creates one text channel. Never repeated after an uncertain outcome: a second run finds the
-    /// channel by name instead.
+    /// Creates one text channel, inside the category `parent` when there is one. Never repeated
+    /// after an uncertain outcome: a second run finds the channel by name instead.
     pub(crate) async fn create_text_channel(
         &self,
         guild: Snowflake,
         name: &str,
         topic: &str,
+        parent: Option<Snowflake>,
+    ) -> Result<Value, RestError> {
+        let body = if let Some(parent) = parent {
+            json!({ "name": name, "type": 0, "topic": topic, "parent_id": parent.to_string() })
+        } else {
+            json!({ "name": name, "type": 0, "topic": topic })
+        };
+        self.call(
+            "POST guilds/channels",
+            Method::POST,
+            &format!("/guilds/{guild}/channels"),
+            Some(body),
+            Kind::Once,
+        )
+        .await
+    }
+
+    /// Creates one category (channel type 4). Never repeated after an uncertain outcome: a second
+    /// run finds the category by name instead.
+    pub(crate) async fn create_category(
+        &self,
+        guild: Snowflake,
+        name: &str,
     ) -> Result<Value, RestError> {
         self.call(
             "POST guilds/channels",
             Method::POST,
             &format!("/guilds/{guild}/channels"),
-            Some(json!({ "name": name, "type": 0, "topic": topic })),
+            Some(json!({ "name": name, "type": 4 })),
             Kind::Once,
+        )
+        .await
+    }
+
+    /// Moves a channel into the category `parent`; setting the same parent again changes nothing.
+    pub(crate) async fn move_channel(
+        &self,
+        channel: Snowflake,
+        parent: Snowflake,
+    ) -> Result<Value, RestError> {
+        self.call(
+            "PATCH channels",
+            Method::PATCH,
+            &format!("/channels/{channel}"),
+            Some(json!({ "parent_id": parent.to_string() })),
+            Kind::Idempotent,
         )
         .await
     }

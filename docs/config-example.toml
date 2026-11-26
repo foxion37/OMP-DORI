@@ -25,6 +25,8 @@ model = "anthropic/claude-sonnet-4-5"   # provider/id
 thinking = "medium"
 cwd = "/home/owner/work"
 autostart = true
+# name = "Cataly"                         # how the assistant introduces itself in chat
+# persona = ""                            # a few lines of personality and tone guidance
 
 # When the lead's model fails, OMP moves to the next model of the chain. Never a reset, credits
 # or overage.

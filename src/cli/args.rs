@@ -180,6 +180,8 @@ pub(crate) const COMMANDS: [Spec; 55] = [
             "--guild",
             "--wait",
             "--lead-model",
+            "--lead-name",
+            "--lead-persona",
             "--lead-cwd",
             "--approvals",
             "--backup",

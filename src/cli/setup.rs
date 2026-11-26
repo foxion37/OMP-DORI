@@ -370,6 +370,24 @@ fn value_of(
                 "no lead: messages to Cataly wait until [lead] model is set".to_string()
             }),
         ),
+        ("lead", "name") => (
+            config
+                .lead
+                .as_ref()
+                .and_then(|l| l.name.as_deref())
+                .unwrap_or("Cataly")
+                .to_string(),
+            Some("how the assistant introduces itself in chat; the default keeps the built-in voice".to_string()),
+        ),
+        ("lead", "persona") => (
+            config
+                .lead
+                .as_ref()
+                .and_then(|l| l.persona.as_deref())
+                .unwrap_or("-")
+                .to_string(),
+            Some("a few lines of personality guidance appended to the lead's instructions; unset keeps the built-in voice".to_string()),
+        ),
         ("lead", _) => (
             config
                 .lead
@@ -699,12 +717,13 @@ fn decide(
                 |id| format!("#{name} {id}"),
             )
         };
-        let settled = match (d.lead, d.ops) {
-            (Some(lead), Some(ops)) => {
-                discord::config_text(planned, String::new(), d, lead, ops).is_empty()
-            }
-            _ => false,
-        };
+        let settled = d.grouped()
+            && match (d.lead, d.ops) {
+                (Some(lead), Some(ops)) => {
+                    discord::config_text(planned, String::new(), d, lead, ops).is_empty()
+                }
+                _ => false,
+            };
         items.push(Item::new(
             "channels",
             format!(
@@ -1165,6 +1184,20 @@ mod tests {
         let out = set_key("[omp]\n# keep\n\n[hub]\n", "omp", "path", "omp");
         assert_eq!(out, "[omp]\n# keep\npath = \"omp\"\n\n[hub]\n");
         assert!(config::parse(&set_key(NEW_FILE, "hub", "log_level", "info")).is_ok());
+    }
+
+    #[test]
+    fn lead_name_and_persona_flags_write_valid_keys() {
+        let base = "[lead]\nmodel = \"p/m\"\n";
+        let named = set_key(base, "lead", "name", "Mi");
+        let parsed = config::parse(&named).unwrap();
+        assert_eq!(parsed.lead.as_ref().unwrap().name.as_deref(), Some("Mi"));
+        let both = set_key(&named, "lead", "persona", "dry wit");
+        let parsed = config::parse(&both).unwrap();
+        let lead = parsed.lead.unwrap();
+        assert_eq!(lead.name.as_deref(), Some("Mi"));
+        assert_eq!(lead.persona.as_deref(), Some("dry wit"));
+        assert_eq!(invalid("lead", "name", "anything goes"), None);
     }
 
     #[test]
