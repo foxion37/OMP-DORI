@@ -11,8 +11,9 @@ import {
 import { recordStoppedLead } from "./harness-native-resume.ts";
 import type { Deps } from "./harness.ts";
 import { retireTerminalRoles } from "./harness-terminal-roles.ts";
+import { carryLeadInbox } from "./inbox-carry.ts";
 import { pendingLead } from "./inbox-files.ts";
-import { inboxSealed, lockInboxFiles, lockRoute, sealNativeInbox } from "./inbox-spool.ts";
+import { inboxSealed, lockInboxFiles, lockRoute, mergeOwnSpool, sealNativeInbox } from "./inbox-spool.ts";
 import { Refusal } from "./refusal.ts";
 import { refText, sameSession } from "./refs.ts";
 import type { HeadlessObservation, HeadlessRuntime } from "./runtime/headless.ts";
@@ -131,6 +132,14 @@ export async function stopNativeHarness(d: Deps): Promise<void> {
         checking = role;
         if (role === "lead" && !stopped.has(role)) holdForOwedLead(d);
         checkRegistration(d, role, binding.ref);
+        if (role === "lead") {
+          // The lead's inbox dies with its session: keep what it never read for the next one before sealing. This stop
+          // already holds the inbox lock, so the queue is read directly after its spool is moved in (that move needs
+          // exactly this lock; taking the lock again could only fail).
+          mergeOwnSpool(root, binding.ref);
+          const carried = carryLeadInbox(root, d.store.queued(binding.ref));
+          if (carried > 0) console.log(`CARRIED ${carried} unread lead message(s) for the next lead`);
+        }
         sealNativeInbox(root, binding.ref);
         await rt.stopHarnessRole(binding.ref, role, binding.sessionId ?? seen.get(role)?.sessionId);
         // The next `up` resumes this lead only if its stop receipt closed exactly this session.

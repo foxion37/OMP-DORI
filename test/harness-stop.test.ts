@@ -3,6 +3,7 @@ import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { main } from "../src/cli.ts";
 import { up } from "../src/cli-up.ts";
+import { readLeadCarry } from "../src/inbox-carry.ts";
 import { owedFile } from "../src/inbox-files.ts";
 import { flushInbox } from "../src/inbox.ts";
 import { lockInboxFiles, lockRoute, spoolMessage } from "../src/inbox-spool.ts";
@@ -39,6 +40,8 @@ test.skipIf(process.platform === "win32")(
       expect((await captureIo(() => main(["stop"], d))).out).toInclude("STOPPED native harness");
       expect(existsSync(inventory)).toBe(false);
       expect(d.store.queued(ref)).toEqual([queued]);
+      // The dead lead never read it: the next lead gets it instead of the sealed inbox swallowing it.
+      expect(readLeadCarry(d.store.root)).toEqual([{ at: queued.at, from: queued.from, text: queued.text }]);
       expect(await flushInbox(d, ref)).toBe("held");
       expect((await captureIo(() => main(["inbox", "list", `headless:${ref.id}`], d))).out).toInclude(queued.text);
     } finally {

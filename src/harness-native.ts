@@ -1,7 +1,8 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { clearStoppedLead, type LeadResume } from "./harness-native-resume.ts";
 import { harnessLaunchEnv, nativeHarnessCommand, rolePrompt, type Deps } from "./harness.ts";
+import { leadCarryPath, readLeadCarry, unheldCarry } from "./inbox-carry.ts";
 import { acquire, release } from "./loop-lock.ts";
 import { Refusal } from "./refusal.ts";
 import { refText, sameSession } from "./refs.ts";
@@ -136,6 +137,15 @@ export async function startNativeHarness(d: Deps, rt: HeadlessRuntime, cwd: stri
       }
       if (d.store.roles()[role]) throw new Refusal(`${role} was registered independently during startup`);
       d.store.setRole(role, ref);
+      // A stop carried what the previous lead never read. Hand it over as soon as the lead exists, before duty and the
+      // loops can queue anything newer, so the owner's unanswered message survives the restart once and in order.
+      if (role === "lead") {
+        const carried = readLeadCarry(d.store.root);
+        const restorable = unheldCarry(carried, d.store.queued(ref));
+        for (const m of restorable) await d.store.enqueue(ref, { at: m.at, from: m.from, text: m.text }, true);
+        if (restorable.length > 0) console.log(`CARRIED ${restorable.length} unread lead message(s) restored`);
+        if (carried.length > 0) rmSync(leadCarryPath(d.store.root), { force: true });
+      }
     } catch (error) {
       throw new Refusal(
         `Cannot start ${role}: ${reason(error)}. Existing sessions were not replaced; inspect cataly harness status, then use cataly harness stop.`,
