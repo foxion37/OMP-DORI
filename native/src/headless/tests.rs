@@ -163,6 +163,52 @@ fn keys(value: &Json) -> Vec<&str> {
     }
 }
 
+/// A lead session whose `get_entries` reply is past 1 MiB: only a chunked v2 frame can carry the role proof.
+#[tokio::test]
+async fn a_large_session_proves_its_role_over_chunked_entries() {
+    let version = rpc::required_version().unwrap();
+    let lane = Lane::reserve("lane", &format!("omp {version}")).scenario("huge-entries");
+    let host = lane.spawn();
+    let seen = lane
+        .until(|seen| seen["status"] == "idle" && seen["sessionId"].is_string())
+        .await;
+    assert_eq!(seen["role"], "lane");
+    lane.kill_omp();
+    host.await.unwrap().unwrap();
+}
+
+/// The same session against an OMP that refuses v2: resumed nowhere, so the lane never proves itself.
+#[tokio::test]
+async fn a_large_session_without_v2_never_proves_its_role() {
+    let version = rpc::required_version().unwrap();
+    let lane = Lane::reserve("lane", &format!("omp {version}")).scenario("huge-entries-v1");
+    let host = lane.spawn();
+    let mut proven = false;
+    for _ in 0..40 {
+        if lane
+            .request(json!({"op": "observe"}))
+            .await
+            .ok()
+            .is_some_and(|seen| {
+                let seen: Value = serde_json::from_str(&seen.compact()).unwrap_or(Value::Null);
+                seen["status"] == "idle" && seen["sessionId"].is_string()
+            })
+        {
+            proven = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(!proven, "a v1-only OMP must not prove a >1 MiB session");
+    // The refusal is OMP's answer to the proof request, not a skipped check.
+    assert!(lane.trace.exists());
+    let trace = fs::read_to_string(&lane.trace).unwrap();
+    assert!(trace.contains("\"negotiate_protocol\""));
+    assert!(trace.contains("\"get_entries\""));
+    // The refused proof ends this lane's host by itself; there is no child left to signal.
+    host.await.unwrap().unwrap();
+}
+
 #[tokio::test]
 async fn a_lane_observes_delivers_answers_and_closes() {
     let version = rpc::required_version().unwrap();

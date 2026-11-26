@@ -1,7 +1,9 @@
 //! The OMP `rpc-ui` client the host owns (`src/runtime/headless-rpc.ts`): version gate, spawn flags, readiness,
 //! one command/response id, native UI events and EOF shutdown.
 //!
-//! The protocol is pinned to v1: JSONL frames of at most 1 MiB, no negotiation and no chunking.
+//! Frames are JSONL lines of at most 1 MiB. After the v1 handshake the host negotiates v2, which lets OMP split a
+//! larger response into `rpc_chunk` lines: a lead session past 1 MiB answers `get_entries` with a frame too large for
+//! v1, and v1 replaced it with the transport-limit error that made `harness up` refuse to resume such a session.
 
 use std::collections::HashMap;
 use std::os::unix::process::ExitStatusExt as _;
@@ -11,16 +13,23 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use anyhow::{Result, anyhow, bail};
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use serde_json::Value;
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::process::{ChildStdin, ChildStdout, Command};
 use tokio::sync::{oneshot, watch};
 
+use super::broker::command;
 use super::protocol::{is_blank, is_js_space, js_trim_start};
 use crate::json::Json;
 use crate::util::uuid;
 
 const MAX_FRAME: usize = 1024 * 1024;
+/// OMP's own ceiling for one reassembled v2 frame (`MAX_RPC_REASSEMBLED_BYTES`); a larger answer is never buffered.
+const MAX_REASSEMBLED: usize = 64 * 1024 * 1024;
+/// Frames whose chunks never all arrived; OMP sends one frame's parts before the next, so a few are generous.
+const MAX_OPEN_CHUNKS: usize = 8;
 /// OMP's reply, handshake, write and exit deadline (shortened under test so stalled-OMP cases finish quickly).
 const RPC_TIMEOUT: Duration = Duration::from_secs(if cfg!(test) { 3 } else { 15 });
 /// `native-omp.lock`, from the same commit as this binary.
@@ -234,6 +243,7 @@ pub(super) async fn start(
 async fn read(mut stdout: ChildStdout, shared: &Mutex<Shared>, event: &Event) -> Result<()> {
     let mut rest = Vec::new();
     let mut chunk = vec![0_u8; 64 * 1024];
+    let mut chunks = Chunks::default();
     loop {
         let count = stdout.read(&mut chunk).await?;
         if count == 0 {
@@ -253,11 +263,92 @@ async fn read(mut stdout: ChildStdout, shared: &Mutex<Shared>, event: &Event) ->
             if !frame.is_object() {
                 bail!("invalid OMP RPC frame");
             }
+            // v2 splits one logical frame over several `rpc_chunk` lines; only the reassembled one is handled.
+            if frame.get("type").and_then(Value::as_str) == Some("rpc_chunk") {
+                if let Some(frame) = chunks.push(&frame)? {
+                    handle(shared, event, frame)?;
+                }
+                continue;
+            }
             handle(shared, event, frame)?;
         }
         if rest.len() > MAX_FRAME {
             bail!("oversized OMP RPC frame");
         }
+    }
+}
+
+/// One logical frame OMP split into `rpc_chunk` lines (protocol v2), by `chunkId`.
+#[derive(Default)]
+struct Chunks {
+    open: HashMap<String, Partial>,
+}
+
+struct Partial {
+    count: usize,
+    byte_length: usize,
+    parts: Vec<Option<Vec<u8>>>,
+}
+
+impl Chunks {
+    /// Adds one chunk and returns the frame once every part of it arrived. A malformed or contradictory chunk ends the
+    /// stream rather than yielding a frame OMP never sent.
+    fn push(&mut self, chunk: &Value) -> Result<Option<Value>> {
+        let field = |name: &str| chunk.get(name).and_then(Value::as_u64);
+        let id = chunk
+            .get("chunkId")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow!("invalid OMP RPC chunk"))?;
+        let (Some(count), Some(index), Some(byte_length)) =
+            (field("count"), field("index"), field("byteLength"))
+        else {
+            bail!("invalid OMP RPC chunk");
+        };
+        let (count, index, byte_length) = (count as usize, index as usize, byte_length as usize);
+        if count == 0 || index >= count || byte_length > MAX_REASSEMBLED {
+            bail!("invalid OMP RPC chunk");
+        }
+        let data = chunk
+            .get("data")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow!("invalid OMP RPC chunk"))?;
+        let bytes = BASE64
+            .decode(data)
+            .map_err(|_| anyhow!("invalid OMP RPC chunk data"))?;
+        let partial = self.open.entry(id.to_owned()).or_insert_with(|| Partial {
+            count,
+            byte_length,
+            parts: vec![None; count],
+        });
+        if partial.count != count || partial.byte_length != byte_length {
+            bail!("inconsistent OMP RPC chunk");
+        }
+        if partial.parts[index].replace(bytes).is_some() {
+            bail!("repeated OMP RPC chunk");
+        }
+        if partial.parts.iter().any(Option::is_none) {
+            // An abandoned set is one frame OMP never finished; it must not grow without bound.
+            if self.open.len() > MAX_OPEN_CHUNKS {
+                bail!("unfinished OMP RPC chunks");
+            }
+            return Ok(None);
+        }
+        let partial = self
+            .open
+            .remove(id)
+            .ok_or_else(|| anyhow!("invalid OMP RPC chunk"))?;
+        let mut bytes = Vec::with_capacity(partial.byte_length);
+        for part in partial.parts {
+            bytes.extend(part.unwrap_or_default());
+        }
+        if bytes.len() != partial.byte_length {
+            bail!("inconsistent OMP RPC chunk length");
+        }
+        let frame: Value = crate::json::parse_js(&bytes)?;
+        if !frame.is_object() {
+            bail!("invalid OMP RPC frame");
+        }
+        Ok(Some(frame))
     }
 }
 
@@ -310,7 +401,7 @@ impl Rpc {
         self.pid
     }
 
-    /// `waitReady`.
+    /// `waitReady`, then v2: the first readiness is v1 and only v2 chunks a response past 1 MiB.
     pub(super) async fn wait_ready(&self) -> Result<()> {
         let ready = self
             .ready
@@ -324,7 +415,18 @@ impl Rpc {
         if !matches!(ready, Ok(Ok(true))) {
             bail!("OMP RPC handshake did not complete");
         }
+        self.negotiate_v2().await;
         Ok(())
+    }
+
+    /// `negotiate_protocol` v2, best effort: an OMP that refuses leaves v1 in place, where only the old 1 MiB response
+    /// limit is lost. The caller already holds a working v1 stream, so a refusal is not a failure.
+    async fn negotiate_v2(&self) {
+        let Ok(version) = serde_json::from_value::<Json>(Value::from(2)) else {
+            return;
+        };
+        let command = command("negotiate_protocol", vec![("protocolVersion", version)]);
+        let _ = self.request(command).await;
     }
 
     /// `request`: `{...command, id}`, matched by id and echoed command; returns the response's object `data`.

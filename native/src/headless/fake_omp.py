@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """A fake OMP speaking pinned rpc-ui v1 for the headless host tests (modeled on test/fixtures/headless-rpc.ts)."""
 
+import base64
 import json
 import os
 import sys
@@ -31,8 +32,36 @@ names = ("CATALY_HEADLESS_ID", "PI_NOTIFICATIONS", "CATALY_HARNESS_ROLE")
 log(json.dumps({"pid": os.getpid(), "argv": argv, "cwd": os.getcwd(), "env": {k: os.environ.get(k) for k in names}}) + "\n")
 
 
+FRAME_LIMIT = 1024 * 1024 - 1
+# The negotiated rpc-ui protocol: v1 replaces a response past the frame limit with an error, v2 splits it.
+protocol = 1
+
+
 def send(frame):
-    sys.stdout.write(json.dumps(frame) + "\n")
+    text = json.dumps(frame)
+    raw = text.encode()
+    if protocol == 2 and len(raw) > FRAME_LIMIT:
+        size = 512 * 1024
+        count = (len(raw) + size - 1) // size
+        chunk_id = str(uuid.uuid4())
+        for index in range(count):
+            part = raw[index * size : (index + 1) * size]
+            sys.stdout.write(
+                json.dumps(
+                    {
+                        "type": "rpc_chunk",
+                        "chunkId": chunk_id,
+                        "index": index,
+                        "count": count,
+                        "byteLength": len(raw),
+                        "data": base64.b64encode(part).decode(),
+                    }
+                )
+                + "\n"
+            )
+        sys.stdout.flush()
+        return
+    sys.stdout.write(text + "\n")
     sys.stdout.flush()
 
 
@@ -68,7 +97,19 @@ for line in sys.stdin:
         if harness:
             entries.append({"type": "custom", "customType": "omp-cataly:harness-role",
                             "data": {"role": harness, "refId": os.environ["CATALY_HEADLESS_ID"]}})
+        if scenario in ("huge-entries", "huge-entries-v1"):
+            # A lead session past 1 MiB: the reply no longer fits one v1 frame.
+            entries.insert(0, {"type": "custom", "customType": "history", "data": "x" * (2 * 1024 * 1024)})
+            if protocol == 1:
+                send({"id": frame.get("id"), "type": "response", "command": kind, "success": False,
+                      "error": "response exceeds the rpc-ui frame limit"})
+                continue
         ack({"entries": entries})
+    elif kind == "negotiate_protocol":
+        # `huge-entries-v1` is an OMP that refuses v2: its large reply stays a transport-limit error.
+        if frame.get("protocolVersion") == 2 and scenario != "huge-entries-v1":
+            protocol = 2
+        ack({"protocolVersion": protocol})
     elif kind == "goal":
         if frame.get("op") == "create":
             goal = {"status": "active", "objective": frame.get("objective")}
