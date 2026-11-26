@@ -17,7 +17,7 @@
 <p align="center">
   <a href="https://github.com/vntrevx/Cataly/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/vntrevx/Cataly?include_prereleases&label=release&labelColor=2b2d33&color=c8102e"></a>
   <a href="https://github.com/vntrevx/Cataly/actions/workflows/ci.yml?query=branch%3Amain"><img alt="CI on main" src="https://img.shields.io/github/actions/workflow/status/vntrevx/Cataly/ci.yml?branch=main&label=ci&labelColor=2b2d33"></a>
-  <a href="LICENSING.md"><img alt="License: SUL 1.0 with a scoped MIT notice" src="https://img.shields.io/badge/license-SUL%201.0%20%2B%20scoped%20MIT-8b9099?labelColor=2b2d33"></a>
+  <a href="LICENSE"><img alt="License: AGPL-3.0-only" src="https://img.shields.io/badge/license-AGPL--3.0--only-8b9099?labelColor=2b2d33"></a>
   <a href="https://bun.sh"><img alt="Bun 1.4.4 or later" src="https://img.shields.io/badge/bun-%E2%89%A51.4.4-8b9099?labelColor=2b2d33&logo=bun&logoColor=white"></a>
 </p>
 
@@ -359,10 +359,23 @@ change with evidence that it works.
 
 ## Licenses and attribution
 
-Cataly is derived from [dori-superagent](https://github.com/sisyphuslabs/dori-superagent)
-and builds on [oh-my-pi](https://github.com/can1357/oh-my-pi). The
-dori-superagent-derived material retains the [Sustainable Use License 1.0](LICENSE).
-The existing OMP integration retains its [MIT license and copyright notices](LICENSE.integration);
-the MIT notice does not apply to the whole repository. Other components keep
-their own terms. See the [licensing guide](LICENSING.md) and [NOTICE](NOTICE) for
-source revisions and modified-copy attribution.
+This repository is a modified copy of [vntrevx/Cataly](https://github.com/vntrevx/Cataly),
+published under the [GNU Affero General Public License 3.0](LICENSE) (`AGPL-3.0-only`), the
+same terms upstream adopted in 0.2.1. Copyright and the commercial alternative stay with
+upstream; see [NOTICE](NOTICE). Modifications in this copy:
+
+- `native/src/headless/rpc.rs`: rpc-ui v2 negotiation with `rpc_chunk` reassembly.
+- `native/src/headless/harness-native-stop.ts`, `native/src/headless/harness-native.ts`,
+  `native/src/headless/inbox-carry.ts`: carry the lead's unread inbox across a stop.
+- `native/…/tests`, `test/…`: the tests covering both.
+- The local operational intake and topic bindings live outside this repository, in the
+  owner's `~/.dori` home.
+
+Cataly builds on [dori-superagent](https://github.com/sisyphuslabs/dori-superagent) and
+[oh-my-pi](https://github.com/can1357/oh-my-pi). The OMP integration keeps its
+[MIT notices](LICENSE.integration), which do not apply to the whole repository. Other
+components keep their own terms.
+
+Under AGPL-3.0 section 13, anyone interacting with a modified version over a network is
+offered its source; this repository is that source. Commercial licences without the AGPL
+obligations are available from upstream.

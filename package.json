@@ -3,7 +3,7 @@
   "version": "0.1.4",
   "description": "Cataly session harness and messenger skill for OMP.",
   "type": "module",
-  "license": "SUL-1.0",
+  "license": "AGPL-3.0-only",
   "packageManager": "bun@1.4.4",
   "bin": {
     "cataly-harness": "src/cli.ts"
